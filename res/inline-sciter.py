@@ -12,7 +12,7 @@ index = open('src/ui/index.html').read() \
     .replace('@import url(index.css);', open('src/ui/index.css').read()) \
     .replace('include "index.tis";', open('src/ui/index.tis').read()) \
     .replace('include "msgbox.tis";', open('src/ui/msgbox.tis').read()) \
-    .replace('include "ab.tis";', open('src/ui/ab.tis').read())
+    .replace('include "sessions.tis";', open('src/ui/sessions.tis').read())
 
 remote = open('src/ui/remote.html').read() \
     .replace('@import url(remote.css);', open('src/ui/remote.css').read()) \

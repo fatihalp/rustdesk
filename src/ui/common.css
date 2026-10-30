@@ -1,15 +1,20 @@
 html {
-    var(accent): #0071ff;
-    var(button): #2C8CFF;
-    var(gray-bg): #eee;
+    var(accent): #007aff;
+    var(accent-soft): rgba(0, 122, 255, 0.12);
+    var(accent-ring): rgba(0, 122, 255, 0.3);
+    var(button): #007aff;
+    var(gray-bg): #f2f2f7;
+    var(card): #f5f5f7;
+    var(notice): rgba(255, 149, 0, 0.12);
     var(bg): white;
-    var(border): #ccc;
-    var(hover-border): #999;
-    var(text): #222;
-    var(placeholder): #aaa;
-    var(lighter-text): #888;
-    var(light-text): #666;
-    var(menu-hover): #D7E4F2;
+    var(border): #d1d1d6;
+    var(separator): #e5e5ea;
+    var(hover-border): #aeaeb2;
+    var(text): #1d1d1f;
+    var(placeholder): #aeaeb2;
+    var(lighter-text): #8e8e93;
+    var(light-text): #636366;
+    var(menu-hover): #e5f0ff;
     var(dark-red): #A72145;
     var(dark-yellow): #FBC732;
     var(dark-blue): #2E2459;
@@ -19,20 +24,24 @@ html {
     var(light-green): #D4EAB7;
     var(dark-green): #5CB85C;
     var(blood-red): #F82600;
-    var(gray-bg-osx): rgba(238, 238, 238, 0.75);
+    var(gray-bg-osx): rgba(246, 246, 248, 0.72);
 }
 
 html.darktheme {
-    var(bg): #252525;
-    var(gray-bg): #141414;
-    var(menu-hover): #2D3033;
-    var(border): #555;
+    var(bg): #1c1c1e;
+    var(gray-bg): #2c2c2e;
+    var(card): #2c2c2e;
+    var(notice): rgba(255, 159, 10, 0.18);
+    var(accent-soft): rgba(10, 132, 255, 0.22);
+    var(menu-hover): #2c2c2e;
+    var(border): #48484a;
+    var(separator): #3a3a3c;
 
-    var(text): white;
-    var(light-text): #999;
-    var(lighter-text): #777;
-    var(placeholder): #555;
-    var(gray-bg-osx): rgba(37, 37, 37, 0.75);
+    var(text): #f5f5f7;
+    var(light-text): #a1a1a6;
+    var(lighter-text): #8e8e93;
+    var(placeholder): #636366;
+    var(gray-bg-osx): rgba(28, 28, 30, 0.72);
 }
 
 body {
@@ -90,7 +99,7 @@ input[type=text], input[type=password], input[type=number] {
     width: *;
     font-size: 1.5em;
     border-color: color(border);
-    border-radius: 0;
+    border-radius: 8px;
     color: color(text);
     padding-left: 0.5em;
     background: color(bg);

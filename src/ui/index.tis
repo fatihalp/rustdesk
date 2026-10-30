@@ -9,10 +9,8 @@ const incoming_only_width = 180;
 const outgoing_only = handler.is_outgoing_only();
 const incoming_only = handler.is_incoming_only();
 const disable_installation = handler.is_disable_installation();
-const disable_account = handler.is_disable_account();
 const disable_settings = handler.is_disable_settings();
 const is_custom_client = handler.is_custom_client();
-const disable_ab = handler.is_disable_ab();
 const hide_server_settings = handler.get_builtin_option("hide-server-settings") == "Y";
 const hide_proxy_settings = handler.get_builtin_option("hide-proxy-settings") == "Y";
 const hide_websocket_settings = handler.get_builtin_option("hide-websocket-settings") == "Y";
@@ -352,29 +350,6 @@ class Enhancements: Reactor.Component {
     }
 }
 
-function getUserName() {
-    try {
-        return JSON.parse(handler.get_local_option("user_info")).name;
-    } catch(e) {}
-    return '';
-}
-
-function getAccountLabelWithHandle() {
-    try {
-        var user = JSON.parse(handler.get_local_option("user_info"));
-        var username = (user.name || '').trim();
-        if (!username) {
-            return '';
-        }
-        var displayName = (user.display_name || '').trim();
-        if (!displayName || displayName == username) {
-            return username;
-        }
-        return displayName + " (@" + username + ")";
-    } catch(e) {}
-    return '';
-}
-
 // Shared dialog functions
 function open_custom_server_dialog() {
     var configOptions = handler.get_options();
@@ -510,7 +485,6 @@ class MyIdMenu: Reactor.Component {
     }
 
     function renderPop() {
-        var accountLabel = handler.get_local_option("access_token") ? getAccountLabelWithHandle() : '';
         return <popup>
             <menu.context #config-options>
                 {!disable_settings && <li #enable-keyboard><span>{svg_checkmark}</span>{translate('Enable keyboard/mouse')}</li>}
@@ -539,9 +513,6 @@ class MyIdMenu: Reactor.Component {
                 {!disable_settings && <DirectServer />}
                 {!disable_settings && false && handler.using_public_server() && <li #allow-always-relay><span>{svg_checkmark}</span>{translate('Always connect via relay')}</li>}
                 {!disable_change_id && handler.is_ok_change_id() ? <div .separator /> : ""}
-                {!disable_account && (accountLabel ?
-                <li #logout>{translate('Logout')} ({accountLabel})</li> :
-                <li #login>{translate('Login')}</li>)}
                 {!disable_change_id && !disable_settings && handler.is_ok_change_id() && key_confirmed && connect_status > 0 ? <li #change-id>{translate('Change ID')}</li> : ""}
                 <div .separator />
                 <li #allow-darktheme><span>{svg_checkmark}</span>{translate('Dark Theme')}</li>
@@ -562,14 +533,6 @@ class MyIdMenu: Reactor.Component {
         if (direct_server) direct_server.update();
         var menu = this.$(menu#config-options);
         this.$(svg#menu).popup(menu);
-    }
-
-    event click $(li#login) () {
-        login();
-    }
-
-    event click $(li#logout) () {
-        logout();
     }
 
     function toggleMenuState() {
@@ -719,7 +682,6 @@ class App: Reactor.Component
                             <span>{translate('Your Desktop')}</span>
                             {outgoing_only ? <span .link #open-settings style="position:absolute; right:0; bottom:0; transform:scale(0.6); transform-origin:right bottom; opacity:0.85">{svg_menu}</span> : ""}
                         </div>
-                        <div .lighter-text>{outgoing_only ? translate('outgoing_only_desk_tip') : translate('desk_tip')}</div>
                         {outgoing_only ? <div style="position:absolute; left:-10000px; top:-10000px; width:0; height:0; overflow:hidden"><MyIdMenu /></div> : ""}
                         {!outgoing_only && <div .your-desktop>
                             <MyIdMenu />
@@ -741,10 +703,8 @@ class App: Reactor.Component
                 {!incoming_only && <div .right-pane>
                     <div .right-content>
                         <div .card-connect>
-                            <div .title>{translate('Control Remote Desktop')}</div>
                             <ID @{this.remote_id} />
                             <div .right-buttons>
-                                <button .button .outline #file-transfer>{translate('Transfer file')}</button>
                                 <button .button #connect>{translate('Connect')}</button>
                             </div>
                         </div>
@@ -758,10 +718,6 @@ class App: Reactor.Component
 
     event click $(button#connect) {
         this.newRemote("connect");
-    }
-
-    event click $(button#file-transfer) {
-        this.newRemote("file-transfer");
     }
 
     function newRemote(type) {
@@ -875,7 +831,6 @@ class TrustMe: Reactor.Component {
     function render() {
         return <div .trust-me #trust-me-box>
             <div>{translate('Permissions')}</div>
-            <div>{translate('config_acc')}</div>
             <div #trust-me .link>{translate('Configure')}</div>
             <div #help-me .link>{translate('Help')}</div>
         </div>;
@@ -895,7 +850,6 @@ class CanScreenRecording: Reactor.Component {
     function render() {
         return <div .trust-me #screen-recording-box>
             <div>{translate('Permissions')}</div>
-            <div>{translate('config_screen')}</div>
             <div #screen-recording .link>{translate('Configure')}</div>
             <div #help-me .link>{translate('Help')}</div>
         </div>;
@@ -1366,11 +1320,6 @@ event click $(li#socks5-server) (_, me) {
     open_proxy_dialog();
 }
 
-event click $(li#login) (_, me) {
-    if (!outgoing_only) return;
-    login();
-}
-
 function self.closing() {
     var (x, y, w, h) = view.box(#rectw, #border, #screen);
     handler.closing(x, y, w, h);
@@ -1392,7 +1341,6 @@ function self.ready() {
     if (!handler.get_remote_id()) {
         view.focus = $(#remote_id);
     }
-    refreshCurrentUser();
     updateTheme();
 }
 
@@ -1453,7 +1401,6 @@ function checkConnectStatus() {
         }
         if (handler.recent_sessions_updated()) {
             stdout.println("recent sessions updated");
-            updateAbPeer();
             app.update();
         }
         tmp = handler.get_option("disable-udp") == "Y";
@@ -1502,180 +1449,3 @@ function check_if_overlay() {
 }
 
 checkConnectStatus();
-
-function set_local_user_info(user) {
-    var user_info = {name: user.name};
-    if (user.display_name) {
-        user_info.display_name = user.display_name;
-    }
-    if (user.avatar) {
-        user_info.avatar = user.avatar;
-    }
-    if (user.status) {
-        user_info.status = user.status;
-    }
-    handler.set_local_option("user_info", JSON.stringify(user_info));
-}
-
-function login() {
-    var name0 = getUserName();
-    var pass0 = '';
-    msgbox("custom-login", translate('Login'), <div .form .set-password> 
-            <div><span>{translate('Username')}:</span><input|text name="username" value={name0} .outline-focus /></div> 
-            <div><span>{translate('Password')}:</span><PasswordComponent value={pass0} /></div> 
-        </div>, "", function(res=null, show_progress) {
-        if (!res) return;
-        show_progress();
-        var name = (res.username || '').trim();
-        if (!name) {
-            show_progress(false, translate("Username missed"));
-            return " ";
-        }
-        var pass = (res.password || '').trim();
-        if (!pass) {
-            show_progress(false, translate("Password missed"));
-            return " ";
-        }
-        abLoading = true;
-        var url = handler.get_api_server();
-        httpRequest(url + "/api/login", #post, {username: name, password: pass, id: my_id, uuid: handler.get_uuid(), type: 'account', deviceInfo: getDeviceInfo()}, function(data) {
-            if (data.error) {
-                abLoading = false;
-                var err = translate(data.error);
-                show_progress(false, err);
-                return;
-            }
-            if (data.type == 'email_check') {
-                abLoading = false;
-                show_progress(-1);
-                on_2fa_check(data);
-                return;
-            }
-            handler.set_local_option("access_token", data.access_token);
-            set_local_user_info(data.user);
-            show_progress(-1);
-            myIdMenu.update();
-            getAb();
-        }, function(err, status) {
-            abLoading = false;
-            err = translate(err);
-            if (url.indexOf('rustdesk') < 0) err = url + ', ' + err;
-            show_progress(false, err);
-        });
-        return " ";
-      }, msgbox_default_height, get_msgbox_width());
-}
-
-function on_2fa_check(last_msg) {
-    const isEmailCheck = !last_msg.tfa_type || last_msg.tfa_type == 'email_check';
-    const secret = last_msg.secret;
-    const emailHint = last_msg.user.email;
-
-    msgbox("custom-2fa-verification-code", translate('Verification code'), <div .form .set-password> 
-            { isEmailCheck && <div><span>{translate('Email')}:</span><span>{emailHint}</span></div> }
-            <div><span>{translate(isEmailCheck ? 'Verification code' : '2FA code')}:</span><input|text name="verification_code" .outline-focus /></div> 
-            { isEmailCheck && <div style="font-size:0.9em; margin-bottom:1em;">{translate('verification_tip')}</div> }
-        </div>, "", 
-        function(res=null, show_progress) {
-            if (!res) return;
-            show_progress();
-            var code = (res.verification_code || '').trim();
-            if (!code || code.length < 6) {
-                show_progress(false, translate("Too short, at least 6 characters."));
-                return " ";
-            }
-            abLoading = true;
-            var url = handler.get_api_server();
-            const loginData = {
-                username: last_msg.user.name,
-                id: my_id,
-                uuid: handler.get_uuid(),
-                type: 'email_code',
-                verificationCode: code,
-                tfaCode: isEmailCheck ? '' : code,
-                secret: secret,
-                deviceInfo: getDeviceInfo()
-            };
-            httpRequest(url + "/api/login", #post, loginData, 
-                function(data) {
-                    if (data.error) {
-                        abLoading = false;
-                        show_progress(false, data.error);
-                        return;
-                    }
-                    handler.set_local_option("access_token", data.access_token);
-                    set_local_user_info(data.user);
-                    show_progress(-1);
-                    myIdMenu.update();
-                    getAb();
-                },
-                function(err, status) {
-                    abLoading = false;
-                    err = translate(err);
-                    if (url.indexOf('rustdesk') < 0) err = url + ', ' + err;
-                    show_progress(false, err);
-                }
-            );
-            return " ";
-        },
-        msgbox_default_height,
-        get_msgbox_width()
-    );
-}
-
-function reset_token() {
-    handler.set_local_option("access_token", "");
-    handler.set_local_option("user_info", "");
-    handler.set_local_option("selected-tags", "");
-    myIdMenu.update();
-    resetAb();
-    if (abComponent) {
-        abComponent.update();
-    }
-}
-
-function logout() {
-    var url = handler.get_api_server();
-    httpRequest(url + "/api/logout", #post, {id: my_id, uuid: handler.get_uuid()}, function(data) {
-    }, function(err, status) {
-        msgbox("custom-error", translate('Error'), err);
-    }, getHttpHeaders());
-    reset_token();
-}
-
-function refreshCurrentUser() {
-    var token = handler.get_local_option("access_token");
-    if (!token) { return; }
-    abLoading = true;
-    abError = "";
-    app.update();
-    httpRequest(handler.get_api_server() + "/api/currentUser", #post, {id: my_id, uuid: handler.get_uuid()}, function(data) {
-        if (data.error) {
-            if (data.error == 'Invalid token') {
-              reset_token();
-            }
-            handleAbError(data.error);
-            return;
-        }
-	if (!handler.verify_login(data.verifier, token)) {
-          handleAbError("Please update your self-hosting server Pro to latest version");
-          return;
-        }
-        set_local_user_info(data);
-        myIdMenu.update();
-        getAb();
-    }, function(err, status) {
-        if (status == 401 || status == 400) {
-            reset_token();
-        }
-        handleAbError(err);
-    }, getHttpHeaders());
-} 
-
-function getHttpHeaders() {
-    return "Authorization: Bearer " + handler.get_local_option("access_token");
-}
-
-function getDeviceInfo() {
-    return JSON.parse(handler.get_login_device_info());
-}
