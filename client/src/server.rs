@@ -95,19 +95,10 @@ pub struct ConnectionMeta {
 #[cfg(any(target_os = "macos", target_os = "linux"))]
 const CONFIG_SYNC_INTERVAL_SECS: f32 = 0.3;
 #[cfg(any(target_os = "macos", target_os = "linux"))]
-// 3s is enough for at least one initial sync attempt:
-// 0.3s backoff + up to 1s connect timeout + up to 1s response timeout.
 const CONFIG_SYNC_INITIAL_WAIT_SECS: u64 = 3;
 
 lazy_static::lazy_static! {
     pub static ref CHILD_PROCESS: Childs = Default::default();
-    // A client server used to provide local services(audio, video, clipboard, etc.)
-    // for all initiative connections.
-    //
-    // [Note]
-    // ugly
-    // Now we use this [`CLIENT_SERVER`] to do following operations:
-    // - record local audio, and send to remote
     pub static ref CLIENT_SERVER: ServerPtr = new();
 }
 
@@ -133,7 +124,7 @@ pub fn new() -> ServerPtr {
     let mut server = Server {
         connections: HashMap::new(),
         services: HashMap::new(),
-        id_count: hbb_common::rand::random::<i32>() % 1000 + 1000, // ensure positive
+        id_count: hbb_common::rand::random::<i32>() % 1000 + 1000,
     };
     server.add_service(Box::new(audio_service::new()));
     #[cfg(not(target_os = "ios"))]
@@ -154,7 +145,6 @@ pub fn new() -> ServerPtr {
             server.add_service(Box::new(input_service::new_pos()));
             #[cfg(target_os = "linux")]
             if scrap::is_x11() {
-                // wayland does not support multiple displays currently
                 server.add_service(Box::new(input_service::new_window_focus()));
             }
             #[cfg(not(target_os = "linux"))]
@@ -175,7 +165,6 @@ pub fn new() -> ServerPtr {
             }
         }
     }
-    // Terminal service is created per connection, not globally
     Arc::new(RwLock::new(server))
 }
 
@@ -188,13 +177,9 @@ async fn accept_connection_(
 ) -> ResultType<()> {
     let local_addr = socket.local_addr();
     drop(socket);
-    // even we drop socket, below still may fail if not use reuse_addr,
-    // there is TIME_WAIT before socket really released, so sometimes we
-    // see "Only one usage of each socket address is normally permitted" on windows sometimes,
     let listener = new_listener(local_addr, true).await?;
     log::info!("Server listening on: {}", &listener.local_addr()?);
     if let Ok((stream, addr)) = timeout(CONNECT_TIMEOUT, listener.accept()).await? {
-        // The peer is in: the place goes back before the session runs, as every punch's does.
         drop(slot);
         stream.set_nodelay(true).ok();
         let stream_addr = stream.local_addr()?;
@@ -218,15 +203,11 @@ pub async fn create_tcp_connection(
     meta: ConnectionMeta,
 ) -> ResultType<()> {
     let mut stream = stream;
-    // The address the connection layer keys on, whitelist and admission alike.
     let addr = hbb_common::try_into_v4(addr);
     let id = server.write().unwrap().get_new_id();
-    // Admitted before the identity handshake, so a peer that stalls in it, or after it without
-    // logging in, holds its place the whole time; an address over its share is turned away.
     let Some(unauthorized) = admit_unauthorized(id, addr.ip()) else {
         bail!("too many unauthenticated connections from {}", addr.ip());
     };
-    // Before the handshake, so its read is bounded too; lifted again at authorization.
     stream.set_max_packet_length(MAX_UNAUTHORIZED_MESSAGE);
     tokio::select! {
         handshake = identity_handshake(&mut stream, secure) => handshake?,
@@ -259,8 +240,6 @@ pub async fn create_tcp_connection(
     Ok(())
 }
 
-/// Our signed identity goes out and, when `secure`, the controller's reply keys `stream`.
-/// Separate so it can be raced against the connection's eviction.
 async fn identity_handshake(stream: &mut Stream, secure: bool) -> ResultType<()> {
     let (sk, pk) = Config::get_key_pair();
     if secure && pk.len() == sign::PUBLICKEYBYTES && sk.len() == sign::SECRETKEYBYTES {
@@ -269,18 +248,10 @@ async fn identity_handshake(stream: &mut Stream, secure: bool) -> ResultType<()>
         let sk = sign::SecretKey(sk_);
         let mut msg_out = Message::new();
         let (our_pk_b, our_sk_b) = box_::gen_keypair();
-        // On a WebRTC transport, bind our DTLS certificate fingerprint to our signed identity so
-        // the controller can verify the DTLS channel it negotiated actually terminates at us
-        // (not a rendezvous/relay that swapped the SDP fingerprint). Empty on other transports.
-        // Fail immediately on WebRTC if the local fingerprint is unavailable: signing "" would
-        // only make the client fail-closed after a wasted round-trip.
         let dtls_fingerprint = stream.dtls_fingerprint(true).await.unwrap_or_default();
         if stream.is_webrtc() && dtls_fingerprint.is_empty() {
             bail!("WebRTC local DTLS fingerprint unavailable");
         }
-        // A WebRTC stream is encrypted by DTLS and takes no stream key of its own, split or
-        // not, so what it advertises is what it runs: 0. Saying 1 there would have a future
-        // controller that splits keys on WebRTC agree on a version this side never applies.
         let advertised = if stream.is_webrtc() {
             0
         } else {
@@ -404,7 +375,6 @@ async fn create_relay_connection_(
     ipv4: bool,
     meta: ConnectionMeta,
 ) -> ResultType<()> {
-    // The proxy's address family does not constrain the relay target.
     let relay_server = crate::check_port(relay_server, RELAY_PORT);
     let use_ws_proxy = Config::is_proxy() && is_ws_endpoint(&check_ws(&relay_server));
     let mut stream = socket_client::connect_tcp(
@@ -532,7 +502,6 @@ impl Server {
         }
     }
 
-    // get a new unique id
     pub fn get_new_id(&mut self) -> i32 {
         self.id_count += 1;
         self.id_count
@@ -638,13 +607,6 @@ pub fn check_zombie() {
     });
 }
 
-/// Start the host server that allows the remote peer to control the current machine.
-///
-/// # Arguments
-///
-/// * `is_server` - Whether the current client is definitely the server.
-/// If true, the server will be started.
-/// Otherwise, client will check if there's already a server and start one if not.
 #[cfg(any(target_os = "android", target_os = "ios"))]
 #[tokio::main]
 pub async fn start_server(_is_server: bool) {
@@ -652,14 +614,6 @@ pub async fn start_server(_is_server: bool) {
     crate::RendezvousMediator::start_all().await;
 }
 
-/// Start the host server that allows the remote peer to control the current machine.
-///
-/// # Arguments
-///
-/// * `is_server` - Whether the current client is definitely the server.
-/// If true, the server will be started.
-/// Otherwise, client will check if there's already a server and start one if not.
-/// * `no_server` - If `is_server` is false, whether to start a server if not found.
 #[cfg(not(any(target_os = "android", target_os = "ios")))]
 #[tokio::main]
 pub async fn start_server(is_server: bool, no_server: bool) {
@@ -687,23 +641,11 @@ pub async fn start_server(is_server: bool, no_server: bool) {
                 std::process::exit(-1);
             }
         });
-        // Warm the DRM availability cache before any client connects, so the first connection does
-        // not race a cold `_drm` probe and ship an empty display list ("No displays" + retry).
-        // X11 is skipped -- probing there makes the root service open DRM readers for a path this
-        // session can never take -- but that decision belongs to `warm_availability`, which already
-        // makes it, and NOT to this call site. Deciding it here is the same one-shot-at-startup
-        // mistake the pre-warm had: `is_x11()` answers "x11" whenever loginctl cannot yet name the
-        // seat0 session, which during a boot is exactly when this runs, and nothing revisits it --
-        // so a Wayland host that came up slowly skipped the warm for the life of the process and
-        // got back the cold-probe "No displays" symptom the warm exists to remove.
         #[cfg(all(target_os = "linux", feature = "drm"))]
         if let Err(err) = std::thread::Builder::new()
             .name("drm-warm".into())
             .spawn(drm_capturer::warm_availability)
         {
-            // Same reason as the root service's startup threads: `thread::spawn` panics on EAGAIN
-            // and that would abort `start_server`. Skipping the warm costs the first session the
-            // cold probe, which is what happened before the warm existed.
             log::warn!("drm: could not spawn the availability warm ({err}); skipping it");
         }
         input_service::fix_key_down_timeout_loop();
@@ -813,7 +755,6 @@ async fn wait_initial_config_sync() {
         return;
     }
 
-    // Non-server process should not block startup, but still keeps background sync/watch alive.
     if !crate::is_server() {
         tokio::spawn(async move {
             sync_and_watch_config_dir(None).await;
@@ -826,7 +767,6 @@ async fn wait_initial_config_sync() {
         sync_and_watch_config_dir(Some(sync_done_tx)).await;
     });
 
-    // Server process waits up to N seconds for initial root->local sync to reduce stale-start window.
     tokio::select! {
         _ = &mut sync_done_rx => {
         }
@@ -882,16 +822,12 @@ async fn sync_and_watch_config_dir(sync_done_tx: Option<tokio::sync::oneshot::Se
                                         }
                                         log::info!("sync config from root");
                                     } else {
-                                        // only on macos, because this issue was only reproduced on macos
                                         #[cfg(target_os = "macos")]
                                         {
-                                            // root config is empty, mark for sync in watch loop
-                                            // to prevent root from generating a new config on login screen
                                             is_root_config_empty = true;
                                         }
                                     }
                                     synced = true;
-                                    // Notify startup waiter once initial sync phase finishes successfully.
                                     if let Some(tx) = sync_done_tx.take() {
                                         let _ = tx.send(());
                                     }
@@ -952,7 +888,6 @@ async fn sync_and_watch_config_dir(sync_done_tx: Option<tokio::sync::oneshot::Se
             }
         }
     }
-    // Notify startup waiter even when initial sync is skipped/failed, to avoid unnecessary waiting.
     if let Some(tx) = sync_done_tx.take() {
         let _ = tx.send(());
     }
@@ -961,15 +896,12 @@ async fn sync_and_watch_config_dir(sync_done_tx: Option<tokio::sync::oneshot::Se
 
 #[tokio::main(flavor = "current_thread")]
 pub async fn stop_main_window_process() {
-    // this may also kill another --server process,
-    // but --server usually can be auto restarted by --service, so it is ok
     if let Ok(mut conn) = crate::ipc::connect(1000, "").await {
         conn.send(&crate::ipc::Data::Close).await.ok();
     }
     #[cfg(windows)]
     {
-        // in case above failure, e.g. zombie process
-        if let Err(e) = crate::platform::try_kill_rustdesk_main_window_process() {
+        if let Err(e) = crate::platform::try_kill_supportdesk_main_window_process() {
             log::error!("kill failed: {}", e);
         }
     }

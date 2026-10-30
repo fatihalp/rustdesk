@@ -76,7 +76,7 @@ pub(super) fn staged_shortcut_commands(
     let file = ProtectedInstallFile::new(&directory::path()?.with_extension("lnk"), &bytes)?;
     let source = path_for_cmd_environment(file.path())?;
     let commands = format!(
-        "copy /B /Y \"{source}\" \"%RUSTDESK_OUTPUT_DIR%\\{filename}\" > nul || exit /b {BATCH_SHORTCUT_COPY_FAILURE_EXIT_CODE}"
+        "copy /B /Y \"{source}\" \"%SUPPORTDESK_OUTPUT_DIR%\\{filename}\" > nul || exit /b {BATCH_SHORTCUT_COPY_FAILURE_EXIT_CODE}"
     );
     Ok((commands, file))
 }
@@ -122,9 +122,6 @@ fn get_known_folder(id: &windows::core::GUID) -> ResultType<PathBuf> {
     Ok(PathBuf::from(path?))
 }
 
-// `%VAR%` is expanded before cmd.exe executes even inside a quoted `set` assignment.
-// Reject all `%` so a handoff path cannot alter the elevated bootstrap before hash verification.
-// https://learn.microsoft.com/en-us/windows-server/administration/windows-commands/set_1
 pub(super) fn path_for_cmd_environment(path: &Path) -> ResultType<&str> {
     let value = path
         .to_str()
@@ -151,7 +148,6 @@ fn trusted_install_environment_from_paths(
         .parent()
         .ok_or_else(|| anyhow!("System directory has no parent"))?;
     let cmd = system.join(CMD_RELATIVE_PATH);
-    // These paths are parsed once from the protected BAT, with delayed expansion disabled.
     let system = path_for_cmd_environment(system)?;
     let windows = path_for_cmd_environment(windows)?;
     let cmd = path_for_cmd_environment(&cmd)?;
@@ -262,8 +258,6 @@ pub(super) fn launch_elevated(
     Ok(ProcessHandle(info.hProcess))
 }
 
-// Escape `^` before using it to escape `&` so both survive nested cmd.exe parsing.
-// https://learn.microsoft.com/en-us/previous-versions/windows/it-pro/windows-server-2012-r2-and-2012/cc754250(v=ws.11)
 pub(super) fn escape_nested_cmd_ampersands(value: &str) -> String {
     value.replace('^', "^^").replace('&', "^&")
 }
@@ -275,9 +269,9 @@ mod tests {
     #[test]
     fn install_values_enforce_command_safety() {
         assert!(validate_install_value(r"C:\safe ! path").is_ok());
-        assert!(validate_install_value(r"C:\Program Files (x86)\RustDesk").is_ok());
-        assert!(validate_install_value(r"C:\Users\R&D\RustDesk.exe").is_ok());
-        assert!(validate_install_value(r"C:\A&^ B\RustDesk.exe").is_ok());
+        assert!(validate_install_value(r"C:\Program Files (x86)\SupportDesk").is_ok());
+        assert!(validate_install_value(r"C:\Users\R&D\SupportDesk.exe").is_ok());
+        assert!(validate_install_value(r"C:\A&^ B\SupportDesk.exe").is_ok());
         for character in ['\0', '"', '%', '\r', '\n', '|', '<', '>'] {
             let value = format!(r"C:\unsafe{character}path");
             assert!(
@@ -290,8 +284,8 @@ mod tests {
     #[test]
     fn nested_commands_escape_while_protected_environment_preserves_carets() {
         assert_eq!(
-            escape_nested_cmd_ampersands(r"C:\A&^ B\RustDesk.exe"),
-            r"C:\A^&^^ B\RustDesk.exe"
+            escape_nested_cmd_ampersands(r"C:\A&^ B\SupportDesk.exe"),
+            r"C:\A^&^^ B\SupportDesk.exe"
         );
         let path = Path::new(r"C:\Win^Root\System32");
         let environment = trusted_install_environment_from_paths(path, path, path).unwrap();

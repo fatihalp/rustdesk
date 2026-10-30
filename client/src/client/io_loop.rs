@@ -11,19 +11,10 @@ use crate::{
     ui_session_interface::{InvokeUiSession, Session},
 };
 
-// Empirical no-data window before exposing the restart reconnect state to the UI.
-// Restart msgbox text is kept as a legacy UI fallback; Flutter handles the type as a control event.
 const RESTART_REMOTE_DEVICE_NO_DATA_TIMEOUT: Duration = Duration::from_secs(5);
 const KCP_CLOSE_REASON_FLUSH_DELAY: Duration = Duration::from_millis(30);
-// Deadline for the parting close-reason send once the peer is presumed gone; KCP waits for send
-// capacity with no deadline of its own.
 const KCP_CLOSE_REASON_GONE_DEADLINE: Duration = Duration::from_millis(500);
-// Grace after ICE reports Disconnected, which it does ~5s after it stops hearing from the peer,
-// for ~8s in total. Disconnected is transient by design, so this waits out a Wi-Fi roam or a
-// sleep/wake rather than acting on the first hint.
 const WEBRTC_SUSPECT_GRACE: Duration = Duration::from_secs(3);
-// KCP gets no such hint, only how long since a packet arrived; its endpoint pings an idle peer
-// about every 2s, so this is several missed pings, and matches the 8s WebRTC arrives at.
 const KCP_PEER_SILENCE_LIMIT: Duration = Duration::from_secs(8);
 #[cfg(feature = "unix-file-copy-paste")]
 use crate::{clipboard::try_empty_clipboard_files, clipboard_file::unix_file_clip};
@@ -76,23 +67,19 @@ pub struct Remote<T: InvokeUiSession> {
     audio_sender: MediaSender,
     receiver: mpsc::UnboundedReceiver<Data>,
     sender: mpsc::UnboundedSender<Data>,
-    // Stop sending local audio to remote client.
     stop_voice_call_sender: Option<std::sync::mpsc::Sender<()>>,
     voice_call_request_timestamp: Option<NonZeroI64>,
     read_jobs: Vec<fs::TransferJob>,
     write_jobs: Vec<fs::TransferJob>,
     remove_jobs: HashMap<i32, RemoveJob>,
-    timer: crate::RustDeskInterval,
+    timer: crate::SupportDeskInterval,
     last_update_jobs_status: (Instant, HashMap<i32, u64>),
-    // Set after PeerInfo for this round, not when the transport connects.
     is_connected: bool,
-    // Whether the scheduled initial snapshot may still be sent.
-    // The connection loop clears this when handling its result or a live clipboard update.
     #[cfg(not(any(target_os = "android", target_os = "ios")))]
     initial_clipboard_pending: bool,
     first_frame: bool,
     #[cfg(any(target_os = "windows", feature = "unix-file-copy-paste"))]
-    client_conn_id: i32, // used for file clipboard
+    client_conn_id: i32,
     data_count: Arc<AtomicUsize>,
     video_format: CodecFormat,
     elevation_requested: bool,
@@ -119,7 +106,7 @@ impl ParsedPeerInfo {
     fn is_support_virtual_display(&self) -> bool {
         self.is_installed
             && self.platform == "Windows"
-            && (self.idd_impl == "rustdesk_idd" || self.idd_impl == "amyuni_idd")
+            && (self.idd_impl == "supportdesk_idd" || self.idd_impl == "amyuni_idd")
     }
 }
 
@@ -137,7 +124,7 @@ impl<T: InvokeUiSession> Remote<T> {
             read_jobs: Vec::new(),
             write_jobs: Vec::new(),
             remove_jobs: Default::default(),
-            timer: crate::rustdesk_interval(time::interval(SEC30)),
+            timer: crate::supportdesk_interval(time::interval(SEC30)),
             last_update_jobs_status: (Instant::now(), Default::default()),
             is_connected: false,
             #[cfg(not(any(target_os = "android", target_os = "ios")))]
@@ -164,15 +151,11 @@ impl<T: InvokeUiSession> Remote<T> {
     pub async fn io_loop(&mut self, key: &str, token: &str, round: u32) {
         #[cfg(target_os = "windows")]
         let _file_clip_context_holder = {
-            // `is_port_forward()` will not reach here, but we still check it for clarity.
             if self.handler.is_default() {
-                // It is ok to call this function multiple times.
                 ContextSend::enable(true);
                 Some(crate::SimpleCallOnReturn {
                     b: true,
                     f: Box::new(|| {
-                        // No need to call `enable(false)` for sciter version, because each client of sciter version is a new process.
-                        // It's better to check if the peers are windows(support file copy&paste), but it's not necessary.
                         #[cfg(feature = "flutter")]
                         if !crate::flutter::sessions::has_sessions_running(ConnType::DEFAULT_CONN) {
                             ContextSend::enable(false);
@@ -227,16 +210,13 @@ impl<T: InvokeUiSession> Remote<T> {
                         return;
                     }
                 }
-                // Only WebRTC needs refining: its label names the transport that won the race,
-                // not the family ICE ended up nominating, and it is the one path where the two
-                // can disagree with the address the rendezvous observed.
                 let stream_type = if peer.webrtc_remote_ipv6().await.unwrap_or(false) {
                     "WebRTC/IPv6"
                 } else {
                     stream_type
                 };
                 self.handler
-                    .set_connection_type(is_secured, direct, stream_type); // flutter -> connection_ready
+                    .set_connection_type(is_secured, direct, stream_type);
                 if !is_secured
                     && !crate::common::is_direct_ip_access(&self.handler.get_id())
                     && !client::confirm_insecure_connection(&self.handler, &mut self.receiver).await
@@ -254,7 +234,6 @@ impl<T: InvokeUiSession> Remote<T> {
                         .set_fingerprint(crate::common::pk_to_fingerprint(pk.unwrap_or_default()));
                 }
 
-                // just build for now
                 #[cfg(not(any(target_os = "windows", feature = "unix-file-copy-paste")))]
                 let (_tx_holder, mut rx_clip_client) = mpsc::unbounded_channel::<i32>();
 
@@ -281,7 +260,7 @@ impl<T: InvokeUiSession> Remote<T> {
                 let mut rx_clip_client = rx_clip_client_holder.0.lock().await;
 
                 let mut status_timer =
-                    crate::rustdesk_interval(time::interval(Duration::new(1, 0)));
+                    crate::supportdesk_interval(time::interval(Duration::new(1, 0)));
                 let mut fps_instant = Instant::now();
 
                 let _keep_it = client::hc_connection(feedback, rendezvous_server, token).await;
@@ -345,7 +324,7 @@ impl<T: InvokeUiSession> Remote<T> {
                                 }
                                 self.update_jobs_status();
                             } else {
-                                self.timer = crate::rustdesk_interval(time::interval_at(Instant::now() + SEC30, SEC30));
+                                self.timer = crate::supportdesk_interval(time::interval_at(Instant::now() + SEC30, SEC30));
                             }
                         }
                         _ = status_timer.tick() => {
@@ -356,8 +335,6 @@ impl<T: InvokeUiSession> Remote<T> {
                                 break;
                             }
                             let rx_progress = peer.rx_progress();
-                            // `None` for transports that report none, and it never changes for a
-                            // given one, so they are inert here.
                             let progressed = rx_progress != last_rx_progress;
                             last_rx_progress = rx_progress;
                             if peer.webrtc_disconnected() && !progressed {
@@ -365,10 +342,6 @@ impl<T: InvokeUiSession> Remote<T> {
                             } else {
                                 webrtc_suspect_since = None;
                             }
-                            // Neither limit is a hard upper bound. A send is awaited inline in
-                            // this loop, so one in progress delays this tick - bounded on WebRTC
-                            // by the timeout the stream was built with, not bounded at all on
-                            // KCP. The 30s watchdog above shares the loop and the same delay.
                             peer_gone = webrtc_suspect_since
                                 .map_or(false, |since| since.elapsed() >= WEBRTC_SUSPECT_GRACE)
                                 || kcp
@@ -379,9 +352,6 @@ impl<T: InvokeUiSession> Remote<T> {
                                 log::info!("Peer stopped answering, reconnecting");
                                 #[cfg(feature = "flutter")]
                                 self.handler.msgbox("restarting-show", "Connecting...", "Connection in progress. Please wait.", "");
-                                // Sciter knows no `restarting-show` and would show a dialog that
-                                // waits for a click, where the timeout this arrives ahead of is
-                                // retryable and reconnects on its own. Keep that message for it.
                                 #[cfg(not(feature = "flutter"))]
                                 self.handler.msgbox("error", "Connection Error", "Timeout", "");
                                 break;
@@ -396,7 +366,6 @@ impl<T: InvokeUiSession> Remote<T> {
                             let speed = format!("{:.2}kB/s", speed as f32 / 1024 as f32);
 
                             let fps = self.video_threads.iter().map(|(k, v)| {
-                                // Correcting the inaccuracy of status_timer
                                 (k.clone(), (*v.frame_count.read().unwrap() as i32) * 1000 / elapsed as i32)
                             }).collect::<HashMap<usize, i32>>();
                             self.video_threads.iter().for_each(|(_, v)| {
@@ -426,20 +395,14 @@ impl<T: InvokeUiSession> Remote<T> {
                     }
                 }
                 log::debug!("Exit io_loop of id={}", self.handler.get_id());
-                // Stop client audio server.
                 if let Some(s) = self.stop_voice_call_sender.take() {
                     s.send(()).ok();
                 }
                 if kcp.is_some() {
-                    // Attempted rather than skipped even here: if the loss was one-way the peer
-                    // does get it, and drops its side instead of waiting out its own timeout.
                     if peer_gone {
                         peer.set_send_timeout(KCP_CLOSE_REASON_GONE_DEADLINE.as_millis() as u64);
                     }
-                    // Send the close reason if it hasn't been sent yet, as KCP cannot detect the socket close event.
                     self.send_close_reason(&mut peer, "kcp").await;
-                    // KCP does not send messages immediately, so wait to ensure the last message is sent.
-                    // 1ms works in my test, but 30ms is more reliable.
                     tokio::time::sleep(KCP_CLOSE_REASON_FLUSH_DELAY).await;
                 }
             }
@@ -464,7 +427,6 @@ impl<T: InvokeUiSession> Remote<T> {
     }
 
     fn handle_disconnected(&self, round: u32) {
-        // set_disconnected_ok is used to check if new connection round is started.
         let _set_disconnected_ok = self
             .handler
             .connection_round_state
@@ -474,7 +436,6 @@ impl<T: InvokeUiSession> Remote<T> {
 
         #[cfg(not(target_os = "ios"))]
         if self.handler.is_default() && _set_disconnected_ok {
-            // Other sessions may keep the listener running after this one disconnects.
             #[cfg(feature = "flutter")]
             crate::flutter::update_text_clipboard_required();
             #[cfg(all(feature = "flutter", feature = "unix-file-copy-paste"))]
@@ -484,8 +445,6 @@ impl<T: InvokeUiSession> Remote<T> {
 
         #[cfg(any(target_os = "windows", feature = "unix-file-copy-paste"))]
         if self.handler.is_default() && _set_disconnected_ok {
-            // Linux client cleanup runs synchronously in try_stop_clipboard() before FUSE is
-            // unmounted. Keep this async path for other file-clipboard platforms.
             crate::clipboard::try_empty_clipboard_files(ClipboardSide::Client, self.client_conn_id);
         }
     }
@@ -505,7 +464,6 @@ impl<T: InvokeUiSession> Remote<T> {
                 } => {
                     self.handler.msgbox(&r#type, &title, &text, "");
                 }
-                // File-data responses bypass is_stopping_allowed, but still require login.
                 _ if !self.is_connected => {
                     log::debug!("Discarding local file clipboard message before login");
                 }
@@ -531,7 +489,6 @@ impl<T: InvokeUiSession> Remote<T> {
                         #[cfg(target_os = "windows")]
                         if let Err(e) = ContextSend::make_sure_enabled() {
                             log::error!("failed to restart clipboard context: {}", e);
-                            // to-do: Show msgbox with "Don't show again" option
                         };
                         log::debug!("Send system clipboard message to remote");
                         #[cfg(not(any(target_os = "android", target_os = "ios")))]
@@ -544,7 +501,6 @@ impl<T: InvokeUiSession> Remote<T> {
                 }
             },
             None => {
-                // unreachable!()
             }
         }
     }
@@ -583,7 +539,6 @@ impl<T: InvokeUiSession> Remote<T> {
         }
     }
 
-    // Start a voice call recorder, records audio and send to remote
     fn start_voice_call(&mut self) -> Option<std::sync::mpsc::Sender<()>> {
         if self.handler.is_file_transfer()
             || self.handler.is_port_forward()
@@ -591,23 +546,14 @@ impl<T: InvokeUiSession> Remote<T> {
         {
             return None;
         }
-        // iOS does not have this server.
         #[cfg(not(any(target_os = "ios")))]
         {
-            // NOTE:
-            // The client server and --server both use the same sound input device.
-            // It's better to distinguish the server side and client side.
-            // But it' not necessary for now, because it's not a common case.
-            // And it is immediately known when the input device is changed.
             crate::audio_service::set_voice_call_input_device(get_default_sound_input(), false);
-            // Create a channel to receive error or closed message
             let (tx, rx) = std::sync::mpsc::channel();
             let (tx_audio_data, mut rx_audio_data) =
                 hbb_common::tokio::sync::mpsc::unbounded_channel();
-            // Create a stand-alone inner, add subscribe to audio service
             let conn_id = CLIENT_SERVER.write().unwrap().get_new_id();
             let client_conn_inner = ConnInner::new(conn_id.clone(), Some(tx_audio_data), None);
-            // now we subscribe
             CLIENT_SERVER.write().unwrap().subscribe(
                 audio_service::NAME,
                 client_conn_inner.clone(),
@@ -616,11 +562,9 @@ impl<T: InvokeUiSession> Remote<T> {
             let tx_audio = self.sender.clone();
             std::thread::spawn(move || {
                 loop {
-                    // check if client is closed
                     match rx.try_recv() {
                         Ok(_) | Err(std::sync::mpsc::TryRecvError::Disconnected) => {
                             log::debug!("Exit voice call audio service of client");
-                            // unsubscribe
                             CLIENT_SERVER.write().unwrap().subscribe(
                                 audio_service::NAME,
                                 client_conn_inner,
@@ -647,12 +591,9 @@ impl<T: InvokeUiSession> Remote<T> {
                         },
                         Err(err) => {
                             if err == TryRecvError::Empty {
-                                // ignore
                             } else {
                                 log::debug!("Failed to record local audio channel: {}", err);
                             }
-                            // Both arms fall through with nothing else in this loop blocking, so
-                            // without a pause the thread spun a core for the whole voice call.
                             std::thread::sleep(std::time::Duration::from_millis(1));
                         }
                     }
@@ -694,9 +635,7 @@ impl<T: InvokeUiSession> Remote<T> {
         self.initial_clipboard_pending = true;
         let sender = self.sender.clone();
         let permission_config = self.handler.get_permission_config();
-        // Clipboard access and encoding must not block the connection loop.
         let read_clipboard = move || {
-            // Capture after readiness, before reading; later changes invalidate this snapshot.
             let generation = clipboard_listener::current_generation();
             let msg_out = if permission_config.is_text_clipboard_required() {
                 crate::clipboard::get_current_clipboard_msg(
@@ -708,7 +647,6 @@ impl<T: InvokeUiSession> Remote<T> {
                 None
             };
             let msg_out = msg_out.filter(|_| permission_config.is_text_clipboard_required());
-            // Empty or failed reads must also finish the pending initial-sync attempt.
             if let Err(err) = sender.send(Data::InitialClipboard(generation, msg_out)) {
                 log::debug!("Failed to send initial clipboard result: {}", err);
             }
@@ -719,12 +657,8 @@ impl<T: InvokeUiSession> Remote<T> {
         tokio::task::spawn_blocking(read_clipboard);
     }
 
-    // Linux listener creation returns before X11/Wayland has subscribed to changes.
-    // Capture after readiness so changes during the read can invalidate the snapshot.
-    // A separate task keeps a stalled backend from blocking the connection loop.
     #[cfg(target_os = "linux")]
     fn spawn_initial_clipboard_read_after_ready(&self, read_clipboard: impl FnOnce() + Send + 'static) {
-        // Initial-sync wait budget, not a protocol-defined startup deadline.
         const CLIPBOARD_READY_TIMEOUT: Duration = Duration::from_secs(5);
 
         let sender = self.sender.clone();
@@ -778,7 +712,6 @@ impl<T: InvokeUiSession> Remote<T> {
             }
             #[cfg(not(any(target_os = "android", target_os = "ios")))]
             Data::InitialClipboard(generation, msg) => {
-                // A live update supersedes any initial snapshot still being prepared.
                 if !self.initial_clipboard_pending {
                     return true;
                 }
@@ -787,8 +720,6 @@ impl<T: InvokeUiSession> Remote<T> {
                     return true;
                 }
                 if generation != clipboard_listener::current_generation() {
-                    // A clipboard change or listener restart can invalidate the snapshot
-                    // without sending a live update that supersedes it.
                     drop(msg);
                     self.start_initial_clipboard_sync();
                     return true;
@@ -799,9 +730,6 @@ impl<T: InvokeUiSession> Remote<T> {
             }
             Data::Message(msg) => {
                 let msg = self.trusted_device.outgoing(msg);
-                // The Flutter clipboard broadcast is process-wide, so a clipboard can reach this
-                // round's queue before the round has logged in; it is dropped here, on the round
-                // itself.
                 #[cfg(feature = "flutter")]
                 if !self.is_connected
                     && matches!(
@@ -945,12 +873,11 @@ impl<T: InvokeUiSession> Remote<T> {
                             let mut files = job.files().clone();
                             #[cfg(windows)]
                             if self.handler.peer_platform() != "Windows" {
-                                // peer is not windows, need transform \ to /
                                 fs::transform_windows_path(&mut files);
                             }
                             let total_size = job.total_size();
                             self.read_jobs.push(job);
-                            self.timer = crate::rustdesk_interval(time::interval(MILLI1));
+                            self.timer = crate::supportdesk_interval(time::interval(MILLI1));
                             allow_err!(
                                 peer.send(&fs::new_receive(id, to, file_num, files, total_size))
                                     .await
@@ -1038,7 +965,7 @@ impl<T: InvokeUiSession> Remote<T> {
                             );
                             job.is_last_job = true;
                             self.read_jobs.push(job);
-                            self.timer = crate::rustdesk_interval(time::interval(MILLI1));
+                            self.timer = crate::supportdesk_interval(time::interval(MILLI1));
                         }
                     }
                 }
@@ -1072,7 +999,6 @@ impl<T: InvokeUiSession> Remote<T> {
                                 let mut files = job.files().clone();
                                 #[cfg(windows)]
                                 if self.handler.peer_platform() != "Windows" {
-                                    // peer is not windows, need transform \ to /
                                     fs::transform_windows_path(&mut files);
                                 }
                                 allow_err!(
@@ -1087,7 +1013,6 @@ impl<T: InvokeUiSession> Remote<T> {
                                 );
                             }
                             fs::DataSource::MemoryCursor(_) => {
-                                // unreachable!()
                                 log::error!("Resume job with memory cursor");
                             }
                         }
@@ -1344,7 +1269,6 @@ impl<T: InvokeUiSession> Remote<T> {
             }
             Data::NewVoiceCall => {
                 let msg = new_voice_call_request(true);
-                // Save the voice call request timestamp for the further validation.
                 self.voice_call_request_timestamp = Some(
                     NonZeroI64::new(msg.voice_call_request().req_timestamp)
                         .unwrap_or(NonZeroI64::new(get_time()).unwrap()),
@@ -1537,8 +1461,6 @@ impl<T: InvokeUiSession> Remote<T> {
         }
     }
 
-    // Currently, this function only considers decoding speed and queue length, not network delay.
-    // The controlled end can consider auto fps as the maximum decoding fps.
     #[inline]
     async fn fps_control(
         &mut self,
@@ -1578,9 +1500,9 @@ impl<T: InvokeUiSession> Remote<T> {
             return;
         };
         let mut limited_fps = if direct {
-            min_decode_fps * 9 / 10 // 30 got 27
+            min_decode_fps * 9 / 10
         } else {
-            min_decode_fps * 4 / 5 // 30 got 24
+            min_decode_fps * 4 / 5
         };
         if limited_fps > custom_fps {
             limited_fps = custom_fps;
@@ -1615,7 +1537,6 @@ impl<T: InvokeUiSession> Remote<T> {
         let should_decrease = trendings.iter().any(|v| *v == Some(false));
         let should_increase = !should_decrease && trendings.iter().any(|v| *v == Some(true));
         if last_auto_fps.is_none() || should_decrease || should_increase {
-            // limited_fps to ensure decoding is faster than encoding
             let mut auto_fps = limited_fps;
             if should_decrease && limited_fps < max_queue_len {
                 auto_fps = limited_fps / 2;
@@ -1631,22 +1552,19 @@ impl<T: InvokeUiSession> Remote<T> {
                 });
                 let mut msg = Message::new();
                 msg.set_misc(misc);
-                // Send inline so a queued manual FPS update is applied after this decision.
                 allow_err!(peer.send(&msg).await);
                 log::info!("Set fps to {}", auto_fps);
                 self.last_auto_fps = Some(auto_fps);
             }
         }
-        // send refresh
         for (display, thread) in self.video_threads.iter_mut() {
             let ctl = &mut thread.fps_control;
             let video_queue = thread.video_queue.read().unwrap();
             let tolerable = std::cmp::min(min_decode_fps, video_queue.capacity() / 2);
-            if ctl.refresh_times < 20 // enough
+            if ctl.refresh_times < 20
                     && (video_queue.len() > tolerable
                             && (ctl.refresh_times == 0 || ctl.last_refresh_instant.map(|t|t.elapsed().as_secs() > 10).unwrap_or(false)))
             {
-                // Refresh causes client set_display, left frames cause flickering.
                 drop(video_queue);
                 self.handler.refresh_video(*display as _);
                 log::info!("Refresh display {} to reduce delay", display);
@@ -1666,7 +1584,7 @@ impl<T: InvokeUiSession> Remote<T> {
             self.handler.msgbox(
                 "error",
                 "Download new version",
-                "upgrade_remote_rustdesk_client_to_{1.3.9}_tip",
+                "upgrade_remote_supportdesk_client_to_{1.3.9}_tip",
                 "",
             );
         } else {
@@ -1773,7 +1691,6 @@ impl<T: InvokeUiSession> Remote<T> {
                         #[cfg(all(target_os = "windows", not(feature = "flutter")))]
                         self.check_clipboard_file_context();
                         if self.handler.is_default() {
-                            // Startup notifications must see the current sessions' clipboard requirements.
                             #[cfg(feature = "flutter")]
                             #[cfg(not(target_os = "ios"))]
                             crate::flutter::update_text_clipboard_required();
@@ -1796,15 +1713,11 @@ impl<T: InvokeUiSession> Remote<T> {
                                     ),
                                 },
                             ));
-                            // To make sure current text clipboard data is updated.
                             #[cfg(not(target_os = "ios"))]
                             if let Some(mut rx) = rx {
                                 timeout(CLIPBOARD_INTERVAL, rx.recv()).await.ok();
                             }
 
-                            // `is_connected`` becomes true after the first PeerInfo.
-                            // Reconnects create a new Remote. Refreshes after a generation change
-                            // use a separate entry point and are not blocked by this guard.
                             #[cfg(not(any(target_os = "android", target_os = "ios")))]
                             if !self.is_connected
                                 && self.handler.is_text_clipboard_required()
@@ -1812,8 +1725,6 @@ impl<T: InvokeUiSession> Remote<T> {
                             {
                                 self.start_initial_clipboard_sync();
                             }
-                            // to-do: Android, is `sync_init_clipboard` really needed?
-                            // https://github.com/rustdesk/rustdesk/discussions/9010
                         }
 
                         if self.handler.is_file_transfer() {
@@ -1843,8 +1754,6 @@ impl<T: InvokeUiSession> Remote<T> {
                         }
                         Err(err) => {
                             log::warn!("Rejected cursor {id}: {err}");
-                            // The peer shows it now: selected, the UI treats it as a shape it
-                            // lacks, as it will when the peer selects it again.
                             self.handler.set_cursor_id(id.to_string());
                         }
                     }
@@ -1966,9 +1875,6 @@ impl<T: InvokeUiSession> Remote<T> {
                                     return true;
                                 }
                             }
-                            // We cannot call cancel_transfer_job/handle_job_status while holding
-                            // a mutable borrow from fs::get_job(&mut self.write_jobs), so defer
-                            // the error handling until after the borrow scope ends.
                             let mut set_files_err = None;
                             if let Some(job) = fs::get_job(fd.id, &mut self.write_jobs) {
                                 log::info!("job set_files: {:?}", entries);
@@ -1985,9 +1891,6 @@ impl<T: InvokeUiSession> Remote<T> {
                                     );
                                 }
                             } else if let Some(job) = self.remove_jobs.get_mut(&fd.id) {
-                                // Intentionally keep raw entries here:
-                                // - remote remove flow executes deletions on peer side;
-                                // - local remove flow is populated from local get_recursive_files().
                                 job.files = entries;
                                 self.handler
                                     .update_folder_files(fd.id, &job.files, fd.path, false, false);
@@ -2137,7 +2040,6 @@ impl<T: InvokeUiSession> Remote<T> {
                                                         union: Some(file_transfer_send_confirm_request::Union::OffsetBlk(0)),
                                                         ..Default::default()
                                                     };
-                                                        // This did not approve replacing an existing local file.
                                                         let msg = new_send_confirm(req);
                                                         allow_err!(peer.send(&msg).await);
                                                     }
@@ -2217,8 +2119,6 @@ impl<T: InvokeUiSession> Remote<T> {
                                                 .write()
                                                 .unwrap()
                                                 .remove(&d.id);
-                                            // Spawn a new thread to handle the print job.
-                                            // Or print job will block the ui thread.
                                             std::thread::spawn(move || {
                                                 if let Err(e) =
                                                     crate::platform::send_raw_data_to_printer(
@@ -2274,7 +2174,6 @@ impl<T: InvokeUiSession> Remote<T> {
                     }
                     Some(misc::Union::PermissionInfo(p)) => {
                         log::info!("Change permission {:?} -> {}", p.permission, p.enabled);
-                        // https://github.com/rustdesk/rustdesk/issues/3703#issuecomment-1474734754
                         match p.permission.enum_value() {
                             Ok(Permission::Keyboard) => {
                                 *self.handler.server_keyboard_enabled.write().unwrap() = p.enabled;
@@ -2354,7 +2253,7 @@ impl<T: InvokeUiSession> Remote<T> {
                         }
                     }
                     Some(misc::Union::CloseReason(c)) => {
-                        self.sent_close_reason = true; // The controlled end will close, no need to send close reason
+                        self.sent_close_reason = true;
                         self.handler.msgbox("error", "Connection Error", &c, "");
                         return false;
                     }
@@ -2496,7 +2395,6 @@ impl<T: InvokeUiSession> Remote<T> {
                             #[cfg(not(feature = "flutter"))]
                             let action = "";
                             if action == "dismiss" {
-                                // Just ignore the incoming print job.
                             } else {
                                 let id = fs::get_next_job_id();
                                 #[cfg(feature = "flutter")]
@@ -2539,7 +2437,6 @@ impl<T: InvokeUiSession> Remote<T> {
                 }
                 Some(message::Union::VoiceCallRequest(request)) => {
                     if request.is_connect {
-                        // TODO: maybe we will do a voice call from the peer in the future.
                     } else {
                         log::debug!("The remote has requested to close the voice call");
                         if let Some(sender) = self.stop_voice_call_sender.take() {
@@ -2555,11 +2452,9 @@ impl<T: InvokeUiSession> Remote<T> {
                             log::debug!("Possible encountering a voice call attack.");
                         } else {
                             if response.accepted {
-                                // The peer accepted the voice call.
                                 self.handler.on_voice_call_started();
                                 self.stop_voice_call_sender = self.start_voice_call();
                             } else {
-                                // The peer refused the voice call.
                                 self.handler.on_voice_call_closed("");
                             }
                         }
@@ -2595,7 +2490,6 @@ impl<T: InvokeUiSession> Remote<T> {
         self.last_auto_fps = None;
         self.peer_info.platform = pi.platform.clone();
 
-        // Check features field for terminal support
         if let Some(features) = pi.features.as_ref() {
             self.peer_info.support_terminal = features.terminal;
         }
@@ -2699,7 +2593,6 @@ impl<T: InvokeUiSession> Remote<T> {
         let mut config = self.handler.load_config();
         config.privacy_mode.v = on;
         if on {
-            // For compatibility, version < 1.2.4, the default value is 'privacy_mode_impl_mag'.
             let impl_key = if impl_key.is_empty() {
                 "privacy_mode_impl_mag".to_string()
             } else {
@@ -2784,7 +2677,6 @@ impl<T: InvokeUiSession> Remote<T> {
             back_notification::PrivacyModeState::PrvOffUnknown => {
                 self.handler
                     .msgbox("custom-error", "Privacy mode", "Turned off", "");
-                // log::error!("Privacy mode is turned off with unknown reason");
                 self.update_privacy_mode(impl_key, false);
             }
             _ => {}
@@ -2931,7 +2823,6 @@ impl<T: InvokeUiSession> Remote<T> {
     }
 
     fn update_record_state(&mut self) {
-        // state
         let permission = self.handler.lc.read().unwrap().record_permission;
         if !permission {
             self.handler.lc.write().unwrap().record_state = false;
@@ -2943,12 +2834,10 @@ impl<T: InvokeUiSession> Remote<T> {
         }
         self.last_record_state = start;
         log::info!("record screen start: {start}");
-        // update local
         for (_, v) in self.video_threads.iter_mut() {
             v.video_sender.send(MediaData::RecordScreen(start)).ok();
         }
         self.handler.update_record_status(start);
-        // update remote
         let mut misc = Misc::new();
         misc.set_client_record_status(start);
         let mut msg = Message::new();
@@ -2956,7 +2845,6 @@ impl<T: InvokeUiSession> Remote<T> {
         self.sender.send(Data::Message(msg)).ok();
     }
 
-    /// A shape that decoded, for the UI to ask for again; see `Session::cursor_shapes`.
     #[cfg(feature = "flutter")]
     fn keep_cursor_shape(&self, shape: CursorData) {
         self.handler
@@ -2970,7 +2858,6 @@ impl<T: InvokeUiSession> Remote<T> {
         !crate::is_peer_naming_cursors_by_content(self.handler.lc.read().unwrap().version)
     }
 
-    /// A shape the UI already has, under whatever handle, is only selected.
     fn set_cursor_data_by_content(&mut self, cd: CursorData) {
         let peer_id = cd.id;
         let id = CursorDedupe::name(&cd);
@@ -2998,9 +2885,6 @@ impl<T: InvokeUiSession> Remote<T> {
     }
 }
 
-/// A shape that decoded, still compressed, under the id the UI knows it by. Copied once it
-/// decoded: the message's colors may be a slice of a larger received buffer, which a clone
-/// would keep alive.
 #[cfg(feature = "flutter")]
 fn cursor_shape(id: u64, cd: &CursorData, compressed: &[u8]) -> CursorData {
     CursorData {
@@ -3014,17 +2898,14 @@ fn cursor_shape(id: u64, cd: &CursorData, compressed: &[u8]) -> CursorData {
     }
 }
 
-/// The RGBA of a shape kept by `Session::cursor_shapes`, for the UI to draw it again.
 #[cfg(any(feature = "flutter", test))]
 pub(crate) fn kept_cursor_rgba(shape: CursorData) -> hbb_common::ResultType<CursorData> {
     decode_cursor_data(shape)
 }
 
-// Both UI handlers receive validated, uncompressed RGBA from the receive loop.
 fn decode_cursor_data(data: CursorData) -> hbb_common::ResultType<CursorData> {
     use hbb_common::{anyhow::anyhow, bail};
 
-    // Limit decoded cursor data to 1 MiB before JSON serialization.
     const MAX_CURSOR_SIZE: i32 = 512;
     const RGBA_CHANNELS: usize = 4;
 
@@ -3061,19 +2942,13 @@ fn decode_cursor_data(data: CursorData) -> hbb_common::ResultType<CursorData> {
     Ok(cd)
 }
 
-/// Gives the UI one id per shape for a peer that names shapes by handle, so the UI decodes and
-/// keeps a shape once however many handles it arrives under. Nothing is dropped for the
-/// connection: the peer sends a shape once and may select any handle it named again.
 #[derive(Default)]
 struct CursorDedupe {
     ids: HashMap<u64, u64>,
-    // The shapes given to the UI, by content id: whether one that arrives needs decoding.
     decoded: HashSet<u64>,
 }
 
 impl CursorDedupe {
-    /// Hashes the compressed colors: one peer compresses the same pixels to the same bytes, and
-    /// a shape seen before is then never decompressed again.
     fn name(cd: &CursorData) -> u64 {
         crate::cursor_content_id(cd.width, cd.height, cd.hotx, cd.hoty, &cd.colors)
     }
@@ -3086,16 +2961,11 @@ impl CursorDedupe {
         self.decoded.contains(&id)
     }
 
-    /// Names the handle once its shape decoded, now or before.
     fn record(&mut self, peer_id: u64, id: u64) {
         self.ids.insert(peer_id, id);
         self.decoded.insert(id);
     }
 
-    /// Names a known handle by the content of a shape that did not decode, which is never
-    /// marked decoded: the UI has no shape under it, now or when the handle is selected again,
-    /// and the shape the handle named before is not shown in its place. A handle never seen is
-    /// not filed, so what a peer sends that does not decode takes no room.
     fn rejected(&mut self, peer_id: u64, id: u64) -> u64 {
         if let Some(named) = self.ids.get_mut(&peer_id) {
             *named = id;
@@ -3153,7 +3023,6 @@ struct VideoThread {
 
 impl Drop for VideoThread {
     fn drop(&mut self) {
-        // since channels are buffered, messages sent before the disconnect will still be properly received.
         *self.discard_queue.write().unwrap() = true;
     }
 }
@@ -3164,8 +3033,6 @@ mod tests {
     use super::*;
     use crate::flutter::FlutterHandler;
 
-    /// A round's `Remote` over a loopback pair, before any login: what it sends to `peer`
-    /// arrives at `far`.
     async fn remote_and_peer() -> (Remote<FlutterHandler>, Stream, Stream) {
         let listener = hbb_common::tcp::new_listener("127.0.0.1:0", false)
             .await
@@ -3204,8 +3071,6 @@ mod tests {
         Data::Message(msg)
     }
 
-    // A clipboard queued before this round's login stays here; what the login itself sends
-    // through the same queue does not.
     #[tokio::test]
     async fn a_clipboard_queued_before_this_rounds_login_is_dropped() {
         let (mut remote, mut peer, mut far) = remote_and_peer().await;

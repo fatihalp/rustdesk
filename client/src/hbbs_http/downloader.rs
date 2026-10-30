@@ -18,10 +18,6 @@ lazy_static! {
     static ref DOWNLOADERS: Mutex<HashMap<String, Downloader>> = Default::default();
 }
 
-/// This struct is used to return the download data to the caller.
-/// The caller should check if the file is downloaded successfully and remove the job from the map.
-/// If the file is not downloaded successfully, the `data` field will be empty.
-/// If the file is downloaded successfully, the `data` field will contain the downloaded data if `path` is None.
 #[derive(Serialize, Debug)]
 pub struct DownloadData {
     #[serde(skip_serializing_if = "Vec::is_empty")]
@@ -67,7 +63,6 @@ struct DownloadRequest {
     expected_size: u64,
 }
 
-// The caller should check if the file is downloaded successfully and remove the job from the map.
 pub fn download_file(
     url: String,
     path: Option<PathBuf>,
@@ -318,7 +313,6 @@ pub fn get_download_data(id: &str) -> ResultType<DownloadData> {
 
 pub fn cancel(id: &str) {
     if let Some(downloader) = DOWNLOADERS.lock().unwrap().get(id) {
-        // The receiver may not be able to receive the cancel signal, so keep the job until it exits.
         let _ = downloader.tx_cancel.send(());
     }
 }

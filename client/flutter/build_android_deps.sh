@@ -4,11 +4,6 @@ set -e -o pipefail
 
 ANDROID_ABI=$1
 
-# Build RustDesk dependencies for Android using vcpkg.json
-# Required:
-#   1. set VCPKG_ROOT / ANDROID_NDK_HOME path environment variables
-#   2. vcpkg initialized
-#   3. ndk, version: r25c or newer
 
 if [ -z "${ANDROID_NDK_HOME}" ]; then
 	echo "ERROR: Please set ANDROID_NDK_HOME environment variable" 1>&2
@@ -39,15 +34,13 @@ x86)
 	;;
 esac
 
-# Get directory of this script
 
 SCRIPTDIR="$(readlink -f "$0")"
 SCRIPTDIR="$(dirname "${SCRIPTDIR}")"
 
-# Check if vcpkg.json is one level up - in root directory of RD
 
 if [ ! -f "${SCRIPTDIR}/../vcpkg.json" ]; then
-	echo "ERROR: Can not find vcpkg.json in RustDesk top-level directory" 1>&2
+	echo "ERROR: Can not find vcpkg.json in SupportDesk top-level directory" 1>&2
 	exit 1
 fi
 
@@ -64,8 +57,6 @@ popd
 echo "INFO: Completed building vcpkg dependencies for Android ${ANDROID_ABI}"
 
 if [ "${ANDROID_ABI}" = 'armeabi-v7a' ]; then
-	# Symlink arm-neon-android to arm-android because cargo-ndk does not
-	# understand NEON suffix.
 
 	if [ -d "${VCPKG_ROOT}/installed/arm-neon-android" ]; then
 		echo 'INFO: Symlinking arm-neon-android to arm-android'

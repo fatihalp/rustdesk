@@ -23,11 +23,6 @@ fn enum_printer_port(
     pc_returned: LPDWORD,
 ) -> BOOL {
     unsafe {
-        // https://learn.microsoft.com/en-us/windows/win32/printdocs/enumports
-        // This is a blocking or synchronous function and might not return immediately.
-        // How quickly this function returns depends on run-time factors
-        // such as network status, print server configuration, and printer driver implementation factors that are difficult to predict when writing an application.
-        // Calling this function from a thread that manages interaction with the user interface could make the application appear to be unresponsive.
         EnumPortsW(
             null_mut(),
             level,

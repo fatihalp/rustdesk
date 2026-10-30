@@ -44,7 +44,6 @@ class _PeerCard extends StatefulWidget {
   _PeerCardState createState() => _PeerCardState();
 }
 
-/// State for the connection page.
 class _PeerCardState extends State<_PeerCard>
     with AutomaticKeepAliveClientMixin {
   var _menuPos = RelativeRect.fill;
@@ -63,7 +62,6 @@ class _PeerCardState extends State<_PeerCard>
     final PeerTabModel peerTabModel = Provider.of(context);
     final peer = super.widget.peer;
     return GestureDetector(
-        // Web card actions have their own semantics; preserve pointer double-clicks.
         excludeFromSemantics: isWebDesktop,
         onDoubleTap: peerTabModel.multiSelectionMode
             ? null
@@ -292,9 +290,6 @@ class _PeerCardState extends State<_PeerCard>
       color: Colors.transparent,
       elevation: 0,
       margin: EdgeInsets.zero,
-      // to-do: memory leak here, more investigation needed.
-      // Continious rebuilds of `Obx()` will cause memory leak here.
-      // The simple demo does not have this issue.
       child: Obx(
         () => Container(
           foregroundDecoration: deco.value,
@@ -522,8 +517,6 @@ class _PeerCardState extends State<_PeerCard>
     return peer.password.isNotEmpty;
   }
 
-  /// Show the peer menu and handle user's choice.
-  /// User might remove the peer or send a file to the peer.
   void _showPeerMenu(String id) async {
     await mod_menu.showMenu(
       context: context,
@@ -715,7 +708,6 @@ abstract class BasePeerCard extends StatelessWidget {
     );
   }
 
-  /// Only available on Windows.
   @protected
   MenuEntryBase<String> _createShortCutAction(String id) {
     return MenuEntryButton<String>(
@@ -754,7 +746,6 @@ abstract class BasePeerCard extends StatelessWidget {
   _openInWindowsAction(String id) async => await _openNewConnInAction(
       id, 'Open in new window', kOptionOpenInWindows);
 
-  // ignore: unused_element
   _openNewConnInOptAction(String id) async =>
       mainGetLocalBoolOptionSync(kOptionOpenNewConnInTabs)
           ? await _openInWindowsAction(id)
@@ -1016,7 +1007,6 @@ class RecentPeerCard extends BasePeerCard {
     if (isDesktop && peer.platform != kPeerPlatformAndroid) {
       menuItems.add(_tcpTunnelingAction(context));
     }
-    // menuItems.add(await _openNewConnInOptAction(peer.id));
     if (!isWeb) {
       menuItems.add(await _forceAlwaysRelayAction(peer.id));
     }
@@ -1079,7 +1069,6 @@ class FavoritePeerCard extends BasePeerCard {
     if (isDesktop && peer.platform != kPeerPlatformAndroid) {
       menuItems.add(_tcpTunnelingAction(context));
     }
-    // menuItems.add(await _openNewConnInOptAction(peer.id));
     if (!isWeb) {
       menuItems.add(await _forceAlwaysRelayAction(peer.id));
     }
@@ -1141,7 +1130,6 @@ class DiscoveredPeerCard extends BasePeerCard {
     if (isDesktop && peer.platform != kPeerPlatformAndroid) {
       menuItems.add(_tcpTunnelingAction(context));
     }
-    // menuItems.add(await _openNewConnInOptAction(peer.id));
     if (!isWeb) {
       menuItems.add(await _forceAlwaysRelayAction(peer.id));
     }
@@ -1198,7 +1186,6 @@ class AddressBookPeerCard extends BasePeerCard {
     if (isDesktop && peer.platform != kPeerPlatformAndroid) {
       menuItems.add(_tcpTunnelingAction(context));
     }
-    // menuItems.add(await _openNewConnInOptAction(peer.id));
     if (!isWeb) {
       menuItems.add(await _forceAlwaysRelayAction(peer.id));
     }
@@ -1239,11 +1226,10 @@ class AddressBookPeerCard extends BasePeerCard {
     return menuItems;
   }
 
-  // address book does not need to update
   @protected
   @override
   void _update() =>
-      {}; //gFFI.abModel.pullAb(force: ForcePullAb.current, quiet: true);
+      {};
 
   @protected
   MenuEntryBase<String> _editTagAction(String id) {
@@ -1355,7 +1341,6 @@ class MyGroupPeerCard extends BasePeerCard {
     if (isDesktop && peer.platform != kPeerPlatformAndroid) {
       menuItems.add(_tcpTunnelingAction(context));
     }
-    // menuItems.add(await _openNewConnInOptAction(peer.id));
     if (!isWeb) {
       menuItems.add(await _forceAlwaysRelayAction(peer.id));
     }
@@ -1365,11 +1350,6 @@ class MyGroupPeerCard extends BasePeerCard {
     if (isWindows) {
       menuItems.add(_createShortCutAction(peer.id));
     }
-    // menuItems.add(MenuEntryDivider());
-    // menuItems.add(_renameAction(peer.id));
-    // if (await bind.mainPeerHasPassword(id: peer.id)) {
-    //   menuItems.add(_unrememberPasswordAction(peer.id));
-    // }
     if (gFFI.userModel.userName.isNotEmpty) {
       menuItems.add(_addToAb(peer));
     }
@@ -1534,7 +1514,6 @@ Widget build_more(BuildContext context,
                       ?.color
                       ?.withOpacity(0.5)))));
   if (onTap == null) return button;
-  // Serial taps preserve cancellation without waiting for the card's double tap.
   return RawGestureDetector(
       excludeFromSemantics: true,
       gestures: {
@@ -1595,8 +1574,6 @@ void connectInPeerTab(BuildContext context, Peer peer, PeerTabIndex tab,
   var password = '';
   bool isSharedPassword = false;
   if (tab == PeerTabIndex.ab) {
-    // If recent peer's alias is empty, set it to ab's alias
-    // Because the platform is not set, it may not take effect, but it is more important not to display if the connection is not successful
     if (peer.alias.isNotEmpty &&
         (await bind.mainGetPeerOption(id: peer.id, key: "alias")).isEmpty) {
       await bind.mainSetPeerAlias(

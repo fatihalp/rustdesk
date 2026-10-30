@@ -1,9 +1,7 @@
-# NASM is required to build AOM
 vcpkg_find_acquire_program(NASM)
 get_filename_component(NASM_EXE_PATH ${NASM} DIRECTORY)
 vcpkg_add_to_path(${NASM_EXE_PATH})
 
-# Perl is required to build AOM
 vcpkg_find_acquire_program(PERL)
 get_filename_component(PERL_PATH ${PERL} DIRECTORY)
 vcpkg_add_to_path(${PERL_PATH})
@@ -32,8 +30,6 @@ endif()
 
 set(aom_target_cpu "")
 if(VCPKG_TARGET_IS_UWP OR (VCPKG_TARGET_IS_WINDOWS AND VCPKG_TARGET_ARCHITECTURE MATCHES "^arm"))
-    # UWP + aom's assembler files result in weirdness and build failures
-    # Also, disable assembly on ARM and ARM64 Windows to fix compilation issues.
     set(aom_target_cpu "-DAOM_TARGET_CPU=generic")
 endif()
 
@@ -65,14 +61,11 @@ if(VCPKG_TARGET_IS_WINDOWS)
   endif()
 endif()
 
-# Move cmake configs
 vcpkg_cmake_config_fixup(CONFIG_PATH ${AOM_CONFIG_PATH})
 
-# Remove duplicate files
 file(REMOVE_RECURSE ${CURRENT_PACKAGES_DIR}/debug/include
                     ${CURRENT_PACKAGES_DIR}/debug/share)
 
-# Handle copyright
 file(INSTALL ${SOURCE_PATH}/LICENSE DESTINATION ${CURRENT_PACKAGES_DIR}/share/${PORT} RENAME copyright)
 
 vcpkg_fixup_pkgconfig()

@@ -27,27 +27,19 @@ import '../../models/model.dart';
 import '../../models/platform_model.dart';
 import '../widgets/popup_menu.dart';
 
-/// status of location bar
 enum LocationStatus {
-  /// normal bread crumb bar
   bread,
 
-  /// show path text field
   pathLocation,
 
-  /// show file search bar text field
   fileSearchBar
 }
 
-/// The status of currently focused scope of the mouse
 enum MouseFocusScope {
-  /// Mouse is in local field.
   local,
 
-  /// Mouse is in remote field.
   remote,
 
-  /// Mouse is not in local field, remote neither.
   none
 }
 
@@ -83,7 +75,7 @@ class _FileManagerPageState extends State<FileManagerPage>
     with AutomaticKeepAliveClientMixin, WidgetsBindingObserver {
   final _mouseFocusScope = Rx<MouseFocusScope>(MouseFocusScope.none);
 
-  final _dropMaskVisible = false.obs; // TODO impl drop mask
+  final _dropMaskVisible = false.obs;
   final _overlayKeyState = OverlayKeyState();
   final _uniqueKey = UniqueKey();
 
@@ -113,7 +105,6 @@ class _FileManagerPageState extends State<FileManagerPage>
     }
     debugPrint("File manager page init success with id ${widget.id}");
     _ffi.dialogManager.setOverlayState(_overlayKeyState);
-    // Call onSelected in post frame callback, since we cannot guarantee that the callback will not call setState.
     WidgetsBinding.instance.addPostFrameCallback((_) {
       widget.tabController?.onSelected?.call(widget.id);
     });
@@ -208,8 +199,6 @@ class _FileManagerPageState extends State<FileManagerPage>
     );
   }
 
-  /// transfer status list
-  /// watch transfer status
   Widget statusList() {
     Widget getIcon(JobProgress job) {
       final color = Theme.of(context).tabBarTheme.labelColor;
@@ -401,7 +390,6 @@ class _FileManagerPageState extends State<FileManagerPage>
 
   void handleDragDone(DropDoneDetails details, bool isLocal) {
     if (isLocal) {
-      // ignore local
       return;
     }
     final items = SelectedItems(isLocal: false);
@@ -442,7 +430,6 @@ class _FileManagerViewState extends State<FileManagerView> {
   final _fileListScrollController = ScrollController();
   final _globalHeaderKey = GlobalKey();
 
-  /// [_lastClickTime], [_lastClickEntry] help to handle double click
   var _lastClickTime =
       DateTime.now().millisecondsSinceEpoch - bind.getDoubleClickTime() - 1000;
   Entry? _lastClickEntry;
@@ -458,7 +445,6 @@ class _FileManagerViewState extends State<FileManagerView> {
   @override
   void initState() {
     super.initState();
-    // register location listener
     _locationNode.addListener(onLocationFocusChanged);
     controller.directory.listen((e) => breadCrumbScrollToEnd());
   }
@@ -536,9 +522,7 @@ class _FileManagerViewState extends State<FileManagerView> {
   void onLocationFocusChanged() {
     debugPrint("focus changed on local");
     if (_locationNode.hasFocus) {
-      // ignore
     } else {
-      // lost focus, change to bread
       if (_locationStatus.value != LocationStatus.fileSearchBar) {
         _locationStatus.value = LocationStatus.bread;
       }
@@ -552,7 +536,6 @@ class _FileManagerViewState extends State<FileManagerView> {
     return Container(
       child: Column(
         children: [
-          // symbols
           PreferredSize(
                   child: Row(
                     crossAxisAlignment: CrossAxisAlignment.center,
@@ -589,7 +572,6 @@ class _FileManagerViewState extends State<FileManagerView> {
                   ),
                   preferredSize: Size(double.infinity, 70))
               .paddingOnly(bottom: 15),
-          // buttons
           Row(
             children: [
               Row(
@@ -1099,7 +1081,6 @@ class _FileManagerViewState extends State<FileManagerView> {
             .skip(skipCount)
             .where((element) => element.name.toLowerCase().startsWith(buffer));
         if (searchResult.isEmpty) {
-          // cannot find next, lets restart search from head
           debugPrint("restart search from head");
           searchResult = entries.where(
               (element) => element.name.toLowerCase().startsWith(buffer));
@@ -1131,7 +1112,6 @@ class _FileManagerViewState extends State<FileManagerView> {
                 return element.name.contains(_searchText.value);
               }).toList(growable: false)
             : entries;
-        // Keep rows lazy so large directories only build visible list items.
         final rows = filteredEntries.map((entry) {
           final sizeStr =
               entry.isFile ? readableFileSize(entry.size.toDouble()) : "";
@@ -1142,7 +1122,6 @@ class _FileManagerViewState extends State<FileManagerView> {
           onTap() {
             _keyboardNode.requestFocus();
             final items = selectedItems;
-            // handle double click
             if (_checkDoubleClick(entry)) {
               controller.openDirectory(entry.path);
               items.clear();
@@ -1282,12 +1261,10 @@ class _FileManagerViewState extends State<FileManagerView> {
                               onSecondaryTap: onSecondaryTap,
                               onSecondaryTapDown: onSecondaryTapDown,
                             ),
-                            // Divider from header.
                             SizedBox(
                               width: 2.0,
                             ),
                             Expanded(
-                              // width: 100,
                               child: GestureDetector(
                                 child: Tooltip(
                                   waitDuration: Duration(milliseconds: 500),
@@ -1319,13 +1296,11 @@ class _FileManagerViewState extends State<FileManagerView> {
 
         return Column(
           children: [
-            // Header
             Row(
               children: [
                 Expanded(child: _buildFileBrowserHeader(context)),
               ],
             ),
-            // Body
             Expanded(
               child: ListView.builder(
                 controller: scrollController,
@@ -1370,8 +1345,6 @@ class _FileManagerViewState extends State<FileManagerView> {
   }
 
   KeyEventResult _onFileListKeyEvent(FocusNode node, KeyEvent event) {
-    // A focused child such as a sort header keeps its default keys, e.g.
-    // Enter to sort.
     if (!_keyboardNode.hasPrimaryFocus) return KeyEventResult.ignored;
     for (final binding in _fileListKeyBindings().entries) {
       if (binding.key.accepts(event, HardwareKeyboard.instance)) {
@@ -1393,7 +1366,6 @@ class _FileManagerViewState extends State<FileManagerView> {
           _moveSelectionByKey(-1, true),
       const SingleActivator(LogicalKeyboardKey.arrowDown, shift: true): () =>
           _moveSelectionByKey(1, true),
-      // Unhandled, they would move keyboard focus to the other pane.
       const SingleActivator(LogicalKeyboardKey.arrowLeft): () {},
       const SingleActivator(LogicalKeyboardKey.arrowRight): () {},
       const SingleActivator(LogicalKeyboardKey.pageUp): () =>
@@ -1622,7 +1594,6 @@ class _FileManagerViewState extends State<FileManagerView> {
             children: [
                 Expanded(
                   child: Listener(
-                    // handle mouse wheel
                     onPointerSignal: (e) {
                       if (e is PointerScrollEvent) {
                         final sc = _breadCrumbScroller;
@@ -1814,22 +1785,13 @@ class _FileManagerViewState extends State<FileManagerView> {
     );
   }
 
-  // openDirectory(String path, {bool isLocal = false}) {
-  //   model.openDirectory(path, isLocal: isLocal);
-  // }
 }
 
-/// Selection after a navigation key moves it by [delta] rows. A shift range is
-/// returned ordered from its anchor to the moved end, so the first and last
-/// items of [selected] stand for those two ends on the next press without
-/// separate state.
 @visibleForTesting
 List<Entry> navigateSelection(
     List<Entry> entries, List<Entry> selected, int delta, bool extend) {
   if (entries.isEmpty) return [];
   final current = selected.isEmpty ? -1 : entries.indexOf(selected.last);
-  // With nothing selected, moving down starts above the first row and moving
-  // up below the last one, as the Sciter grid did.
   final lead = current >= 0 ? current : (delta > 0 ? -1 : entries.length);
   final next = (lead + delta).clamp(0, entries.length - 1);
   if (!extend || current < 0) return [entries[next]];
@@ -1839,9 +1801,6 @@ List<Entry> navigateSelection(
   return [for (var i = anchor; i != next + step; i += step) entries[i]];
 }
 
-/// Rows a PageUp/PageDown press moves from [lead] while rows [first]..[last]
-/// are fully visible: to that edge first, then a page further, as list views
-/// do.
 @visibleForTesting
 int pageDelta(int lead, int first, int last, bool down) {
   final page = max(1, last - first);

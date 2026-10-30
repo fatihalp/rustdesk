@@ -11,7 +11,7 @@ return new class extends Migration
         Schema::create('devices', function (Blueprint $table) {
             $table->id();
             $table->foreignId('client_app_id')->nullable()->constrained()->nullOnDelete();
-            $table->string('rustdesk_id')->unique();
+            $table->string('supportdesk_id')->unique();
             $table->string('uuid')->nullable();
             $table->string('hostname')->nullable();
             $table->string('username')->nullable();

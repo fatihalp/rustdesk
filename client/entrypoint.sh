@@ -1,7 +1,6 @@
 #!/bin/sh
 
-cd "$HOME"/rustdesk || exit 1
-# shellcheck source=/dev/null
+cd "$HOME"/supportdesk || exit 1
 . "$HOME"/.cargo/env
 
 argv=$*
@@ -32,5 +31,4 @@ if [ -z $release ]; then
   test -f target/debug/libsciter-gtk.so || cp "$HOME"/libsciter-gtk.so target/debug/
 fi
 set -f
-#shellcheck disable=2086
 VCPKG_ROOT=/vcpkg cargo build --locked $argv

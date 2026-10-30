@@ -84,14 +84,10 @@ fn validate_verified_msi_path(path: &Path) -> ResultType<()> {
     Ok(())
 }
 
-// Reject symlinks, junctions, and other reparse points so verification and
-// execution operate on a regular installer file, not a redirected target.
 fn is_update_file_attributes_trusted(attributes: u32) -> bool {
     attributes & FILE_ATTRIBUTE_REPARSE_POINT == 0
 }
 
-// Open reparse points themselves instead of following them, so the
-// attribute check can reject redirected update paths.
 fn update_file_open_flags() -> u32 {
     FILE_FLAG_OPEN_REPARSE_POINT
 }
@@ -150,7 +146,6 @@ fn copy_update_file_for_verification(file: &str) -> ResultType<PathBuf> {
     bail!("Failed to create verified update file for {}", file);
 }
 
-// Keep the verified copy open without write/delete sharing until the installer starts.
 pub fn copy_and_verify_update_file_sha256(
     file: &str,
     expected_sha256: &str,
@@ -223,7 +218,7 @@ mod tests {
     #[test]
     fn mismatched_sha256_removes_verified_copy() {
         let source_path = std::env::temp_dir().join(format!(
-            "rustdesk-update-source-{}-{}.exe",
+            "supportdesk-update-source-{}-{}.exe",
             std::process::id(),
             hbb_common::rand::random::<u64>()
         ));
@@ -260,11 +255,11 @@ mod tests {
     #[test]
     fn verified_update_file_size_must_match_expected_size() {
         let source_path = std::env::temp_dir().join(format!(
-            "rustdesk-update-size-test-{}-{}.exe",
+            "supportdesk-update-size-test-{}-{}.exe",
             std::process::id(),
             hbb_common::rand::random::<u64>()
         ));
-        std::fs::write(&source_path, b"rustdesk").unwrap();
+        std::fs::write(&source_path, b"supportdesk").unwrap();
         let verified_file = copy_and_verify_update_file_sha256(
             source_path.to_str().unwrap(),
             "304ca1638c5effa6832e0e15b958a8f74847efe4df9c3f3187216e921c168fed",

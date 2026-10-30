@@ -1,22 +1,3 @@
-//! fuse server implement
-//! we use fuse to provide file readers, warping data transfer to file interfaces
-//!
-//! # Name encoding
-//!
-//! There are different collection of characters forbidden in file names on different platforms:
-//! - windows: `\/:*?"<>|`
-//! - macos: `:/`
-//! - linux: `/`
-//!
-//! what makes it troublesome is windows also used '\' as path separator.
-//!
-//! For now, we transfer all file names with windows separators, UTF-16 encoded.
-//! *Need a way to transfer file names with '\' safely*.
-//! Maybe we can use URL encoded file names and '/' separators as a new standard, while keep the support to old schemes.
-//!
-//! # Note
-//! - all files on FS should be read only, and mark the owner to be the current user
-//! - any write operations, hard links, and symbolic links on the FS should be denied
 
 use std::{
     collections::{BTreeMap, HashMap},
@@ -42,7 +23,6 @@ use crate::{
     send_data, ClipboardFile, CliprdrError,
 };
 
-/// fuse server ready retry max times
 const READ_RETRY: i32 = 3;
 
 impl From<FileType> for fuser::FileType {
@@ -55,8 +35,6 @@ impl From<FileType> for fuser::FileType {
     }
 }
 
-/// fuse client
-/// this is a proxy to the fuse server
 #[derive(Debug)]
 pub struct FuseClient {
     server: Arc<Mutex<FuseServer>>,
@@ -163,22 +141,16 @@ impl fuser::Filesystem for FuseClient {
     }
 }
 
-/// fuse server
-/// provides a read-only file system
 #[derive(Debug)]
 pub(crate) struct FuseServer {
     generation: AtomicU64,
     files: Vec<FuseNode>,
-    // file handle counter
     file_handle_counter: AtomicU64,
-    // timeout
     timeout: Duration,
-    // file read reply channel
     rx: Receiver<ClipboardFile>,
 }
 
 impl FuseServer {
-    /// create a new fuse server
     pub fn new(timeout: Duration) -> (Self, Sender<ClipboardFile>) {
         let (tx, rx) = std::sync::mpsc::channel();
         (
@@ -214,7 +186,6 @@ impl fuser::Filesystem for FuseServer {
         _config: &mut fuser::KernelConfig,
     ) -> Result<(), libc::c_int> {
         if self.files.is_empty() {
-            // create a root file
             let root = FuseNode::new_root();
             self.files.push(root);
         }
@@ -266,7 +237,6 @@ impl fuser::Filesystem for FuseServer {
                 return;
             }
         }
-        // error
         reply.error(libc::ENOENT);
         log::debug!("fuse: child not found");
     }
@@ -289,7 +259,6 @@ impl fuser::Filesystem for FuseServer {
             log::error!("fuse: opendir: entry is not a directory");
             return;
         }
-        // in gc, deny open
         if entry.marked() {
             log::error!("fuse: opendir: entry is in gc");
             reply.error(libc::EBUSY);
@@ -390,14 +359,12 @@ impl fuser::Filesystem for FuseServer {
             return;
         };
 
-        // todo: support link file
         if entry.attributes.kind != FileType::File {
             reply.error(libc::ENFILE);
             log::error!("fuse: open: entry is not a file");
             return;
         }
 
-        // check gc
         if entry.marked() {
             reply.error(libc::EBUSY);
             log::error!("fuse: open: entry is in gc");
@@ -409,7 +376,6 @@ impl fuser::Filesystem for FuseServer {
         reply.opened(fh, 0);
     }
 
-    // todo: implement retry
     fn read(
         &mut self,
         _req: &fuser::Request<'_>,
@@ -510,7 +476,6 @@ impl fuser::Filesystem for FuseServer {
 }
 
 impl FuseServer {
-    // get files and directory path right in root of FUSE fs
     pub fn list_root(&self) -> Vec<PathBuf> {
         let files = &self.files;
         let children = &files[0].children;
@@ -522,7 +487,6 @@ impl FuseServer {
         paths
     }
 
-    /// allocate a new file descriptor
     fn alloc_fd(&self) -> u64 {
         self.file_handle_counter.fetch_add(1, Ordering::Relaxed)
     }
@@ -535,8 +499,6 @@ impl FuseServer {
     ) -> Result<Vec<u8>, std::io::Error> {
         let request_stream_id = rand::random();
         let cb_requested = unsafe {
-            // convert `size` from u32 to i32
-            // yet with same bit representation
             std::mem::transmute::<u32, i32>(size)
         };
 
@@ -560,7 +522,6 @@ impl FuseServer {
 
         let mut retry_times = 0;
 
-        // to-do: more tests needed
         loop {
             let reply = self.rx.recv_timeout(self.timeout).map_err(|e| {
                 log::error!("failed to receive file list from channel: {:?}", e);
@@ -605,31 +566,20 @@ impl FuseServer {
         }
     }
 }
-/// a node in the FUSE file tree
 #[derive(Debug)]
 struct FuseNode {
-    /// connection id
     pub conn_id: i32,
 
-    /// id of the peer's file list this node came from
     pub clip_data_id: i32,
 
-    /// file index in peer's file list
-    /// NOTE:
-    /// it is NOT the same as inode, this is the index in the file list
     pub index: usize,
 
-    /// parent inode
     pub parent: Option<u64>,
 
-    /// file name
     pub name: String,
-    /// file attributes
     pub attributes: InodeAttributes,
-    /// children inodes
     pub children: Vec<Inode>,
 
-    /// marked gc
     pub file_handlers: FileHandles,
 }
 
@@ -685,23 +635,15 @@ impl FuseNode {
         self.file_handlers.have_handler(fh)
     }
 
-    /// add a child inode
     fn add_child(&mut self, inode: Inode) {
         self.children.push(inode);
     }
 
-    /// calculate the file tree from a pre-ordered file list
-    /// ## implement detail:
-    /// - a new root entry will be prepended to the list
-    /// - all file names will be trimed to the last component
     pub fn build_tree(files: Vec<FileDescription>) -> Result<Vec<Self>, CliprdrError> {
-        // capacity set to file count + 1 (root)
         let mut tree_list = Vec::with_capacity(files.len() + 1);
         let root = Self::new_root();
         tree_list.push(root);
 
-        // build the tree first
-        // root map, name -> inode
         let mut sub_root_map = HashMap::new();
         sub_root_map.insert(Path::new("/").to_path_buf(), FUSE_ROOT_ID);
         sub_root_map.insert(Path::new("").to_path_buf(), FUSE_ROOT_ID);
@@ -713,7 +655,6 @@ impl FuseNode {
             let parent_inode = match name.parent() {
                 Some(parent) => sub_root_map.get(parent).copied().unwrap_or(FUSE_ROOT_ID),
                 None => {
-                    // parent should be root
                     FUSE_ROOT_ID
                 }
             };
@@ -750,8 +691,6 @@ impl FuseNode {
 pub struct InodeAttributes {
     inode: Inode,
     size: u64,
-    // file reference meta
-    // should be the only mutable field in this struct
     last_accessed: std::time::SystemTime,
     last_modified: std::time::SystemTime,
     last_metadata_changed: std::time::SystemTime,
@@ -759,7 +698,6 @@ pub struct InodeAttributes {
     kind: FileType,
     perm: u16,
 
-    // not implemented
     _xattrs: BTreeMap<Vec<u8>, Vec<u8>>,
 }
 
@@ -819,17 +757,13 @@ impl From<&InodeAttributes> for fuser::FileAttr {
             crtime: value.creation_time,
             kind: value.kind.into(),
 
-            // read only
             perm: value.perm,
 
             nlink: 1,
-            // set to current user
             uid: unsafe { libc::getuid() },
-            // set to current user
             gid: unsafe { libc::getgid() },
             rdev: 0,
             blksize: BLOCK_SIZE,
-            // todo: support macos flags
             flags: 0,
         }
     }
@@ -846,11 +780,6 @@ impl FileHandles {
     pub fn new() -> Self {
         Self {
             waiter: Condvar::new(),
-            // the vector in handlers is sorted, from small to big
-            // prove:
-            // - later allocated handler will be bigger than previous ones
-            // - new handlers will append to the end of the vector
-            // - dropping old handlers won't affect the ordering
             handlers: Mutex::new(Vec::new()),
             gc: AtomicBool::new(false),
         }
@@ -890,7 +819,6 @@ impl FileHandles {
 mod fuse_test {
     use super::*;
 
-    // todo: more tests needed!
     fn desc_gen(name: &str, kind: FileType) -> FileDescription {
         FileDescription {
             conn_id: 0,

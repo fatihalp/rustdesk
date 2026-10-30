@@ -1,13 +1,4 @@
-// https://learn.microsoft.com/en-us/previous-versions/windows/desktop/ics/c-adding-an-application-rule-edge-traversal
 
-/********************************************************************
-Copyright (C) Microsoft. All Rights Reserved.
-
-Abstract:
-    This C++ file includes sample code that adds a firewall rule with
- EdgeTraversalOptions (one of the EdgeTraversalOptions values).
-
-********************************************************************/
 
 #include "pch.h"
 #include <windows.h>
@@ -21,7 +12,6 @@ Abstract:
 #define STRING_BUFFER_SIZE  500     
 
 
-// Forward declarations
 HRESULT    WFCOMInitialize(INetFwPolicy2** ppNetFwPolicy2);
 void       WFCOMCleanup(INetFwPolicy2* pNetFwPolicy2);
 HRESULT    RemoveFirewallRule(
@@ -40,15 +30,11 @@ bool AddFirewallRule(bool add, LPWSTR exeName, LPWSTR exeFile)
     HRESULT hr = S_OK;
     INetFwPolicy2* pNetFwPolicy2 = NULL;
 
-    // Initialize COM.
     hrComInit = CoInitializeEx(
         0,
         COINIT_APARTMENTTHREADED
     );
 
-    // Ignore RPC_E_CHANGED_MODE; this just means that COM has already been
-    // initialized with a different mode. Since we don't care what the mode is,
-    // we'll just use the existing mode.
     if (hrComInit != RPC_E_CHANGED_MODE)
     {
         if (FAILED(hrComInit))
@@ -58,7 +44,6 @@ bool AddFirewallRule(bool add, LPWSTR exeName, LPWSTR exeFile)
         }
     }
 
-    // Retrieve INetFwPolicy2
     hr = WFCOMInitialize(&pNetFwPolicy2);
     if (FAILED(hr))
     {
@@ -66,8 +51,6 @@ bool AddFirewallRule(bool add, LPWSTR exeName, LPWSTR exeFile)
     }
 
     if (add) {
-        // Add firewall rule with EdgeTraversalOption=DeferApp (Windows7+) if available 
-        //   else add with Edge=True (Vista and Server 2008).
         hr = AddFirewallRuleWithEdgeTraversal(pNetFwPolicy2, true, exeName, exeFile);
         hr = AddFirewallRuleWithEdgeTraversal(pNetFwPolicy2, false, exeName, exeFile);
     }
@@ -78,10 +61,8 @@ bool AddFirewallRule(bool add, LPWSTR exeName, LPWSTR exeFile)
 
 Cleanup:
 
-    // Release INetFwPolicy2
     WFCOMCleanup(pNetFwPolicy2);
 
-    // Uninitialize COM.
     if (SUCCEEDED(hrComInit))
     {
         CoUninitialize();
@@ -127,8 +108,6 @@ HRESULT    RemoveFirewallRule(
         goto Cleanup;
     }
 
-    // We need to "Remove()" twice, because both "in" and "out" rules are added?
-    // There's no remarks for this case https://learn.microsoft.com/en-us/windows/win32/api/netfw/nf-netfw-inetfwrules-remove
     hr = pNetFwRules->Remove(RuleName);
     hr = pNetFwRules->Remove(RuleName);
     if (FAILED(hr)) {
@@ -150,8 +129,6 @@ Cleanup:
     return hr;
 }
 
-// Add firewall rule with EdgeTraversalOption=DeferApp (Windows7+) if available 
-//   else add with Edge=True (Vista and Server 2008).
 HRESULT    AddFirewallRuleWithEdgeTraversal(
     __in INetFwPolicy2* pNetFwPolicy2,
     __in bool in,
@@ -174,40 +151,26 @@ HRESULT    AddFirewallRuleWithEdgeTraversal(
     long CurrentProfilesBitMask = 0;
 
 
-    //  For localization purposes, the rule name, description, and group can be 
-    //    provided as indirect strings. These indirect strings can be defined in an rc file.
-    //  Examples of the indirect string definitions in the rc file -
-    //    127                     "EdgeTraversalOptions Sample Application"
-    //    128                     "Allow inbound TCP traffic to application EdgeTraversalOptions.exe"
-    //    129                     "Allow EdgeTraversalOptions.exe to receive inbound traffic for TCP protocol 
-    //                          from remote machines located within your network as well as from 
-    //                          the Internet (i.e from outside of your Edge device like Firewall or NAT"
 
 
-    //    Examples of using indirect strings -
-    //    hr = StringCchPrintfW(pwszTemp, STRING_BUFFER_SIZE, L"@EdgeTraversalOptions.exe,-128");
     RuleName = MakeRuleName(exeName);
     if (NULL == RuleName)
     {
         WcaLog(LOGMSG_STANDARD, "\nERROR: Insufficient memory\n");
         goto Cleanup;
     }
-    //    Examples of using indirect strings -
-    //    hr = StringCchPrintfW(pwszTemp, STRING_BUFFER_SIZE, L"@EdgeTraversalOptions.exe,-127");
     hr = StringCchPrintfW(pwszTemp, STRING_BUFFER_SIZE, exeName);
     if (FAILED(hr))
     {
         WcaLog(LOGMSG_STANDARD, "Failed to compose a resource identifier string: 0x%08lx\n", hr);
         goto Cleanup;
     }
-    RuleGroupName = SysAllocString(pwszTemp);  // Used for grouping together multiple rules
+    RuleGroupName = SysAllocString(pwszTemp);
     if (NULL == RuleGroupName)
     {
         WcaLog(LOGMSG_STANDARD, "\nERROR: Insufficient memory\n");
         goto Cleanup;
     }
-    //    Examples of using indirect strings -
-    //    hr = StringCchPrintfW(pwszTemp, STRING_BUFFER_SIZE, L"@EdgeTraversalOptions.exe,-129");
     hr = StringCchPrintfW(pwszTemp, STRING_BUFFER_SIZE, L"Allow %ls to receive \
        inbound traffic from remote machines located within your network as well as \
        from the Internet", exeName);
@@ -239,10 +202,10 @@ HRESULT    AddFirewallRuleWithEdgeTraversal(
     }
 
     hr = CoCreateInstance(
-        __uuidof(NetFwRule),    //CLSID of the class whose object is to be created
+        __uuidof(NetFwRule),
         NULL,
         CLSCTX_INPROC_SERVER,
-        __uuidof(INetFwRule),   // Identifier of the Interface used for communicating with the object
+        __uuidof(INetFwRule),
         (void**)&pNetFwRule);
 
     if (FAILED(hr))
@@ -272,8 +235,6 @@ HRESULT    AddFirewallRuleWithEdgeTraversal(
         goto Cleanup;
     }
 
-    // If you want the rule to avoid public, you can refer to
-    // https://learn.microsoft.com/en-us/previous-versions/windows/desktop/ics/c-adding-an-outbound-rule
     CurrentProfilesBitMask = NET_FW_PROFILE2_ALL;
 
     hr = pNetFwRule->put_Direction(in ? NET_FW_RULE_DIR_IN : NET_FW_RULE_DIR_OUT);
@@ -298,12 +259,6 @@ HRESULT    AddFirewallRuleWithEdgeTraversal(
         goto Cleanup;
     }
 
-    //hr = pNetFwRule->put_Protocol(6);  // TCP
-    //if (FAILED(hr))
-    //{
-    //    WcaLog(LOGMSG_STANDARD, "Failed INetFwRule::put_Protocol failed with error: 0x %x.\n", hr);
-    //    goto Cleanup;
-    //}
 
     hr = pNetFwRule->put_Profiles(CurrentProfilesBitMask);
     if (FAILED(hr))
@@ -320,9 +275,6 @@ HRESULT    AddFirewallRuleWithEdgeTraversal(
     }
 
     if (in) {
-        // Check if INetFwRule2 interface is available (i.e Windows7+)
-        // If supported, then use EdgeTraversalOptions
-        // Else use the EdgeTraversal boolean flag.
 
         if (SUCCEEDED(pNetFwRule->QueryInterface(__uuidof(INetFwRule2), (void**)&pNetFwRule2)))
         {
@@ -379,7 +331,6 @@ Cleanup:
 }
 
 
-// Instantiate INetFwPolicy2
 HRESULT WFCOMInitialize(INetFwPolicy2** ppNetFwPolicy2)
 {
     HRESULT hr = S_OK;
@@ -402,10 +353,8 @@ Cleanup:
 }
 
 
-// Release INetFwPolicy2
 void WFCOMCleanup(INetFwPolicy2* pNetFwPolicy2)
 {
-    // Release the INetFwPolicy2 object (Vista+)
     if (pNetFwPolicy2 != NULL)
     {
         pNetFwPolicy2->Release();

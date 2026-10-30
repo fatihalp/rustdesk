@@ -58,20 +58,6 @@ fn open_ipc_parent_dir_fd(parent_c: &CString) -> std::io::Result<i32> {
     }
 }
 
-// Remove one preexisting IPC artifact via an already-opened parent directory FD.
-//
-// Security intent:
-// - Bind cleanup to the exact parent inode that passed O_NOFOLLOW + fstat checks.
-// - Avoid path-based TOCTOU during scrub (e.g., parent path rename/swap race).
-//
-// Flow:
-// 1) fstatat(..., AT_SYMLINK_NOFOLLOW) to inspect the target entry under parent_fd.
-// 2) Decide file vs directory from st_mode.
-// 3) unlinkat relative to parent_fd (AT_REMOVEDIR for directories).
-//
-// Error policy:
-// - NotFound is treated as benign (already removed / raced away).
-// - Other errors are surfaced explicitly.
 fn remove_parent_entry_via_fd(
     parent_fd: i32,
     parent_dir: &Path,
@@ -164,18 +150,6 @@ fn scrub_preexisting_ipc_parent_entries(
     Ok(())
 }
 
-/// Remove one entry from the IPC parent directory through a no-follow fd on that directory.
-///
-/// Prefer this over `std::fs::remove_file` for anything about to be bound: `remove_file` is
-/// `unlink(2)`, which returns EISDIR against a directory-typed squatter and leaves it in place,
-/// and the bind that follows then fails EADDRINUSE. `remove_parent_entry_via_fd` fstats the
-/// entry first and picks `AT_REMOVEDIR` when it needs to.
-///
-/// `AT_REMOVEDIR` is `rmdir(2)`, so the directory case this closes is the EMPTY one; a non-empty
-/// squatter still yields ENOTEMPTY and still blocks the bind that follows. That is deliberate, and
-/// the "obvious" fix is worse than the bug: removing it recursively would be root deleting a tree
-/// an unprivileged process planted. What the caller gains there is a named error to log ahead of
-/// the bind's own failure, not a successful bind.
 pub(crate) fn remove_ipc_entry_via_secure_parent_fd(path: &str) -> ResultType<()> {
     let entry_name = Path::new(path)
         .file_name()
@@ -212,45 +186,14 @@ fn remove_ipc_socket_via_secure_parent_fd(postfix: &str) -> ResultType<()> {
     remove_ipc_entry_via_secure_parent_fd(&config::Config::ipc_path(postfix))
 }
 
-// Purpose:
-// - Harden the IPC parent directory before creating/listening socket files.
-// - Prevent symlink/path-race abuse and reject unsafe owner/mode.
-//
-// Approach:
-// - Open parent dir with O_NOFOLLOW/O_DIRECTORY and operate on that fd.
-// - Validate inode type/owner/mode via fstat.
-// - For protected service postfix, optionally adopt owner (root only), then scrub stale
-//   rustdesk IPC artifacts when directory trust boundary changed.
-//
-// Main steps:
-// 1) Resolve parent path and open/create directory securely.
-// 2) Verify directory inode type and owner uid.
-// 3) Enforce expected mode via fchmod on opened fd.
-// 4) Scrub stale IPC artifacts when owner/mode was unsafe before hardening.
-//
-// References:
-// - open(2): O_NOFOLLOW/O_DIRECTORY/O_CLOEXEC
-//   https://man7.org/linux/man-pages/man2/open.2.html
-// - fstat(2): verify file type/metadata on opened fd
-//   https://man7.org/linux/man-pages/man2/fstat.2.html
-// - fchown(2): adopt ownership when running as root
-//   https://man7.org/linux/man-pages/man2/chown.2.html
-// - fchmod(2): enforce exact mode on opened fd
-//   https://man7.org/linux/man-pages/man2/fchmod.2.html
 pub(crate) fn ensure_secure_ipc_parent_dir(path: &str, postfix: &str) -> ResultType<bool> {
     let parent_dir = Path::new(path)
         .parent()
         .ok_or_else(|| Error::new(ErrorKind::InvalidInput, format!("invalid ipc path: {path}")))?;
-    // Harden against common TOCTOU by opening the parent directory with O_NOFOLLOW (so the parent
-    // itself cannot be a symlink) and then operating on its FD (fstat/fchown/fchmod). This ensures
-    // we mutate the inode we opened, though it does not protect against symlinks in ancestor path
-    // components.
     let parent_c = CString::new(parent_dir.as_os_str().as_bytes().to_vec())?;
     let fd = match open_ipc_parent_dir_fd(&parent_c) {
         Ok(fd) => fd,
         Err(open_err) => {
-            // If the directory doesn't exist yet, create it with the expected mode. The parent
-            // dir is intended to be a single-level /tmp path, so mkdir is sufficient here.
             if open_err.raw_os_error() == Some(hbb_common::libc::ENOENT) {
                 let expected_mode = expected_ipc_parent_mode(postfix);
                 let rc = unsafe {
@@ -261,7 +204,6 @@ pub(crate) fn ensure_secure_ipc_parent_dir(path: &str, postfix: &str) -> ResultT
                 };
                 if rc != 0 {
                     let mkdir_err = std::io::Error::last_os_error();
-                    // Handle a race where another process created the directory first.
                     if mkdir_err.raw_os_error() != Some(hbb_common::libc::EEXIST) {
                         return Err(Error::new(
                             mkdir_err.kind(),
@@ -337,8 +279,6 @@ pub(crate) fn ensure_secure_ipc_parent_dir(path: &str, postfix: &str) -> ResultT
     let expected_uid = unsafe { hbb_common::libc::geteuid() as u32 };
     let mut owner_uid = st.st_uid as u32;
     let mut adopted_foreign_service_parent = false;
-    // Service-scoped IPC may be created by different privilege contexts historically.
-    // If running as root on protected service postfix, try adopting ownership first.
     if owner_uid != expected_uid && expected_uid == 0 && config::is_service_ipc_postfix(postfix) {
         let rc = unsafe {
             hbb_common::libc::fchown(
@@ -355,7 +295,6 @@ pub(crate) fn ensure_secure_ipc_parent_dir(path: &str, postfix: &str) -> ResultT
                 adopted_foreign_service_parent = true;
             }
         } else {
-            // Keep behavior unchanged; capture errno to ease diagnosing why chown failed.
             let err = std::io::Error::last_os_error();
             log::warn!(
                 "Failed to chown ipc parent dir, parent={}, postfix={}, expected_uid={}, rc={}, err={:?}",
@@ -380,13 +319,10 @@ pub(crate) fn ensure_secure_ipc_parent_dir(path: &str, postfix: &str) -> ResultT
     }
 
     let expected_mode = expected_ipc_parent_mode(postfix);
-    // Include special bits (setuid/setgid/sticky) to ensure the directory is hardened to the exact
-    // expected mode.
     let current_mode = (st.st_mode as u32) & 0o7777;
     let repaired_parent_mode = current_mode != expected_mode;
     let had_untrusted_parent_mode = (current_mode & 0o022) != 0;
     if repaired_parent_mode {
-        // Use fchmod on the opened fd to avoid path-race between check and chmod.
         if unsafe { hbb_common::libc::fchmod(fd, expected_mode as hbb_common::libc::mode_t) } != 0 {
             let os_err = std::io::Error::last_os_error();
             return Err(Error::new(
@@ -432,36 +368,6 @@ pub(crate) fn get_pid_file(postfix: &str) -> String {
     format!("{}.pid", path)
 }
 
-// Purpose:
-// - Write current process pid to pid file without following attacker-controlled symlinks.
-// - Ensure the pid file is a regular file owned by the opened inode path.
-//
-// Approach:
-// - Use libc open/fstat/write syscalls (FFI) so flags and inode validation are explicit.
-// - Open file with O_NOFOLLOW/O_CLOEXEC and verify S_IFREG with fstat before write.
-// - Keep unsafe scopes minimal and check syscall return values immediately.
-//
-// Main steps:
-// 1) Secure-open pid file (without truncation).
-// 2) Validate opened inode is a regular file owned by current euid.
-// 3) Enforce pid file mode to 0600 and truncate via ftruncate after validation.
-// 4) Write process id bytes through fd.
-//
-// Why not plain std::fs::write?
-// - std::fs helpers cannot enforce this exact open-time hardening sequence
-//   (especially "open with O_NOFOLLOW, then fstat the same opened inode").
-//
-// References:
-// - open(2): O_NOFOLLOW/O_CLOEXEC/O_NONBLOCK
-//   https://man7.org/linux/man-pages/man2/open.2.html
-// - fstat(2): verify file type on opened fd
-//   https://man7.org/linux/man-pages/man2/fstat.2.html
-// - fchmod(2): enforce secure mode on reused pid file
-//   https://man7.org/linux/man-pages/man2/fchmod.2.html
-// - ftruncate(2): truncate after validation
-//   https://man7.org/linux/man-pages/man2/ftruncate.2.html
-// - write(2): write bytes via fd
-//   https://man7.org/linux/man-pages/man2/write.2.html
 fn write_pid_file(path: &Path) -> ResultType<()> {
     let path_c = CString::new(path.as_os_str().as_bytes().to_vec()).map_err(|err| {
         Error::new(
@@ -542,9 +448,6 @@ fn write_pid_file(path: &Path) -> ResultType<()> {
 
     let bytes = std::process::id().to_string();
     let buf = bytes.as_bytes();
-    // `write(2)` is allowed to return a short write even for regular files.
-    // PID content is tiny and usually written in one shot, but we still loop
-    // until all bytes are persisted so this path is semantically correct.
     let mut written = 0usize;
     while written < buf.len() {
         let rc = unsafe {
@@ -590,26 +493,6 @@ pub(crate) fn write_pid(postfix: &str) {
     }
 }
 
-// Purpose:
-// - Read pid file safely and avoid trusting symlink/non-regular files.
-//
-// Approach:
-// - Use libc open/fstat/read syscalls (FFI) to control flags and inode checks.
-// - Open path with O_NOFOLLOW, validate opened fd via fstat, then read and parse.
-// - Keep unsafe scopes minimal and check syscall return values immediately.
-//
-// Main steps:
-// 1) Secure-open pid file read-only.
-// 2) Ensure fd points to regular file.
-// 3) Read bytes and parse usize pid.
-//
-// References:
-// - open(2): O_NOFOLLOW/O_CLOEXEC/O_NONBLOCK
-//   https://man7.org/linux/man-pages/man2/open.2.html
-// - fstat(2): validate S_IFREG on opened fd
-//   https://man7.org/linux/man-pages/man2/fstat.2.html
-// - read(2): read bytes via fd
-//   https://man7.org/linux/man-pages/man2/read.2.html
 #[inline]
 fn read_pid_file_secure(path: &Path) -> Option<usize> {
     let path_c = CString::new(path.as_os_str().as_bytes().to_vec()).ok()?;
@@ -659,7 +542,6 @@ async fn probe_existing_listener(postfix: &str) -> bool {
     if stream.send(&Data::SyncConfig(None)).await.is_err() {
         return false;
     }
-    // A configuration error still confirms that the service is alive.
     matches!(
         stream.next_timeout(1000).await,
         Ok(Some(
@@ -686,9 +568,6 @@ pub(crate) async fn check_pid(postfix: &str) -> bool {
     if probe_existing_listener(postfix).await {
         return true;
     }
-    // if not remove old ipc file, the new ipc creation will fail
-    // if we remove a ipc file, but the old ipc process is still running,
-    // new connection to the ipc will connect to new ipc, old connection to old ipc still keep alive
     if let Err(err) = remove_ipc_socket_via_secure_parent_fd(postfix) {
         log::debug!(
             "Failed to remove stale ipc socket via secure parent fd: postfix={}, err={}",
@@ -709,13 +588,10 @@ pub(crate) fn should_scrub_parent_entries_after_check_pid(
 
 #[cfg(test)]
 mod tests {
-    // Pins the HELPER's contract, which is all `new_drm_listener` consists of at that line -- not
-    // the call site itself. Binding the real `/tmp/<app>-service/ipc_drm` from a test would collide
-    // with a live root service, so "the listener still calls this" is not covered here.
     #[test]
     fn test_remove_ipc_entry_via_secure_parent_fd_clears_an_empty_directory_squatter() {
         let unique = format!(
-            "rustdesk-ipc-entry-remove-test-{}-{}",
+            "supportdesk-ipc-entry-remove-test-{}-{}",
             std::process::id(),
             std::time::SystemTime::now()
                 .duration_since(std::time::UNIX_EPOCH)
@@ -727,9 +603,6 @@ mod tests {
         let squatter = base.join("ipc_drm");
         std::fs::create_dir(&squatter).unwrap();
 
-        // Positive control for the defect this closes: `remove_file` is `unlink(2)` and cannot
-        // remove a directory. That is why the listener could not clear one, and then failed to
-        // bind over it. Without this line a passing test would prove nothing.
         assert!(
             std::fs::remove_file(&squatter).is_err(),
             "remove_file must fail on a directory, or this test is vacuous"
@@ -742,19 +615,12 @@ mod tests {
             "the fd-based removal picks AT_REMOVEDIR and clears it"
         );
 
-        // Idempotent: this runs before every bind, so a path that is already gone is not an error.
         super::remove_ipc_entry_via_secure_parent_fd(squatter.to_string_lossy().as_ref()).unwrap();
 
-        // The ORDINARY case, and the one the listener hits on every restart: a stale socket left by
-        // the previous run, i.e. a regular file. Covered here because the other file-removal test
-        // goes through `remove_parent_entry_via_fd` and the postfix path, not this entry point.
         std::fs::write(&squatter, b"stale").unwrap();
         super::remove_ipc_entry_via_secure_parent_fd(squatter.to_string_lossy().as_ref()).unwrap();
         assert!(!squatter.exists(), "a stale regular file is cleared too");
 
-        // And the documented limit, pinned so the doc cannot drift: AT_REMOVEDIR is rmdir(2), so a
-        // NON-empty squatter is reported, not cleared. The caller logs that and carries on; nothing
-        // here should ever start deleting a tree it did not create.
         std::fs::create_dir(&squatter).unwrap();
         std::fs::write(squatter.join("planted"), b"x").unwrap();
         assert!(
@@ -772,7 +638,7 @@ mod tests {
         use std::os::unix::fs::symlink;
 
         let unique = format!(
-            "rustdesk-ipc-pid-file-test-{}-{}",
+            "supportdesk-ipc-pid-file-test-{}-{}",
             std::process::id(),
             std::time::SystemTime::now()
                 .duration_since(std::time::UNIX_EPOCH)
@@ -801,7 +667,7 @@ mod tests {
         use std::os::unix::fs::symlink;
 
         let unique = format!(
-            "rustdesk-ipc-secure-dir-test-{}-{}",
+            "supportdesk-ipc-secure-dir-test-{}-{}",
             std::process::id(),
             std::time::SystemTime::now()
                 .duration_since(std::time::UNIX_EPOCH)
@@ -827,7 +693,7 @@ mod tests {
         use std::os::unix::fs::PermissionsExt;
 
         let unique = format!(
-            "rustdesk-ipc-secure-dir-create-test-{}-{}",
+            "supportdesk-ipc-secure-dir-create-test-{}-{}",
             std::process::id(),
             std::time::SystemTime::now()
                 .duration_since(std::time::UNIX_EPOCH)
@@ -837,14 +703,11 @@ mod tests {
         let base = std::env::temp_dir().join(unique);
         std::fs::create_dir_all(&base).unwrap();
 
-        // Intentionally choose a parent that does not exist to exercise the ENOENT -> mkdir branch.
         let parent_dir = base.join("parent");
         assert!(!parent_dir.exists());
         let ipc_path = parent_dir.join("ipc");
 
         let res = super::ensure_secure_ipc_parent_dir(ipc_path.to_string_lossy().as_ref(), "");
-        // Restrictive umask can make mkdir create a stricter initial mode. In that case
-        // ensure_secure_ipc_parent_dir repairs it with fchmod and may request a scrub.
         res.unwrap();
 
         let md = std::fs::metadata(&parent_dir).unwrap();
@@ -860,7 +723,7 @@ mod tests {
         use std::os::unix::ffi::OsStrExt;
 
         let unique = format!(
-            "rustdesk-ipc-scrub-test-{}-{}",
+            "supportdesk-ipc-scrub-test-{}-{}",
             std::process::id(),
             std::time::SystemTime::now()
                 .duration_since(std::time::UNIX_EPOCH)
@@ -904,7 +767,7 @@ mod tests {
         use std::os::unix::ffi::OsStrExt;
 
         let unique = format!(
-            "rustdesk-ipc-scrub-fd-bind-test-{}-{}",
+            "supportdesk-ipc-scrub-fd-bind-test-{}-{}",
             std::process::id(),
             std::time::SystemTime::now()
                 .duration_since(std::time::UNIX_EPOCH)
@@ -930,14 +793,12 @@ mod tests {
         let trusted_parent_fd = super::open_ipc_parent_dir_fd(&trusted_parent_c).unwrap();
         let _trusted_parent_guard = super::FdGuard(trusted_parent_fd);
 
-        // Swap the path after the trusted inode has been opened.
         std::fs::rename(&trusted_parent, &trusted_parent_moved).unwrap();
         std::fs::rename(&attacker_parent, &trusted_parent).unwrap();
 
         super::scrub_preexisting_ipc_parent_entries(trusted_parent_fd, &trusted_parent, "_service")
             .unwrap();
 
-        // Expected secure behavior: scrub should target the inode that was opened before path swap.
         assert!(
             !trusted_parent_moved.join("ipc_service").exists(),
             "trusted inode artifact should be removed even after path swap"
@@ -955,7 +816,7 @@ mod tests {
         use std::os::unix::fs::PermissionsExt;
 
         let unique = format!(
-            "rustdesk-ipc-secure-dir-order-test-{}-{}",
+            "supportdesk-ipc-secure-dir-order-test-{}-{}",
             std::process::id(),
             std::time::SystemTime::now()
                 .duration_since(std::time::UNIX_EPOCH)
@@ -967,7 +828,6 @@ mod tests {
 
         let parent_dir = base.join("service_parent");
         std::fs::create_dir_all(&parent_dir).unwrap();
-        // Trigger "had_untrusted_service_parent_mode".
         std::fs::set_permissions(&parent_dir, std::fs::Permissions::from_mode(0o777)).unwrap();
 
         let ipc_file = parent_dir.join("ipc_service");
@@ -979,7 +839,6 @@ mod tests {
             super::ensure_secure_ipc_parent_dir(ipc_file.to_string_lossy().as_ref(), "_service");
         assert_eq!(res.unwrap(), true);
 
-        // Parent hardening should run first; artifacts should stay until liveness probe completes.
         assert!(ipc_file.exists(), "ipc socket marker should be preserved");
         assert!(ipc_pid_file.exists(), "pid marker should be preserved");
 

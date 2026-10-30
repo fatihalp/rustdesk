@@ -10,7 +10,6 @@ import AVFoundation
   ) -> Bool {
     GeneratedPluginRegistrant.register(with: self)
     do {
-      // Mix remote audio with other apps while still respecting silent mode.
       try AVAudioSession.sharedInstance().setCategory(.ambient)
     } catch {
       NSLog("Failed to configure audio mixing: %@", error.localizedDescription)

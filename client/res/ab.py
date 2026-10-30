@@ -117,11 +117,9 @@ def view_ab_tags(url, token, ab_guid):
     response = requests.get(f"{url}/api/ab/tags/{ab_guid}", headers=headers)
     response_json = check_response(response)
     
-    # Format color values as hex
     if response_json:
         for tag in response_json:
             if "color" in tag and tag["color"] is not None:
-                # Convert color to hex format
                 color_value = tag["color"]
                 if isinstance(color_value, int):
                     tag["color"] = f"0x{color_value:08X}"
@@ -155,7 +153,6 @@ def add_peer(url, token, ab_guid, peer_id, alias=None, note=None, tags=None, pas
         "note": note,
     }
     
-    # Add peer info if provided
     info = {}
     if alias:
         info["alias"] = alias
@@ -186,7 +183,6 @@ def update_peer(url, token, ab_guid, peer_id, alias=None, note=None, tags=None, 
     print(f"Updating peer {peer_id} in address book")
     headers = {"Authorization": f"Bearer {token}"}
     
-    # Check if at least one parameter is provided for update
     update_params = [alias, note, tags, password]
     if all(param is None for param in update_params):
         return "Error: At least one parameter must be specified for update"
@@ -195,7 +191,6 @@ def update_peer(url, token, ab_guid, peer_id, alias=None, note=None, tags=None, 
         "id": peer_id,
     }
     
-    # Add fields to update
     info = {}
     if alias is not None:
         info["alias"] = alias
@@ -236,15 +231,12 @@ def str2color(tag_name, existing_colors=None):
     
     lower_name = tag_name.lower()
     
-    # Check if tag name matches a predefined color
     if lower_name in color_map:
         return color_map[lower_name]
     
-    # Special case for yellow
     if lower_name == "yellow":
         return 0xFFFFFF00
     
-    # Generate hash-based color
     hash_value = 0
     for char in tag_name:
         hash_value += ord(char)
@@ -253,7 +245,6 @@ def str2color(tag_name, existing_colors=None):
     hash_value = hash_value % len(color_list)
     result = color_list[hash_value]
     
-    # If color is already used, try to find an unused one
     if result in existing_colors:
         for color in color_list:
             if color not in existing_colors:
@@ -268,15 +259,12 @@ def add_tag(url, token, ab_guid, tag_name, color=None):
     print(f"Adding tag '{tag_name}' to address book")
     headers = {"Authorization": f"Bearer {token}"}
     
-    # If no color specified, generate one based on tag name
     if color is None:
-        # Get existing tags to avoid color conflicts
         try:
             existing_tags = view_ab_tags(url, token, ab_guid)
             existing_colors = [tag.get("color", 0) for tag in existing_tags]
             color = str2color(tag_name, existing_colors)
         except:
-            # Fallback to default color if we can't get existing tags
             color = str2color(tag_name)
     
     payload = {
@@ -323,7 +311,6 @@ def add_shared_ab(url, token, name, note=None, password=None):
         "note": note,
     }
     
-    # Add info if password is provided
     if password:
         payload["info"] = {
             "password": password
@@ -338,7 +325,6 @@ def update_shared_ab(url, token, ab_guid, name=None, note=None, owner=None, pass
     print(f"Updating shared address book {ab_guid}")
     headers = {"Authorization": f"Bearer {token}"}
     
-    # Check if at least one parameter is provided for update
     update_params = [name, note, owner, password]
     if all(param is None for param in update_params):
         return "Error: At least one parameter must be specified for update"
@@ -376,9 +362,9 @@ def delete_shared_abs(url, token, ab_guids):
 def permission_to_string(permission):
     """Convert numeric permission to string representation"""
     permission_map = {
-        1: "ro",      # Read
-        2: "rw",      # ReadWrite  
-        3: "full"     # FullControl
+        1: "ro",
+        2: "rw",
+        3: "full"
     }
     return permission_map.get(permission, str(permission))
 
@@ -386,9 +372,9 @@ def permission_to_string(permission):
 def string_to_permission(permission_str):
     """Convert string permission to numeric representation"""
     permission_map = {
-        "ro": 1,      # Read
-        "rw": 2,      # ReadWrite
-        "full": 3     # FullControl
+        "ro": 1,
+        "rw": 2,
+        "full": 3
     }
     return permission_map.get(permission_str.lower(), None)
 
@@ -425,7 +411,6 @@ def view_ab_rules(url, token, ab_guid):
         if len(data) < pageSize or current * pageSize >= total:
             break
 
-    # Convert numeric permissions to string format
     for rule in rules:
         if "rule" in rule:
             rule["rule"] = permission_to_string(rule["rule"])
@@ -448,7 +433,6 @@ def add_ab_rule(url, token, ab_guid, rule_type, user=None, group=None, rule=1):
     elif rule_type == "group" and group:
         payload["group"] = group
     elif rule_type == "everyone":
-        # For everyone, both user and group are None (not included in payload)
         pass
     
     response = requests.post(f"{url}/api/ab/rule", headers=headers, json=payload)
@@ -490,12 +474,10 @@ def main():
     
     def parse_permission(value):
         """Parse permission value - supports both string (ro/rw/full) and numeric (1/2/3)"""
-        # Try to parse as string first
         permission_num = string_to_permission(value)
         if permission_num is not None:
             return permission_num
         
-        # Try to parse as integer for backward compatibility
         try:
             num_value = int(value)
             if num_value in [1, 2, 3]:
@@ -507,7 +489,6 @@ def main():
     
     parser = argparse.ArgumentParser(description="Address Book manager")
     
-    # Required arguments
     parser.add_argument(
         "command",
         choices=["view-ab", "add-ab", "update-ab", "delete-ab", "get-personal-ab",
@@ -517,30 +498,24 @@ def main():
         help="Command to execute",
     )
     
-    # Global arguments (used by all commands)
     parser.add_argument("--url", required=True, help="URL of the API")
     parser.add_argument("--token", required=True, help="Bearer token for authentication")
     
-    # Address book identification (used by most commands except get-personal-ab)
     parser.add_argument("--ab-name", help="Address book name (for identification)")
     parser.add_argument("--ab-guid", help="Address book GUID (alternative to ab-name)")
     
-    # Address book management arguments
     parser.add_argument("--ab-update-name", help="New address book name (for update)")
     parser.add_argument("--note", help="Note field")
     parser.add_argument("--password", help="Password field")
     parser.add_argument("--owner", help="Address book owner (username)")
     
-    # Peer management arguments
     parser.add_argument("--peer-id", help="Peer ID")
     parser.add_argument("--alias", help="Peer alias")
     parser.add_argument("--tags", help="Peer tags (supports both 'tag1,tag2' and '[tag1,tag2]' formats, use '[]' to clear tags)")
     
-    # Tag management arguments
     parser.add_argument("--tag-name", help="Tag name")
     parser.add_argument("--tag-color", type=parse_color, help="Tag color (hex number like 0xFF00FF00 or decimal, auto-generated if not specified)")
     
-    # Rule management arguments
     parser.add_argument("--rule-type", choices=["user", "group", "everyone"], help="Rule type (auto-detected if not specified)")
     parser.add_argument("--rule-user", help="Rule target user name (auto-sets rule-type=user)")
     parser.add_argument("--rule-group", help="Rule target group name (auto-sets rule-type=group)")
@@ -549,22 +524,18 @@ def main():
 
     args = parser.parse_args()
 
-    # Remove trailing slashes from URL
     while args.url.endswith("/"):
         args.url = args.url[:-1]
 
     if args.command == "view-ab":
-        # View all shared address books
         abs = view_shared_abs(args.url, args.token, args.ab_name)
         print(json.dumps(abs, indent=2))
     
     elif args.command == "get-personal-ab":
-        # Get personal address book GUID
         personal_ab = get_personal_ab(args.url, args.token)
         print(json.dumps(personal_ab, indent=2))
     
     elif args.command in ["add-ab", "update-ab", "delete-ab"]:
-        # Address book management commands
         if args.command == "add-ab":
             if not args.ab_name:
                 print("Error: --ab-name is required for add-ab command")
@@ -574,7 +545,6 @@ def main():
             print(f"Result: {result}")
             
         elif args.command in ["update-ab", "delete-ab"]:
-            # Commands that need ab-name or ab-guid
             if not args.ab_name and not args.ab_guid:
                 print("Error: --ab-name or --ab-guid is required for this command")
                 return
@@ -587,7 +557,6 @@ def main():
                 ab_guid = args.ab_guid
                 print(f"Working with address book GUID: {ab_guid}")
             else:
-                # Get address book by name
                 ab = get_ab_by_name(args.url, args.token, args.ab_name)
                 if not ab:
                     print(f"Error: Address book '{args.ab_name}' not found")
@@ -616,7 +585,6 @@ def main():
             ab_guid = args.ab_guid
             print(f"Working with address book GUID: {ab_guid}")
         else:
-            # Get address book by name
             ab = get_ab_by_name(args.url, args.token, args.ab_name)
             if not ab:
                 print(f"Error: Address book '{args.ab_name}' not found")
@@ -634,16 +602,14 @@ def main():
                 print("Error: --peer-id is required for add-peer command")
                 return
             
-            # Handle tags parsing - support both [tag1,tag2] and tag1,tag2 formats
             tags = None
             if args.tags is not None:
                 if args.tags == "[]":
-                    tags = []  # Empty list to clear tags
+                    tags = []
                 else:
-                    # Remove brackets if present and split by comma
                     tags_str = args.tags.strip()
                     if tags_str.startswith('[') and tags_str.endswith(']'):
-                        tags_str = tags_str[1:-1]  # Remove brackets
+                        tags_str = tags_str[1:-1]
                     tags = [tag.strip() for tag in tags_str.split(",") if tag.strip()]
             
             result = add_peer(
@@ -663,16 +629,14 @@ def main():
                 print("Error: --peer-id is required for update-peer command")
                 return
             
-            # Handle tags parsing - support both [tag1,tag2] and tag1,tag2 formats
             tags = None
             if args.tags is not None:
                 if args.tags == "[]":
-                    tags = []  # Empty list to clear tags
+                    tags = []
                 else:
-                    # Remove brackets if present and split by comma
                     tags_str = args.tags.strip()
                     if tags_str.startswith('[') and tags_str.endswith(']'):
-                        tags_str = tags_str[1:-1]  # Remove brackets
+                        tags_str = tags_str[1:-1]
                     tags = [tag.strip() for tag in tags_str.split(",") if tag.strip()]
             
             result = update_peer(
@@ -732,7 +696,6 @@ def main():
                 print("Error: --rule-permission is required for add-rule command")
                 return
             
-            # Auto-detect rule type if not explicitly specified
             if not args.rule_type:
                 if args.rule_user and args.rule_group:
                     print("Error: Cannot specify both --rule-user and --rule-group")
@@ -747,7 +710,6 @@ def main():
             else:
                 rule_type = args.rule_type
                 
-                # Validate explicit rule type with parameters
                 if rule_type == "user" and not args.rule_user:
                     print("Error: --rule-user is required when rule-type=user")
                     return

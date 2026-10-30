@@ -29,11 +29,6 @@ fn enum_printer_driver(
     pc_returned: LPDWORD,
 ) -> BOOL {
     unsafe {
-        // https://learn.microsoft.com/en-us/windows/win32/printdocs/enumprinterdrivers
-        // This is a blocking or synchronous function and might not return immediately.
-        // How quickly this function returns depends on run-time factors
-        // such as network status, print server configuration, and printer driver implementation factors that are difficult to predict when writing an application.
-        // Calling this function from a thread that manages interaction with the user interface could make the application appear to be unresponsive.
         EnumPrinterDriversW(
             null_mut(),
             null_mut(),
@@ -81,15 +76,6 @@ fn find_inf(name: &PCWSTR) -> ResultType<Vec<u16>> {
 
 fn delete_printer_driver(name: &PCWSTR) -> ResultType<()> {
     unsafe {
-        // If the printer is used after the spooler service is started. E.g., printing a document through RustDesk Printer.
-        // `DeletePrinterDriverExW()` may fail with `ERROR_PRINTER_DRIVER_IN_USE`(3001, 0xBB9).
-        // We can only ignore this error for now.
-        // Though restarting the spooler service is a solution, it's not a good idea to restart the service.
-        //
-        // Deleting the printer driver after deleting the printer is a common practice.
-        // No idea why `DeletePrinterDriverExW()` fails with `ERROR_UNKNOWN_PRINTER_DRIVER` after using the printer once.
-        // https://github.com/ChromiumWebApps/chromium/blob/c7361d39be8abd1574e6ce8957c8dbddd4c6ccf7/cloud_print/virtual_driver/win/install/setup.cc#L422
-        // AnyDesk printer driver and the simplest printer driver also have the same issue.
         if FALSE
             == DeletePrinterDriverExW(
                 null_mut(),
@@ -110,7 +96,6 @@ fn delete_printer_driver(name: &PCWSTR) -> ResultType<()> {
     Ok(())
 }
 
-// https://github.com/dvalter/chromium-android-ext-dev/blob/dab74f7d5bc5a8adf303090ee25c611b4d54e2db/cloud_print/virtual_driver/win/install/setup.cc#L190
 fn delete_printer_driver_package(inf: Vec<u16>) -> ResultType<()> {
     if inf.is_empty() {
         return Ok(());
@@ -143,7 +128,6 @@ fn delete_printer_driver_package(inf: Vec<u16>) -> ResultType<()> {
 }
 
 pub fn uninstall_driver(name: &PCWSTR) -> ResultType<()> {
-    // Note: inf must be found before `delete_printer_driver()`.
     let inf = find_inf(name)?;
     delete_printer_driver(name)?;
     delete_printer_driver_package(inf)
@@ -185,7 +169,6 @@ pub fn install_driver(name: &PCWSTR, inf: LPCWSTR) -> ResultType<()> {
             }
         }
 
-        // https://learn.microsoft.com/en-us/windows/win32/printdocs/installprinterdriverfrompackage
         res = InstallPrinterDriverFromPackageW(
             null_mut(),
             package_path.as_ptr(),

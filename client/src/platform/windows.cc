@@ -8,15 +8,14 @@
 #include <intrin.h>
 #include <string>
 #include <memory>
-#include <shlobj.h> // NOLINT(build/include_order)
+#include <shlobj.h>
 #include <userenv.h>
 #include <versionhelpers.h>
 #include <vector>
 #include <sddl.h>
 #include <memory>
 
-#ifdef RUSTDESK_SCITER
-// Share the runner's service operations without loading either UI framework.
+#ifdef SUPPORTDESK_SCITER
 #include "../../flutter/windows/runner/service_control.h"
 
 extern "C" DWORD run_service_control()
@@ -36,7 +35,7 @@ extern "C" uint32_t get_session_user_info(PWSTR bufin, uint32_t nin, uint32_t id
 
 void flog(char const *fmt, ...)
 {
-    FILE *h = fopen("C:\\Windows\\temp\\test_rustdesk.log", "at");
+    FILE *h = fopen("C:\\Windows\\temp\\test_supportdesk.log", "at");
     if (!h)
         return;
     va_list arg;
@@ -135,10 +134,6 @@ cleanup:
     return ret;
 }
 
-// ultravnc has rdp support
-// https://github.com/veyon/ultravnc/blob/master/winvnc/winvnc/service.cpp
-// https://github.com/TigerVNC/tigervnc/blob/master/win/winvnc/VNCServerService.cxx
-// https://blog.csdn.net/MA540213/article/details/84638264
 
 DWORD GetLogonPid(DWORD dwSessionId, BOOL as_user)
 {
@@ -214,11 +209,8 @@ static DWORD GetFallbackUserPid(DWORD dwSessionId)
     return dwFallbackPid;
 }
 
-// START the app as system
 extern "C"
 {
-    // if should try WTSQueryUserToken?
-    // https://stackoverflow.com/questions/7285666/example-code-a-service-calls-createprocessasuser-i-want-the-process-to-run-in
     BOOL GetSessionUserTokenWin(OUT LPHANDLE lphUserToken, DWORD dwSessionId, BOOL as_user, DWORD *pDwTokenPid)
     {
         BOOL bResult = FALSE;
@@ -270,9 +262,9 @@ extern "C"
             if (as_user)
             {
 
-                CreateEnvironmentBlock(&lpEnvironment, // Environment block
-                                       hToken,         // New token
-                                       TRUE);          // Inheritance
+                CreateEnvironmentBlock(&lpEnvironment,
+                                       hToken,
+                                       TRUE);
             }
             if (lpEnvironment)
             {
@@ -290,7 +282,6 @@ extern "C"
         return hProcess;
     }
 
-    // Switch the current thread to the specified desktop
     static bool
     switchToDesktop(HDESK desktop)
     {
@@ -301,14 +292,11 @@ extern "C"
         }
         if (!CloseDesktop(old_desktop))
         {
-            //
         }
         return true;
     }
 
-    // https://github.com/TigerVNC/tigervnc/blob/8c6c584377feba0e3b99eecb3ef33b28cee318cb/win/rfb_win32/Service.cxx
 
-    // Determine whether the thread's current desktop is the input one
     BOOL
     inputDesktopSelected()
     {
@@ -338,15 +326,12 @@ extern "C"
             return FALSE;
         }
         CloseDesktop(input);
-        // flog("%s %s\n", currentname, inputname);
         return strcmp(currentname, inputname) == 0 ? TRUE : FALSE;
     }
 
-    // Switch the current thread into the input desktop
     bool
     selectInputDesktop()
     {
-        // - Open the input desktop
         HDESK desktop = OpenInputDesktop(0, FALSE,
                                          DESKTOP_CREATEMENU | DESKTOP_CREATEWINDOW |
                                              DESKTOP_ENUMERATE | DESKTOP_HOOKCONTROL |
@@ -357,19 +342,16 @@ extern "C"
             return false;
         }
 
-        // - Switch into it
         if (!switchToDesktop(desktop))
         {
             CloseDesktop(desktop);
             return false;
         }
 
-        // ***
         DWORD size = 256;
         char currentname[256];
         if (GetUserObjectInformation(desktop, UOI_NAME, currentname, 256, &size))
         {
-            //
         }
 
         return true;
@@ -392,10 +374,8 @@ extern "C"
 
                 if (byte < andMaskSize && !(andMask[byte] & (1 << bit)))
                 {
-                    // Valid pixel, so make it opaque
                     rwbuffer[3] = 0xff;
 
-                    // Black or white?
                     if (xorMask[byte] & (1 << bit))
                         rwbuffer[0] = rwbuffer[1] = rwbuffer[2] = 0xff;
                     else
@@ -403,11 +383,6 @@ extern "C"
                 }
                 else if (byte < xorMaskSize && xorMask[byte] & (1 << bit))
                 {
-                    // Replace any XORed pixels with black, because RFB doesn't support
-                    // XORing of cursors.  XORing is used for the I-beam cursor, which is most
-                    // often used over a white background, but also sometimes over a black
-                    // background.  We set the XOR'd pixels to black, then draw a white outline
-                    // around the whole cursor.
 
                     rwbuffer[0] = rwbuffer[1] = rwbuffer[2] = 0;
                     rwbuffer[3] = 0xff;
@@ -416,7 +391,6 @@ extern "C"
                 }
                 else
                 {
-                    // Transparent pixel
                     rwbuffer[0] = rwbuffer[1] = rwbuffer[2] = rwbuffer[3] = 0;
                 }
 
@@ -436,19 +410,15 @@ extern "C"
         {
             for (int x = 0; x < width; x++)
             {
-                // Visible pixel?
                 if (in[3] > 0)
                 {
                     auto n = 4 * 3;
                     auto p = out - (width + 2) * 4 - 4;
-                    // Outline above...
                     if (p >= out0 && p + n <= out0_end)
                         memset(p, 0xff, n);
-                    // ...besides...
                     p = out - 4;
                     if (p + n <= out0_end)
                         memset(p, 0xff, n);
-                    // ...and above
                     p = out + (width + 2) * 4 - 4;
                     if (p + n <= out0_end)
                         memset(p, 0xff, n);
@@ -456,11 +426,9 @@ extern "C"
                 in += 4;
                 out += 4;
             }
-            // outline is slightly larger
             out += 2 * 4;
         }
 
-        // Pass 2, overwrite with actual cursor
         in = in0;
         out = out0 + offset;
         for (int y = 0; y < height; y++)
@@ -492,7 +460,7 @@ extern "C"
 
         bi.bV5Size = sizeof(BITMAPV5HEADER);
         bi.bV5Width = width;
-        bi.bV5Height = -height; // Negative for top-down
+        bi.bV5Height = -height;
         bi.bV5Planes = 1;
         bi.bV5BitCount = 32;
         bi.bV5Compression = BI_BITFIELDS;
@@ -505,13 +473,11 @@ extern "C"
                        out, (LPBITMAPINFO)&bi, DIB_RGB_COLORS))
             return 1;
 
-        // We may not get the RGBA order we want, so shuffle things around
         int ridx, gidx, bidx, aidx;
 
         ridx = ffi(bi.bV5RedMask) / 8;
         gidx = ffi(bi.bV5GreenMask) / 8;
         bidx = ffi(bi.bV5BlueMask) / 8;
-        // Usually not set properly
         aidx = 6 - ridx - gidx - bidx;
 
         if ((bi.bV5RedMask != ((unsigned)0xff << ridx * 8)) ||
@@ -559,7 +525,6 @@ extern "C"
         SHAddToRecentDocs(SHARD_PATHW, path);
     }
 
-    // Hyper-V Enhanced Session names do not have the usual "rdp" prefix.
     static bool is_rdp_session_by_protocol(DWORD session_id)
     {
         LPSTR buffer = nullptr;
@@ -588,7 +553,6 @@ extern "C"
         DWORD count;
         auto rdp = "rdp";
         auto nrdp = strlen(rdp);
-        // https://github.com/rustdesk/rustdesk/discussions/937#discussioncomment-12373814 citrix session
         auto ica = "ica";
         auto nica = strlen(ica);
         if (WTSEnumerateSessionsA(WTS_CURRENT_SERVER_HANDLE, NULL, 1, &pInfos, &count))
@@ -621,11 +585,9 @@ extern "C"
         return rdp_or_console;
     }
 
-    // WTSInfoExLevel1.SessionFlags, or WTS_SESSIONSTATE_UNKNOWN when it cannot be read.
     DWORD get_session_flags(DWORD session_id)
     {
         DWORD flags = WTS_SESSIONSTATE_UNKNOWN;
-        // WTS_CURRENT_SESSION, which would query the caller's session instead.
         if (session_id == 0xFFFFFFFF) {
             return flags;
         }
@@ -729,9 +691,8 @@ extern "C"
             wcsncpy_s(buf, bufSize, tmpStr.c_str(), tmpStr.size());
         }
     }
-} // end of extern "C"
+}
 
-// below copied from https://github.com/TigerVNC/tigervnc/blob/master/vncviewer/win32.c
 extern "C"
 {
     static HANDLE thread;
@@ -777,8 +738,6 @@ extern "C"
         {
             KBDLLHOOKSTRUCT *msgInfo = (KBDLLHOOKSTRUCT *)lParam;
 
-            // Grabbing everything seems to mess up some keyboard state that
-            // FLTK relies on, so just grab the keys that we normally cannot.
             if (stop_system_key_propagate && is_system_hotkey(msgInfo->vkCode, wParam))
             {
                 PostMessage(target_wnd, wParam, msgInfo->vkCode,
@@ -797,12 +756,9 @@ extern "C"
 
         target_wnd = (HWND)data;
 
-        // Make sure a message queue is created
         PeekMessage(&msg, NULL, 0, 0, PM_NOREMOVE | PM_NOYIELD);
 
         hook = SetWindowsHookEx(WH_KEYBOARD_LL, keyboard_hook, GetModuleHandle(0), 0);
-        // If something goes wrong then there is not much we can do.
-        // Just sit around and wait for WM_QUIT...
 
         while (GetMessage(&msg, NULL, 0, 0))
             ;
@@ -825,7 +781,6 @@ extern "C"
         {
             hwnd = default_hook_wnd;
         }
-        // Only one target at a time for now
         if (thread != NULL)
         {
             if (hwnd == target_wnd)
@@ -834,8 +789,6 @@ extern "C"
             return 1;
         }
 
-        // We create a separate thread as it is crucial that hooks are processed
-        // in a timely manner.
         thread = CreateThread(NULL, 0, keyboard_thread, hwnd, 0, &thread_id);
         if (thread == NULL)
             return 1;
@@ -863,7 +816,6 @@ extern "C"
         stop_system_key_propagate = v;
     }
 
-    // https://stackoverflow.com/questions/4023586/correct-way-to-find-out-if-a-service-is-running-as-the-system-user
     BOOL is_local_system()
     {
         HANDLE hToken;
@@ -874,13 +826,11 @@ extern "C"
         PSID pSystemSid;
         BOOL bSystem;
 
-        // open process token
         if (!OpenProcessToken(GetCurrentProcess(),
                               TOKEN_QUERY,
                               &hToken))
             return FALSE;
 
-        // retrieve user SID
         if (!GetTokenInformation(hToken, TokenUser, pTokenUser,
                                  sizeof(bTokenUser), &cbTokenUser))
         {
@@ -890,12 +840,10 @@ extern "C"
 
         CloseHandle(hToken);
 
-        // allocate LocalSystem well-known SID
         if (!AllocateAndInitializeSid(&siaNT, 1, SECURITY_LOCAL_SYSTEM_RID,
                                       0, 0, 0, 0, 0, 0, 0, &pSystemSid))
             return FALSE;
 
-        // compare the user SID from the token with the LocalSystem SID
         bSystem = EqualSid(pTokenUser->User.Sid, pSystemSid);
 
         FreeSid(pSystemSid);
@@ -937,12 +885,10 @@ extern "C"
 
         return isRunning;
     }
-} // end of extern "C"
+}
 
-// Remote printing 
 extern "C"
 {
-// Dynamic loading of XPS Print functions
 typedef HRESULT(WINAPI *StartXpsPrintJobFunc)(
     LPCWSTR printerName,
     LPCWSTR jobName,
@@ -993,7 +939,6 @@ static bool InitXpsPrint()
 
     int PrintXPSRawData(LPWSTR printerName, BYTE *rawData, ULONG dataSize)
     {
-        // Check if XPS Print DLL is available
         if (!InitXpsPrint())
         {
             flog("XPS Print functionality not available on this system\n");
@@ -1042,9 +987,6 @@ static bool InitXpsPrint()
 
         IXpsPrintJob *job = nullptr;
         IXpsPrintJobStream *jobStream = nullptr;
-        // `StartXpsPrintJob()` is deprecated, but we still use it for compatibility.
-        // We may change to use the `Print Document Package API` in the future.
-        // https://learn.microsoft.com/en-us/windows/win32/printdocs/xpsprint-functions
         hr = StartXpsPrintJobPtr(
             printerName,
             L"Print Job 1",
@@ -1077,7 +1019,6 @@ static bool InitXpsPrint()
         hr = jobStream->Close();
         PRINT_XPS_CHECK_HR(hr, "Failed to close print job stream.");
 
-        // Wait about 5 minutes for the print job to complete.
         DWORD waitMillis = 300 * 1000;
         DWORD waitResult = WaitForSingleObject(completionEvent, waitMillis);
         if (waitResult != WAIT_OBJECT_0)

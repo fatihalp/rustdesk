@@ -26,13 +26,11 @@ lazy_static::lazy_static! {
     static ref CPU_USAGE_ONE_MINUTE: Arc<Mutex<Option<(f64, Instant)>>> = Arc::new(Mutex::new(None));
 }
 
-// https://github.com/mgostIH/process_list/blob/master/src/windows/mod.rs
 #[repr(transparent)]
 pub struct RAIIHandle(pub HANDLE);
 
 impl Drop for RAIIHandle {
     fn drop(&mut self) {
-        // This never gives problem except when running under a debugger.
         unsafe { CloseHandle(self.0) };
     }
 }
@@ -47,19 +45,10 @@ impl Drop for RAIIPDHQuery {
 }
 
 pub fn start_cpu_performance_monitor() {
-    // Code from:
-    // https://learn.microsoft.com/en-us/windows/win32/perfctrs/collecting-performance-data
-    // https://learn.microsoft.com/en-us/windows/win32/api/pdh/nf-pdh-pdhcollectquerydataex
-    // Why value lower than taskManager:
-    // https://aaron-margosis.medium.com/task-managers-cpu-numbers-are-all-but-meaningless-2d165b421e43
-    // Therefore we should compare with Precess Explorer rather than taskManager
 
     let f = || unsafe {
-        // load avg or cpu usage, test with prime95.
-        // Prefer cpu usage because we can get accurate value from Precess Explorer.
-        // const COUNTER_PATH: &'static str = "\\System\\Processor Queue Length\0";
         const COUNTER_PATH: &'static str = "\\Processor(_total)\\% Processor Time\0";
-        const SAMPLE_INTERVAL: DWORD = 2; // 2 second
+        const SAMPLE_INTERVAL: DWORD = 2;
 
         let mut ret;
         let mut query: PDH_HQUERY = std::mem::zeroed();
@@ -97,14 +86,12 @@ pub fn start_cpu_performance_monitor() {
         let mut queue: VecDeque<f64> = VecDeque::new();
         let mut recent_valid: VecDeque<bool> = VecDeque::new();
         loop {
-            // latest one minute
             if queue.len() == 31 {
                 queue.pop_front();
             }
             if recent_valid.len() == 31 {
                 recent_valid.pop_front();
             }
-            // allow get value within one minute
             if queue.len() > 0 && recent_valid.iter().filter(|v| **v).count() > queue.len() / 2 {
                 let sum: f64 = queue.iter().map(|f| f.to_owned()).sum();
                 let avg = sum / (queue.len() as f64);
@@ -157,8 +144,6 @@ pub fn sync_cpu_usage(cpu_usage: Option<f64>) {
     log::info!("cpu usage synced: {:?}", cpu_usage);
 }
 
-// https://learn.microsoft.com/en-us/windows/win32/sysinfo/targeting-your-application-at-windows-8-1
-// https://github.com/nodejs/node-convergence-archive/blob/e11fe0c2777561827cdb7207d46b0917ef3c42a7/deps/uv/src/win/util.c#L780
 pub fn is_windows_version_or_greater(
     os_major: u32,
     os_minor: u32,

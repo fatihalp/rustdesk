@@ -17,7 +17,6 @@ final testClients = [
       false)
 ];
 
-/// flutter run -d {platform} -t test/cm_demo.dart to test cm
 void main() async {
   isTest = true;
   WidgetsFlutterBinding.ensureInitialized();
@@ -50,14 +49,12 @@ void main() async {
       size: kConnectionManagerWindowSizeClosedChat);
   windowManager.waitUntilReadyToShow(windowOptions, () async {
     await windowManager.show();
-    // ensure initial window size to be changed
     await windowManager.setSize(kConnectionManagerWindowSizeClosedChat);
     await Future.wait([
       windowManager.setAlignment(Alignment.topRight),
       windowManager.focus(),
       windowManager.setOpacity(1)
     ]);
-    // ensure
     windowManager.setAlignment(Alignment.topRight);
   });
 }

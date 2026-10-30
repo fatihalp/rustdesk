@@ -36,7 +36,6 @@ pub fn convert_to_yuv(
         || src_pixfmt == crate::Pixfmt::RGBA
         || src_pixfmt == crate::Pixfmt::RGB565LE
     {
-        // stride is calculated, not real, so we need to check it
         if src_stride[0] < src_width * src_pixfmt.bytes_per_pixel() {
             bail!(
                 "src_stride too small: {} < {}",
@@ -65,7 +64,7 @@ pub fn convert_to_yuv(
         | (crate::Pixfmt::RGB565LE, crate::Pixfmt::I420) => {
             let dst_stride_y = dst_fmt.stride[0];
             let dst_stride_uv = dst_fmt.stride[1];
-            dst.resize(dst_fmt.h * dst_stride_y * 2, 0); // waste some memory to ensure memory safety
+            dst.resize(dst_fmt.h * dst_stride_y * 2, 0);
             let dst_y = dst.as_mut_ptr();
             let dst_u = dst[dst_fmt.u..].as_mut_ptr();
             let dst_v = dst[dst_fmt.v..].as_mut_ptr();

@@ -27,11 +27,6 @@ static KCP_RECV_ERR_LOG: hbb_common::log_throttle::LogThrottle =
     hbb_common::log_throttle::LogThrottle::new(KCP_IO_ERR_LOG_INTERVAL);
 
 impl KcpStream {
-    // Opt in to KCP's built-in congestion window (nc=0) instead of the pure turbo profile
-    // (nc=1) that has always shipped; see `get_kcp_cc_enabled` for why this is not the default.
-    // Sender-side only, so no wire negotiation is needed and either peer may run either profile.
-    // Requires kcp-sys from the `rustdesk-patches` branch, which wires the config factory into
-    // connection setup (on older revs the factory was stored but never consulted).
     fn apply_kcp_config(endpoint: &mut KcpEndpoint) {
         if crate::get_kcp_cc_enabled() {
             endpoint.set_kcp_config_factory(Box::new(|conv| {
@@ -42,10 +37,6 @@ impl KcpStream {
         }
     }
 
-    /// How long since a valid packet was last received from the peer, or `None` once the
-    /// connection is gone. Answered by the KCP endpoint's own tasks, not by the session's read
-    /// loop, so it stays meaningful while that loop is busy sending a large message; and the
-    /// endpoint pings an idle peer often enough that silence here means the peer, not quiet.
     pub fn peer_silent_for(&self) -> Option<std::time::Duration> {
         self.endpoint.peer_silent_for(&self.conn_id)
     }
@@ -138,10 +129,6 @@ impl KcpStream {
         let udp = udp_socket.clone();
         tokio::spawn(async move {
             let mut buf = vec![0; 1500];
-            // Socket errors are ICMP unreachable on a connected UDP socket — advisory, and
-            // routine while a hole forms — so treat them as loss and let KCP's pong timeout reap
-            // a link that is really dead. One throttle PER DIRECTION: the error is reported once
-            // and cleared, so send-ok/recv-err alternates and a shared counter never fires.
             loop {
                 tokio::select! {
                     _ = &mut stop_receiver => {
@@ -217,10 +204,6 @@ mod tests {
         )
     }
 
-    // The full client path over real loopback sockets: handshake through the kcp_io
-    // pumps, framed data both ways, then a graceful close. The endpoint guard stays
-    // alive across the stream drop so the FIN can go out, and the peer's framed
-    // stream must end (BrokenPipe from the kcp reader) instead of hanging.
     #[tokio::test]
     async fn test_kcp_stream_loopback_roundtrip_and_close() {
         let ((_guard_a, mut stream_a), (_guard_b, mut stream_b)) = establish().await;
@@ -246,10 +229,6 @@ mod tests {
         }
     }
 
-    // A writer that queues many frames and closes immediately must not cost the
-    // reader any of them: every frame arrives intact, in order, before end-of-stream.
-    // This is the client-side pin for the kcp-sys close-tail-drain semantics, through
-    // the real BytesCodec framing rustdesk sessions use.
     #[tokio::test]
     async fn test_kcp_stream_close_delivers_all_frames() {
         let ((_guard_a, mut tx), (_guard_b, mut rx)) = establish().await;
@@ -269,7 +248,6 @@ mod tests {
                     assert!(data.iter().all(|&b| b == 7), "frame content corrupted");
                     got += 1;
                 }
-                // BrokenPipe (kcp reader end) or timeout-None both end the stream.
                 None | Some(Err(_)) => break,
             }
         }

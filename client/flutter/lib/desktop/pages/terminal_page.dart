@@ -32,7 +32,6 @@ class TerminalPage extends StatefulWidget {
   final ValueChanged<String>? onClipboardWriteSucceeded;
   final int terminalId;
 
-  /// Tab key for focus management, passed from parent to avoid duplicate construction
   final String tabKey;
   final SimpleWrapper<State<TerminalPage>?> _lastState = SimpleWrapper(null);
 
@@ -61,10 +60,8 @@ class _TerminalPageState extends State<TerminalPage>
   void initState() {
     super.initState();
 
-    // Listen for tab selection changes to request focus
     _tabStateSubscription = widget.tabController.state.listen(_onTabStateChanged);
 
-    // Use shared FFI instance from connection manager
     _ffi = TerminalConnectionManager.getConnection(
       peerId: widget.id,
       password: widget.password,
@@ -73,7 +70,6 @@ class _TerminalPageState extends State<TerminalPage>
       connToken: widget.connToken,
     );
 
-    // Create terminal model with specific terminal ID
     _terminalModel = TerminalModel(_ffi, widget.terminalId);
     _terminalModel.onClipboardWriteBlocked = widget.onClipboardWriteBlocked;
     _terminalModel.onClipboardWriteSucceeded = widget.onClipboardWriteSucceeded;
@@ -83,14 +79,11 @@ class _TerminalPageState extends State<TerminalPage>
     _terminalModel.onResizeExternal = (w, h, pw, ph) {
       _cellHeight = ph * 1.0;
 
-      // Enable focus once terminal has valid dimensions (first valid resize)
       if (!_terminalFocusNode.canRequestFocus && w > 0 && h > 0) {
         _terminalFocusNode.canRequestFocus = true;
-        // Auto-focus if this tab is currently selected
         _requestFocusIfSelected();
       }
 
-      // Schedule the setState for the next frame
       WidgetsBinding.instance.addPostFrameCallback((_) {
         if (mounted) {
           setState(() {});
@@ -98,33 +91,25 @@ class _TerminalPageState extends State<TerminalPage>
       });
     };
 
-    // Register this terminal model with FFI for event routing
     _ffi.registerTerminalModel(widget.terminalId, _terminalModel);
 
-    // Auto-close tab when shell exits
     _terminalModel.onClosed = () {
       if (mounted) {
         widget.tabController.closeBy(widget.tabKey);
       }
     };
 
-    // Initialize terminal connection
     WidgetsBinding.instance.addPostFrameCallback((_) {
       widget.tabController.onSelected?.call(widget.id);
 
-      // Check if this is a new connection or additional terminal
-      // Note: When a connection exists, the ref count will be > 1 after this terminal is added
       final isExistingConnection =
           TerminalConnectionManager.hasConnection(widget.id) &&
               TerminalConnectionManager.getTerminalCount(widget.id) > 1;
 
       if (!isExistingConnection) {
-        // First terminal - show loading dialog, wait for onReady
         _ffi.dialogManager
             .showLoading(translate('Connecting...'), onCancel: closeConnection);
       } else {
-        // Additional terminal - connection already established
-        // Open the terminal directly
         _terminalModel.openTerminal();
       }
     });
@@ -132,19 +117,15 @@ class _TerminalPageState extends State<TerminalPage>
 
   @override
   void dispose() {
-    // Cancel tab state subscription to prevent memory leak
     _tabStateSubscription?.cancel();
-    // Unregister terminal model from FFI
     _ffi.unregisterTerminalModel(widget.terminalId);
     _terminalModel.dispose();
     _terminalFocusNode.dispose();
-    // Release connection reference instead of closing directly
     TerminalConnectionManager.releaseConnection(widget.id);
     super.dispose();
   }
 
   void _onTabStateChanged(DesktopTabState state) {
-    // Check if this tab is now selected and request focus
     if (state.selected >= 0 && state.selected < state.tabs.length) {
       final selectedTab = state.tabs[state.selected];
       if (selectedTab.key == widget.tabKey && mounted) {
@@ -155,9 +136,7 @@ class _TerminalPageState extends State<TerminalPage>
 
   void _requestFocusIfSelected() {
     if (!mounted || !_terminalFocusNode.canRequestFocus) return;
-    // Use post-frame callback to ensure widget is fully laid out in focus tree
     WidgetsBinding.instance.addPostFrameCallback((_) {
-      // Re-check conditions after frame: mounted, focusable, still selected, not already focused
       if (!mounted || !_terminalFocusNode.canRequestFocus || _terminalFocusNode.hasFocus) return;
       final state = widget.tabController.state.value;
       if (state.selected >= 0 && state.selected < state.tabs.length) {
@@ -168,9 +147,6 @@ class _TerminalPageState extends State<TerminalPage>
     });
   }
 
-  // This method ensures that the number of visible rows is an integer by computing the
-  // extra space left after dividing the available height by the height of a single
-  // terminal row (`_cellHeight`) and distributing it evenly as top and bottom padding.
   EdgeInsets _calculatePadding(double heightPx) {
     final cellHeight = _cellHeight;
     if (!heightPx.isFinite ||
@@ -207,8 +183,6 @@ class _TerminalPageState extends State<TerminalPage>
             _terminalModel.terminal,
             controller: _terminalModel.terminalController,
             focusNode: _terminalFocusNode,
-            // Note: autofocus is not used here because focus is managed manually
-            // via _onTabStateChanged() to handle tab switching properly.
             backgroundOpacity: 0.7,
             padding: _calculatePadding(heightPx),
             onSecondaryTapDown: (details, offset) async {

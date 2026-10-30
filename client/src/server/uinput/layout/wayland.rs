@@ -78,7 +78,6 @@ fn read_keymap_file(fd: OwnedFd, size: u32) -> ResultType<Vec<u8>> {
         bail!("Wayland keyboard map is shorter than its advertised size");
     }
     let mut bytes = vec![0; usize::try_from(size)?];
-    // Compositors can share this file description with other clients.
     file.read_exact_at(&mut bytes, 0)?;
     CStr::from_bytes_with_nul(&bytes)?;
     Ok(bytes)
@@ -99,9 +98,6 @@ impl Dispatch<wl_registry::WlRegistry, ()> for KeyboardState {
             version,
         } = event
         {
-            // Multi-seat sessions are unsupported: neither registry order nor
-            // keyboard capability identifies the seat receiving our uinput events.
-            // The first seat may have no keyboard or expose an unrelated keymap.
             if interface == "wl_seat" && !state.seat_bound {
                 registry.bind::<wl_seat::WlSeat, _, _>(name, version.min(SEAT_VERSION), handle, ());
                 state.seat_bound = true;

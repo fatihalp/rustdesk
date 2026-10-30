@@ -23,14 +23,9 @@ import '../../utils/image.dart';
 
 final initText = '1' * 1024;
 
-// Workaround for Android (default input method, Microsoft SwiftKey keyboard) when using physical keyboard.
-// When connecting a physical keyboard, `KeyEvent.physicalKey.usbHidUsage` are wrong is using Microsoft SwiftKey keyboard.
-// https://github.com/flutter/flutter/issues/159384
-// https://github.com/flutter/flutter/issues/159383
 void _disableAndroidSoftKeyboard({bool? isKeyboardVisible}) {
   if (isAndroid) {
     if (isKeyboardVisible != true) {
-      // `enable_soft_keyboard` will be set to `true` when clicking the keyboard icon, in `openKeyboard()`.
       gFFI.invokeMethod("enable_soft_keyboard", false);
     }
   }
@@ -69,7 +64,7 @@ class _ViewCameraPageState extends State<ViewCameraPage>
   final keyboardVisibilityController = KeyboardVisibilityController();
   final FocusNode _mobileFocusNode = FocusNode();
   final FocusNode _physicalFocusNode = FocusNode();
-  var _showEdit = false; // use soft keyboard
+  var _showEdit = false;
 
   InputModel get inputModel => gFFI.inputModel;
   SessionID get sessionId => gFFI.sessionId;
@@ -121,7 +116,6 @@ class _ViewCameraPageState extends State<ViewCameraPage>
   @override
   Future<void> dispose() async {
     WidgetsBinding.instance.removeObserver(this);
-    // https://github.com/flutter/flutter/issues/64935
     super.dispose();
     gFFI.dialogManager.hideMobileActionsOverlay(store: false);
     gFFI.inputModel.listenToMouse(false);
@@ -138,9 +132,6 @@ class _ViewCameraPageState extends State<ViewCameraPage>
         overlays: SystemUiOverlay.values);
     WakelockManager.disable(_uniqueKey);
     removeSharedStates(widget.id);
-    // `on_voice_call_closed` should be called when the connection is ended.
-    // The inner logic of `on_voice_call_closed` will check if the voice call is active.
-    // Only one client is considered here for now.
     gFFI.chatModel.onVoiceCallClosed("End connection");
   }
 
@@ -149,8 +140,6 @@ class _ViewCameraPageState extends State<ViewCameraPage>
 
   @override
   void didChangeMetrics() {
-    // If the soft keyboard is visible and the canvas has been changed(panned or scaled)
-    // Don't try reset the view style and focus the cursor.
     if (gFFI.cursorModel.lastKeyboardIsVisible &&
         gFFI.canvasModel.isMobileCanvasChanged) {
       return;
@@ -159,7 +148,6 @@ class _ViewCameraPageState extends State<ViewCameraPage>
     final newBottom = MediaQueryData.fromView(ui.window).viewInsets.bottom;
     _timerDidChangeMetrics?.cancel();
     _timerDidChangeMetrics = Timer(Duration(milliseconds: 100), () async {
-      // We need this comparation because poping up the floating action will also trigger `didChangeMetrics()`.
       if (newBottom != _viewInsetsBottom) {
         gFFI.canvasModel.mobileFocusCanvasCursor();
         _viewInsetsBottom = newBottom;
@@ -167,13 +155,7 @@ class _ViewCameraPageState extends State<ViewCameraPage>
     });
   }
 
-  // to-do: It should be better to use transparent color instead of the bgColor.
-  // But for now, the transparent color will cause the canvas to be white.
-  // I'm sure that the white color is caused by the Overlay widget in BlockableOverlay.
-  // But I don't know why and how to fix it.
   Widget emptyOverlay(Color bgColor) => BlockableOverlay(
-        /// the Overlay key will be set with _blockableOverlayState in BlockableOverlay
-        /// see override build() in [BlockableOverlay]
         state: _blockableOverlayState,
         underlying: Container(
           color: bgColor,
@@ -196,7 +178,6 @@ class _ViewCameraPageState extends State<ViewCameraPage>
         return false;
       },
       child: Scaffold(
-          // workaround for https://github.com/rustdesk/rustdesk/issues/3131
           floatingActionButtonLocation: keyboardIsVisible
               ? FABLocation(FloatingActionButtonLocation.endFloat, 0, -35)
               : null,
@@ -280,8 +261,6 @@ class _ViewCameraPageState extends State<ViewCameraPage>
   Widget getRawPointerAndKeyBody(Widget child) {
     return CameraRawPointerMouseRegion(
       inputModel: inputModel,
-      // Disable RawKeyFocusScope before the connecting is established.
-      // The "Delete" key on the soft keyboard may be grabbed when inputting the password dialog.
       child: gFFI.ffiModel.pi.isSet.isTrue
           ? RawKeyFocusScope(
               focusNode: _physicalFocusNode,
@@ -379,25 +358,11 @@ class _ViewCameraPageState extends State<ViewCameraPage>
                   : TextFormField(
                       textInputAction: TextInputAction.newline,
                       autocorrect: false,
-                      // Flutter 3.16.9 Android.
-                      // `enableSuggestions` causes secure keyboard to be shown.
-                      // https://github.com/flutter/flutter/issues/139143
-                      // https://github.com/flutter/flutter/issues/146540
-                      // enableSuggestions: false,
                       autofocus: true,
                       focusNode: _mobileFocusNode,
                       maxLines: null,
                       controller: _textController,
-                      // trick way to make backspace work always
                       keyboardType: TextInputType.multiline,
-                      // `onChanged` may be called depending on the input method if this widget is wrapped in
-                      // `Focus(onKeyEvent: ..., child: ...)`
-                      // For `Backspace` button in the soft keyboard:
-                      // en/fr input method:
-                      //      1. The button will not trigger `onKeyEvent` if the text field is not empty.
-                      //      2. The button will trigger `onKeyEvent` if the text field is empty.
-                      // ko/zh/ja input method: the button will trigger `onKeyEvent`
-                      //                     and the event will not popup if `KeyEventResult.handled` is returned.
                       onChanged: null,
                     ).workaroundFreezeLinuxMint(),
             ),
@@ -588,9 +553,6 @@ void showOptions(
     final isDarkTheme = MyTheme.currentThemeMode() == ThemeMode.dark;
     final numColorSelected = Colors.white;
     final numColorUnselected = isDarkTheme ? Colors.grey : Colors.black87;
-    // We can't use `Theme.of(context).primaryColor` here, the color is:
-    // - light theme: 0xff2196f3 (Colors.blue)
-    // - dark theme: 0xff212121 (the canvas color?)
     final numBgSelected =
         Theme.of(context).colorScheme.primary.withOpacity(0.6);
     for (var i = 0; i < pi.displays.length; ++i) {

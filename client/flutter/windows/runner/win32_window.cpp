@@ -5,22 +5,18 @@
 
 #include "resource.h"
 
-#include <cstdlib> // for getenv and _putenv
-#include <cstring> // for strcmp
-#include <string> // for std::wstring
+#include <cstdlib>
+#include <cstring>
+#include <string>
 
 namespace {
 
 constexpr const wchar_t kWindowClassName[] = L"FLUTTER_RUNNER_WIN32_WINDOW";
 
-// The number of Win32Window objects that currently exist.
 static int g_active_window_count = 0;
 
-// Static variable to hold the custom icon (needs cleanup on exit)
 static HICON g_custom_icon_ = nullptr;
 
-// Try to load icon from data\flutter_assets\assets\icon.ico if it exists.
-// Returns nullptr if the file doesn't exist or can't be loaded.
 HICON LoadCustomIcon() {
   if (g_custom_icon_ != nullptr) {
     return g_custom_icon_;
@@ -39,7 +35,6 @@ HICON LoadCustomIcon() {
   icon_path = icon_path.substr(0, last_slash + 1);
   icon_path += L"data\\flutter_assets\\assets\\icon.ico";
 
-  // Check file attributes - reject if missing, directory, or reparse point (symlink/junction)
   DWORD file_attr = GetFileAttributesW(icon_path.c_str());
   if (file_attr == INVALID_FILE_ATTRIBUTES ||
       (file_attr & FILE_ATTRIBUTE_DIRECTORY) ||
@@ -55,14 +50,10 @@ HICON LoadCustomIcon() {
 
 using EnableNonClientDpiScaling = BOOL __stdcall(HWND hwnd);
 
-// Scale helper to convert logical scaler values to physical using passed in
-// scale factor
 int Scale(int source, double scale_factor) {
   return static_cast<int>(source * scale_factor);
 }
 
-// Dynamically loads the |EnableNonClientDpiScaling| from the User32 module.
-// This API is only needed for PerMonitor V1 awareness mode.
 void EnableFullDpiSupportIfAvailable(HWND hwnd) {
   HMODULE user32_module = LoadLibraryA("User32.dll");
   if (!user32_module) {
@@ -77,14 +68,12 @@ void EnableFullDpiSupportIfAvailable(HWND hwnd) {
   }
 }
 
-}  // namespace
+}
 
-// Manages the Win32Window's window class registration.
 class WindowClassRegistrar {
  public:
   ~WindowClassRegistrar() = default;
 
-  // Returns the singleton registrar instance.
   static WindowClassRegistrar* GetInstance() {
     if (!instance_) {
       instance_ = new WindowClassRegistrar();
@@ -92,12 +81,8 @@ class WindowClassRegistrar {
     return instance_;
   }
 
-  // Returns the name of the window class, registering the class if it hasn't
-  // previously been registered.
   const wchar_t* GetWindowClass();
 
-  // Unregisters the window class. Should only be called if there are no
-  // instances of the window.
   void UnregisterWindowClass();
 
  private:
@@ -120,7 +105,6 @@ const wchar_t* WindowClassRegistrar::GetWindowClass() {
     window_class.cbWndExtra = 0;
     window_class.hInstance = GetModuleHandle(nullptr);
     
-    // Try to load icon from data\flutter_assets\assets\icon.ico if it exists
     HICON custom_icon = LoadCustomIcon();
     if (custom_icon != nullptr) {
       window_class.hIcon = custom_icon;
@@ -142,7 +126,6 @@ void WindowClassRegistrar::UnregisterWindowClass() {
   UnregisterClass(kWindowClassName, nullptr);
   class_registered_ = false;
   
-  // Clean up the custom icon if it was loaded
   if (g_custom_icon_ != nullptr) {
     DestroyIcon(g_custom_icon_);
     g_custom_icon_ = nullptr;
@@ -183,7 +166,6 @@ bool Win32Window::CreateAndShow(const std::wstring& title,
   }
 
   if (!showOnTaskBar) {
-    // hide from taskbar
     HRESULT hr;
     ITaskbarList* pTaskbarList;
     hr = CoCreateInstance(CLSID_TaskbarList, NULL, CLSCTX_INPROC_SERVER,IID_ITaskbarList,(void**)&pTaskbarList);
@@ -201,23 +183,17 @@ bool Win32Window::CreateAndShow(const std::wstring& title,
 static void trySetWindowForeground(HWND window) {
     char* value = nullptr;
     size_t size = 0;
-    // Use _dupenv_s to safely get the environment variable
     _dupenv_s(&value, &size, "SET_FOREGROUND_WINDOW");
 
     if (value != nullptr) {
-        // Correctly compare the value with "1"
         if (strcmp(value, "1") == 0) {
-            // Clear the environment variable
             _putenv("SET_FOREGROUND_WINDOW=");
-            // Set the window to foreground
             SetForegroundWindow(window);
         }
-        // Free the duplicated string
         free(value);
     }
 }
 
-// static
 LRESULT CALLBACK Win32Window::WndProc(HWND const window,
                                       UINT const message,
                                       WPARAM const wparam,
@@ -265,7 +241,6 @@ Win32Window::MessageHandler(HWND hwnd,
     case WM_SIZE: {
       RECT rect = GetClientArea();
       if (child_content_ != nullptr) {
-        // Size and position the child window.
         MoveWindow(child_content_, rect.left, rect.top, rect.right - rect.left,
                    rect.bottom - rect.top, TRUE);
       }
@@ -325,12 +300,10 @@ void Win32Window::SetQuitOnClose(bool quit_on_close) {
 }
 
 bool Win32Window::OnCreate() {
-  // No-op; provided for subclasses.
   return true;
 }
 
 void Win32Window::OnDestroy() {
-  // No-op; provided for subclasses.
 }
 
 const wchar_t* getWindowClassName() {

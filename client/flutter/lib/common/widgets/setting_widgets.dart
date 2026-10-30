@@ -77,7 +77,6 @@ customImageQualityWidget(
                     translate('Bitrate'),
                     style: const TextStyle(fontSize: 15),
                   )),
-              // mobile doesn't have enough space
               if (showMoreQuality && !isMobile)
                 Expanded(
                     flex: 1,
@@ -278,11 +277,8 @@ bool isOtherDefaultSettingReadOnly(String key) =>
 
 class TrackpadSpeedWidget extends StatefulWidget {
   final SimpleWrapper<int> value;
-  // If null, no debouncer will be applied.
   final Function(int)? onDebouncer;
   final ValueChanged<String>? onTextChanged;
-  // IME actions call TextField.onSubmitted without reaching the dialog's
-  // raw Enter handler, so the dialog needs a separate submission callback.
   final ValueChanged<String>? onTextSubmitted;
 
   TrackpadSpeedWidget({
@@ -307,7 +303,6 @@ class TrackpadSpeedWidgetState extends State<TrackpadSpeedWidget> {
   void updateValue(int newValue) {
     setState(() {
       value = newValue.clamp(kMinTrackpadSpeed, kMaxTrackpadSpeed);
-      // Scale the trackpad speed value to a percentage for display purposes.
       _controller.text = value.toString();
       if (widget.onDebouncer != null) {
         debouncerSpeed.setValue(value);

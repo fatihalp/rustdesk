@@ -1,5 +1,3 @@
-// https://github.com/aarnt/qt-sudo
-// Sometimes reboot is needed to refresh sudoers.
 
 use crate::lang::translate;
 use base::platform::linux::CMD_SH;
@@ -39,7 +37,6 @@ enum Message {
 }
 
 pub fn run(cmds: Vec<&str>) -> ResultType<()> {
-    // rustdesk service kill `rustdesk --` processes
     let second_arg = std::env::args().nth(1).unwrap_or_default();
     let cmd_mode =
         second_arg.starts_with("--") && second_arg != "--tray" && second_arg != "--no-server";
@@ -93,8 +90,6 @@ fn cmd(args: Vec<String>) {
 }
 
 fn ui(args: Vec<String>) {
-    // https://docs.gtk.org/gtk4/ctor.Application.new.html
-    // https://docs.gtk.org/gio/type_func.Application.id_is_valid.html
     let application = gtk::Application::new(None, Default::default());
 
     let (tx_to_ui, rx_to_ui) = channel::<Message>();
@@ -277,7 +272,6 @@ fn cmd_parent(child: Pid, master: OwnedFd) -> ResultType<()> {
                 std::thread::sleep(std::time::Duration::from_millis(50));
             }
             Err(e) => {
-                // Child process is dead
                 log::info!("Read child error: {:?}", e);
                 break;
             }
@@ -301,7 +295,6 @@ fn cmd_parent(child: Pid, master: OwnedFd) -> ResultType<()> {
         }
     }
 
-    // Wait for child process
     let status = waitpid(child, None);
     log::info!("waitpid status: {:?}", status);
     let mut code = EXIT_CODE;
@@ -351,7 +344,6 @@ fn ui_parent(
                 let last_line = buf.lines().last().unwrap_or(&buf).trim().to_string();
                 log::info!("read from child: {}", buf);
 
-                // sudo-rs's notice for a rejected password, not an error: it asks again.
                 if (last_line.starts_with("sudo:") || last_line.starts_with("su:"))
                     && last_line != "sudo: Authentication failed, try again."
                 {
@@ -381,7 +373,6 @@ fn ui_parent(
                                 initial_password = None;
                                 continue;
                             }
-                            // In fact, su mode can only input password once
                             let err_msg = if first { "" } else { "Sorry, try again." };
                             first = false;
                             if let Err(e) =
@@ -430,14 +421,12 @@ fn ui_parent(
                 std::thread::sleep(std::time::Duration::from_millis(50));
             }
             Err(e) => {
-                // Child process is dead
                 log::debug!("Read error: {:?}", e);
                 break;
             }
         }
     }
 
-    // Wait for child process
     let status = waitpid(child, None);
     log::info!("waitpid status: {:?}", status);
     let mut code = EXIT_CODE;
@@ -466,7 +455,6 @@ fn ui_parent(
 }
 
 fn child(su_user: Option<String>, args: Vec<String>) -> ResultType<()> {
-    // https://doc.rust-lang.org/std/env/consts/constant.OS.html
     let os = std::env::consts::OS;
     let bsd = os == "freebsd" || os == "dragonfly" || os == "netbsd" || os == "openbsd";
     let mut params = vec!["sudo".to_string()];
@@ -527,7 +515,6 @@ fn child(su_user: Option<String>, args: Vec<String>) -> ResultType<()> {
         ];
     }
 
-    // allow failure here
     let _ = setsid();
     let mut cparams = vec![];
     for param in &params {
@@ -553,7 +540,6 @@ fn get_echo_turn_off(fd: RawFd) -> Result<bool, Error> {
 fn turn_off_echo(fd: RawFd) -> Result<(), Error> {
     use termios::*;
     let mut termios = Termios::from_fd(fd)?;
-    // termios.c_lflag &= !(ECHO | ECHONL | ICANON | IEXTEN);
     termios.c_lflag &= !ECHO;
     tcsetattr(fd, TCSANOW, &termios)?;
     Ok(())
@@ -598,7 +584,6 @@ fn password_prompt(
         .title(crate::get_app_name())
         .modal(true)
         .build();
-    // https://docs.gtk.org/gtk4/method.Dialog.set_default_response.html
     dialog.set_default_response(gtk::ResponseType::Ok);
     let content_area = dialog.content_area();
 
@@ -653,7 +638,6 @@ fn password_prompt(
         .text(last_password)
         .build();
     password_input.set_alignment(0.5);
-    // https://docs.gtk.org/gtk3/signal.Entry.activate.html
     password_input.connect_activate(glib::clone!(@weak dialog => move |_| {
         dialog.response(gtk::ResponseType::Ok);
     }));

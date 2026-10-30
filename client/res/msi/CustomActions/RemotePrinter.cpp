@@ -19,12 +19,9 @@ namespace RemotePrinter
 {
 #define HRESULT_ERR_ELEMENT_NOT_FOUND 0x80070490
 
-    // The driver files and the driver name ship with the app under their stock names
-    // and stay fixed for every custom client. Only the printer and its port carry the
-    // app name, and that arrives at runtime so one dll serves every custom client.
     LPCWCH RD_DRIVER_INF_PATH = L"drivers\\RustDeskPrinterDriver\\RustDeskPrinterDriver.inf";
-    LPCWCH RD_PRINTER_DRIVER_NAME = L"RustDesk v4 Printer Driver";
-    LPCWCH RD_DEFAULT_APP_NAME = L"RustDesk";
+    LPCWCH RD_PRINTER_DRIVER_NAME = L"SupportDesk v4 Printer Driver";
+    LPCWCH RD_DEFAULT_APP_NAME = L"SupportDesk";
     LPCWCH XCV_MONITOR_LOCAL_PORT = L",XcvMonitor Local Port";
 
     static std::wstring printerNameOf(const std::wstring &appName)
@@ -69,13 +66,6 @@ namespace RemotePrinter
 
     BOOL isNameEqual(LPCWSTR lhs, LPCWSTR rhs)
     {
-        // https://learn.microsoft.com/en-us/windows/win32/api/winbase/nf-winbase-lstrcmpiw
-        // For some locales, the lstrcmpi function may be insufficient.
-        // If this occurs, use `CompareStringEx` to ensure proper comparison.
-        // For example, in Japan call with the NORM_IGNORECASE, NORM_IGNOREKANATYPE, and NORM_IGNOREWIDTH values to achieve the most appropriate non-exact string comparison.
-        // Note that specifying these values slows performance, so use them only when necessary.
-        //
-        //  No need to consider `CompareStringEx` for now.
         return lstrcmpiW(lhs, rhs) == 0 ? TRUE : FALSE;
     }
 
@@ -86,11 +76,6 @@ namespace RemotePrinter
         LPDWORD pcbNeeded,
         LPDWORD pcReturned)
     {
-        // https://learn.microsoft.com/en-us/windows/win32/printdocs/enumports
-        // This is a blocking or synchronous function and might not return immediately.
-        // How quickly this function returns depends on run-time factors
-        // such as network status, print server configuration, and printer driver implementation factors that are difficult to predict when writing an application.
-        // Calling this function from a thread that manages interaction with the user interface could make the application appear to be unresponsive.
         return EnumPortsW(NULL, level, pPortInfo, cbBuf, pcbNeeded, pcReturned);
     }
 
@@ -181,11 +166,6 @@ namespace RemotePrinter
         LPDWORD pcbNeeded,
         LPDWORD pcReturned)
     {
-        // https://learn.microsoft.com/en-us/windows/win32/printdocs/enumprinterdrivers
-        // This is a blocking or synchronous function and might not return immediately.
-        // How quickly this function returns depends on run-time factors
-        // such as network status, print server configuration, and printer driver implementation factors that are difficult to predict when writing an application.
-        // Calling this function from a thread that manages interaction with the user interface could make the application appear to be unresponsive.
         return EnumPrinterDriversW(
             NULL,
             NULL,
@@ -248,15 +228,6 @@ namespace RemotePrinter
 
     BOOL deletePrinterDriver(LPCWSTR name)
     {
-        // If the printer is used after the spooler service is started. E.g., printing a document through RustDesk Printer.
-        // `DeletePrinterDriverExW()` may fail with `ERROR_PRINTER_DRIVER_IN_USE`(3001, 0xBB9).
-        // We can only ignore this error for now.
-        // Though restarting the spooler service is a solution, it's not a good idea to restart the service.
-        // 
-        // Deleting the printer driver after deleting the printer is a common practice.
-        // No idea why `DeletePrinterDriverExW()` fails with `ERROR_UNKNOWN_PRINTER_DRIVER` after using the printer once.
-        // https://github.com/ChromiumWebApps/chromium/blob/c7361d39be8abd1574e6ce8957c8dbddd4c6ccf7/cloud_print/virtual_driver/win/install/setup.cc#L422
-        // AnyDesk printer driver and the simplest printer driver also have the same issue.
         BOOL res = DeletePrinterDriverExW(NULL, NULL, const_cast<LPWSTR>(name), DPD_DELETE_ALL_FILES, 0);
         if (res == FALSE)
         {
@@ -275,10 +246,6 @@ namespace RemotePrinter
 
     BOOL deletePrinterDriverPackage(const std::wstring &inf)
     {
-        // https://learn.microsoft.com/en-us/windows/win32/printdocs/deleteprinterdriverpackage
-        // This function is a blocking or synchronous function and might not return immediately.
-        // How quickly this function returns depends on run-time factors such as network status, print server configuration, and printer driver implementation factors that are difficult to predict when writing an application.
-        // Calling this function from a thread that manages interaction with the user interface could make the application appear to be unresponsive.
         int tries = 3;
         HRESULT result = S_FALSE;
         while ((result = DeletePrinterDriverPackage(NULL, inf.c_str(), NULL)) != S_OK)
@@ -349,11 +316,6 @@ namespace RemotePrinter
         LPDWORD pcbNeeded,
         LPDWORD pcReturned)
     {
-        // https://learn.microsoft.com/en-us/windows/win32/printdocs/enumprinters
-        // This is a blocking or synchronous function and might not return immediately.
-        // How quickly this function returns depends on run-time factors
-        // such as network status, print server configuration, and printer driver implementation factors that are difficult to predict when writing an application.
-        // Calling this function from a thread that manages interaction with the user interface could make the application appear to be unresponsive.
         return EnumPrintersW(PRINTER_ENUM_LOCAL, NULL, level, pPrinterInfo, cbBuf, pcbNeeded, pcReturned);
     }
 
@@ -495,13 +457,6 @@ namespace RemotePrinter
         return (fileAttributes != INVALID_FILE_ATTRIBUTES && !(fileAttributes & FILE_ATTRIBUTE_DIRECTORY));
     }
 
-    // Steps:
-    // 1. Add the local port.
-    // 2. Check if the driver is installed.
-    //    Uninstall the existing driver if it is installed.
-    //    We should not check the driver version because the driver is deployed with the application.
-    //    It's better to uninstall the existing driver and install the driver from the application.
-    // 3. Add the printer.
     VOID installUpdatePrinter(const std::wstring &installFolder, const std::wstring &appName)
     {
         const std::wstring printerName = printerNameOf(appName);

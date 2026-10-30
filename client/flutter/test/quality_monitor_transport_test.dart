@@ -21,7 +21,6 @@ void main() {
     final ffi = _FakeFFI();
     ffi.ffiModel.cachedPeerData.streamType = 'WebRTC';
     final model = QualityMonitorModel(WeakReference(ffi));
-    // Off the web the session tab's tooltip already names the transport.
     expect(isWeb, isFalse);
     expect(model.webrtcTransport, isNull);
   });

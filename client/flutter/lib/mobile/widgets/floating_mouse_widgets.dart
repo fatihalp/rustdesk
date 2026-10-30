@@ -1,7 +1,3 @@
-// These floating mouse widgets are used to simulate a physical mouse
-// when "mobile" -> "desktop" in mouse mode.
-// This file does not contain whole mouse widgets, it only contains
-// parts that help to control, such as wheel scroll and wheel button.
 
 import 'dart:async';
 import 'dart:convert';
@@ -15,11 +11,9 @@ import 'package:flutter_hbb/models/input_model.dart';
 import 'package:flutter_hbb/models/model.dart';
 import 'package:flutter_hbb/models/platform_model.dart';
 
-// Used for the wheel button and wheel scroll widgets
 const double _kSpaceToHorizontalEdge = 25;
 const double _wheelWidth = 50;
 const double _wheelHeight = 162;
-// Used for the left/right button widgets
 const double _kSpaceToVerticalEdge = 15;
 const double _kSpaceBetweenLeftRightButtons = 40;
 const double _kLeftRightButtonWidth = 55;
@@ -379,7 +373,6 @@ class _FloatingLeftRightButtonState extends State<FloatingLeftRightButton> {
   Orientation? _previousOrientation;
   Offset _preSavedPos = Offset.zero;
 
-  // Gesture ambiguity resolution
   Timer? _tapDownTimer;
   final Duration _pressTimeout = const Duration(milliseconds: 200);
   bool _isDragging = false;
@@ -523,9 +516,7 @@ class _FloatingLeftRightButtonState extends State<FloatingLeftRightButton> {
 
   void _onBodyPointerMoveUpdate(PointerMoveEvent event) {
     _cursorModel.blockEvents = true;
-    // If move, it's a drag, not a tap.
     _isDragging = true;
-    // Cancel the timer to prevent it from being recognized as a tap/hold.
     _tapDownTimer?.cancel();
     _tapDownTimer = null;
     _onMoveUpdateDelta(event.delta);
@@ -571,8 +562,6 @@ class _FloatingLeftRightButtonState extends State<FloatingLeftRightButton> {
     return Positioned(
       left: _position.dx,
       top: _position.dy,
-      // We can't use the GestureDetector here, because `onTapDown` may be
-      // triggered sometimes when dragging.
       child: Listener(
         onPointerMove: _onBodyPointerMoveUpdate,
         onPointerDown: (event) async {
@@ -582,7 +571,6 @@ class _FloatingLeftRightButtonState extends State<FloatingLeftRightButton> {
           setState(() {
             _isDown = true;
           });
-          // Start a timer. If it fires, it's a hold.
           _tapDownTimer?.cancel();
           _tapDownTimer = Timer(_pressTimeout, () {
             isSpecialHoldDragActive = true;
@@ -603,11 +591,9 @@ class _FloatingLeftRightButtonState extends State<FloatingLeftRightButton> {
           setState(() {
             _isDown = false;
           });
-          // If timer is active, it's a quick tap.
           if (_tapDownTimer != null) {
             _tapDownTimer!.cancel();
             _tapDownTimer = null;
-            // Fire tap down and up quickly.
             _inputModel
                 .tapDown(_isLeft ? MouseButtons.left : MouseButtons.right)
                 .then(
@@ -616,7 +602,6 @@ class _FloatingLeftRightButtonState extends State<FloatingLeftRightButton> {
                               _isLeft ? MouseButtons.left : MouseButtons.right);
                         }));
           } else {
-            // If it's not a quick tap, it could be a hold or drag.
             if (_remoteButtonDown) {
               _remoteButtonDown = false;
               _inputModel
@@ -693,9 +678,6 @@ class _QuarterCirclePainter extends CustomPainter {
   bool shouldRepaint(CustomPainter oldDelegate) => false;
 }
 
-// Virtual joystick can send either absolute movement (via updatePan)
-// or relative movement (via sendMobileRelativeMouseMove) depending on the
-// InputModel.relativeMouseMode setting.
 class VirtualJoystick extends StatefulWidget {
   final CursorModel cursorModel;
   final InputModel inputModel;
@@ -719,18 +701,13 @@ class _VirtualJoystickState extends State<VirtualJoystick> {
   final double _moveStep = 3.0;
   final double _speed = 1.0;
 
-  /// Scale factor for relative mouse movement sensitivity.
-  /// Higher values result in faster cursor movement on the remote machine.
   static const double _kRelativeMouseScale = 3.0;
 
-  // One-shot timer to detect a drag gesture
   Timer? _dragStartTimer;
-  // Periodic timer for continuous movement
   Timer? _continuousMoveTimer;
   Size? _lastScreenSize;
   bool _isPressed = false;
 
-  /// Check if relative mouse mode is enabled.
   bool get _useRelativeMouse => widget.inputModel.relativeMouseMode.value;
 
   @override
@@ -778,14 +755,11 @@ class _VirtualJoystickState extends State<VirtualJoystick> {
     );
   }
 
-  /// Send movement delta to remote machine.
-  /// Uses relative mouse mode if enabled, otherwise uses absolute updatePan.
   void _sendMovement(Offset delta) {
     if (_useRelativeMouse) {
       widget.inputModel.sendMobileRelativeMouseMove(
           delta.dx * _kRelativeMouseScale, delta.dy * _kRelativeMouseScale);
     } else {
-      // In absolute mode, use cursorModel.updatePan which tracks position.
       widget.cursorModel.updatePan(delta, Offset.zero, false);
     }
   }
@@ -813,17 +787,13 @@ class _VirtualJoystickState extends State<VirtualJoystick> {
           widget.cursorModel.blockEvents = true;
           _updateOffset(details.localPosition);
 
-          // 1. Send a single, small pan event immediately for responsiveness.
-          //    The movement is small for a gentle start.
           final initialDelta = _offsetToPanDelta(_offset);
           if (initialDelta.distance > 0) {
             _sendMovement(initialDelta);
           }
 
-          // 2. Start a one-shot timer to check if the user is holding for a drag.
           _dragStartTimer?.cancel();
           _dragStartTimer = Timer(const Duration(milliseconds: 120), () {
-            // 3. If the timer fires, it's a drag. Start the continuous movement timer.
             _continuousMoveTimer?.cancel();
             _continuousMoveTimer =
                 periodic_immediate(const Duration(milliseconds: 20), () async {
@@ -843,9 +813,6 @@ class _VirtualJoystickState extends State<VirtualJoystick> {
           });
           widget.cursorModel.blockEvents = false;
 
-          // 4. Critical step: On pan end, cancel all timers.
-          //    If it was a flick, this cancels the drag detection before it fires.
-          //    If it was a drag, this stops the continuous movement.
           _stopSendEventTimer();
         },
         child: CustomPaint(
@@ -904,11 +871,9 @@ class _JoystickPainter extends CustomPainter {
       ..color = thumbColor
       ..style = PaintingStyle.fill;
 
-    // Draw joystick base and border
     canvas.drawCircle(center, _joystickRadius, joystickPaint);
     canvas.drawCircle(center, _joystickRadius, borderPaint);
 
-    // Draw thumb
     final thumbCenter = center + _offset;
     canvas.drawCircle(thumbCenter, _thumbRadius, thumbPaint);
   }

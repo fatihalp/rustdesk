@@ -16,7 +16,6 @@ use tokio::{
 };
 
 use crate::message_proto::*;
-// https://doc.rust-lang.org/std/os/windows/fs/trait.MetadataExt.html
 use hbb_common::{
     anyhow::anyhow,
     bail,
@@ -94,7 +93,6 @@ pub fn read_dir(path: &Path, include_hidden: bool) -> ResultType<FileDirectory> 
         } else {
             continue;
         }
-        // docs.microsoft.com/en-us/windows/win32/fileio/file-attribute-constants
         #[cfg(windows)]
         if meta.file_attributes() & 0x2 != 0 {
             is_hidden = true;
@@ -178,8 +176,6 @@ fn read_dir_recursive(
 ) -> ResultType<Vec<FileEntry>> {
     let mut files = Vec::new();
     if path.is_dir() {
-        // to-do: symbol link handling, cp the link rather than the content
-        // to-do: file mode, for unix
         let fd = read_dir(path, include_hidden)?;
         for entry in fd.entries.iter() {
             match entry.entry_type.enum_value() {
@@ -245,8 +241,6 @@ fn read_empty_dirs_recursive(
 ) -> ResultType<Vec<FileDirectory>> {
     let mut dirs = Vec::new();
     if path.is_dir() {
-        // to-do: symbol link handling, cp the link rather than the content
-        // to-do: file mode, for unix
         let fd = read_dir(path, include_hidden)?;
         if fd.entries.is_empty() {
             dirs.push(fd);
@@ -441,7 +435,7 @@ pub struct TransferJob {
     pub file_num: i32,
     #[serde(skip_serializing)]
     files: Vec<FileEntry>,
-    pub conn_id: i32, // server only
+    pub conn_id: i32,
 
     #[serde(skip_serializing)]
     data_stream: Option<DataStream>,
@@ -450,7 +444,6 @@ pub struct TransferJob {
     transferred: u64,
     enable_overwrite_detection: bool,
     file_confirmed: bool,
-    // indicating the last file is skipped
     file_skipped: bool,
     file_is_waiting: bool,
     default_overwrite_strategy: Option<bool>,
@@ -532,8 +525,6 @@ pub fn validate_file_name_no_traversal(name: &str) -> ResultType<()> {
 }
 
 fn validate_transfer_file_names(files: &[FileEntry]) -> ResultType<()> {
-    // Single-file transfer may use an empty relative name, because
-    // the destination file path is carried by transfer metadata.
     if files.len() == 1 && files.first().map_or(false, |f| f.name.is_empty()) {
         return Ok(());
     }
@@ -560,7 +551,6 @@ fn validate_fs_path_argument(path: &str, arg_name: &str) -> ResultType<()> {
 fn validate_no_symlink_components(base: &PathBuf, name: &str) -> ResultType<()> {
     #[cfg(any(target_os = "android", test))]
     if android::is_path(base) {
-        // Document IDs are resolved and confined to their grant by Android, not the OS filesystem.
         return Ok(());
     }
     if name.is_empty() {
@@ -571,18 +561,13 @@ fn validate_no_symlink_components(base: &PathBuf, name: &str) -> ResultType<()> 
         match component {
             std::path::Component::Normal(seg) => {
                 current.push(seg);
-                // Best-effort guard: path-based checks are inherently TOCTOU-prone
-                // if local filesystem state changes between validation and write.
                 match std::fs::symlink_metadata(&current) {
                     Ok(meta) => {
-                        // This is inherent to filesystem-based checks and acknowledged as a limitation.
-                        // For true protection, you'd need openat(2) / O_NOFOLLOW at write time.
                         if meta.file_type().is_symlink() {
                             bail!("symlink path component is not allowed");
                         }
                     }
                     Err(err) if err.kind() == std::io::ErrorKind::NotFound => {
-                        // Component does not exist yet, continue best-effort validation.
                     }
                     Err(err) => {
                         bail!(
@@ -602,7 +587,6 @@ fn validate_no_symlink_components(base: &PathBuf, name: &str) -> ResultType<()> 
     Ok(())
 }
 
-/// Validate an untrusted relative file name and existing path components before joining it.
 pub fn join_validated_path(base: &PathBuf, name: &str) -> ResultType<PathBuf> {
     validate_file_name_no_traversal(name)?;
     validate_no_symlink_components(base, name)?;
@@ -872,10 +856,6 @@ impl TransferJob {
                         (p.to_string_lossy().to_string(), None)
                     } else {
                         let path = join_validated_path(p, &entry.name)?;
-                        // NOTE: We intentionally keep path-based validation + regular file open here.
-                        // This still has a known TOCTOU window for symlink races, but avoids a large
-                        // cross-platform rewrite for now.
-                        // Revisit with descriptor/handle-based no-follow open in future hardening.
                         if let Some(pp) = path.parent() {
                             std::fs::create_dir_all(pp).ok();
                         }
@@ -931,8 +911,6 @@ impl TransferJob {
         }
     }
 
-    /// Open the data stream for the current file.
-    /// Returns Ok(true) if job is done, Ok(false) otherwise.
     async fn open_data_stream(&mut self) -> ResultType<bool> {
         #[cfg(any(target_os = "android", all(test, unix)))]
         if self.is_document() {
@@ -942,7 +920,6 @@ impl TransferJob {
         match &mut self.data_source {
             DataSource::FilePath(p) => {
                 if file_num >= self.files.len() {
-                    // job done
                     self.data_stream.take();
                     return Ok(true);
                 };
@@ -953,8 +930,6 @@ impl TransferJob {
                             self.file_confirmed = false;
                             self.file_is_waiting = false;
                         }
-                        // On open error, behave the same as validation failure: advance
-                        // to next file and return the error.
                         Err(err) => {
                             self.file_num += 1;
                             self.file_confirmed = false;
@@ -975,7 +950,6 @@ impl TransferJob {
         Ok(false)
     }
 
-    /// Get current file's digest (last_modified, file_size) for overwrite detection.
     async fn get_current_digest(&self) -> ResultType<(u64, u64)> {
         #[cfg(any(target_os = "android", all(test, unix)))]
         if self.is_document() {
@@ -1011,15 +985,10 @@ impl TransferJob {
         Ok(())
     }
 
-    /// Initialize data stream for CM (Connection Manager) scenario.
-    /// Returns digest info (last_modified, file_size) if overwrite detection is enabled,
-    /// so caller can send it via IPC instead of network stream.
-    /// Returns Ok(None) if job is done or already initialized.
     pub async fn init_data_stream_for_cm(&mut self) -> ResultType<Option<(u64, u64)>> {
         if self.open_data_stream().await? {
             return Ok(None);
         }
-        // For overwrite detection, return digest info instead of sending via stream
         if self.r#type == JobType::Generic
             && self.enable_overwrite_detection
             && !self.file_confirmed()
@@ -1121,7 +1090,6 @@ impl TransferJob {
         }))
     }
 
-    // Only for generic job and file stream
     async fn send_current_digest(&mut self, stream: &mut Stream) -> ResultType<()> {
         let (last_modified, file_size) = self.get_current_digest().await?;
         let mut msg = Message::new();
@@ -1173,32 +1141,21 @@ impl TransferJob {
         self.file_confirmed
     }
 
-    /// Indicating whether the last file is skipped
     #[inline]
     pub fn file_skipped(&self) -> bool {
         self.file_skipped
     }
 
-    /// Indicating whether the whole task is skipped
     #[inline]
     pub fn job_skipped(&self) -> bool {
         self.file_skipped() && self.files.len() == 1
     }
 
-    /// Check whether the job is completed after `read` returns `None`
-    /// This is a helper function which gives additional lifecycle when the job reads `None`.
-    /// If returns `true`, it means we can delete the job automatically. `False` otherwise.
-    ///
-    /// [`Note`]
-    /// Conditions:
-    /// 1. Files are not waiting for confirmation by peers.
     #[inline]
     pub fn job_completed(&self) -> bool {
-        // has no error, Condition 2
         !self.enable_overwrite_detection || (!self.file_confirmed && !self.file_is_waiting)
     }
 
-    /// Get job error message, useful for getting status when job had finished
     pub fn job_error(&self) -> Option<String> {
         #[cfg(any(target_os = "android", all(test, unix)))]
         if let Some(error) = &self.document_transfer.error {
@@ -1241,9 +1198,6 @@ impl TransferJob {
             let digest_path = format!("{}.digest", &file_path);
 
             let mut f = if Path::new(&download_path).exists() && Path::new(&digest_path).exists() {
-                // If both download and digest files exist, seek (writer) to the offset
-                // NOTE: same as write path: best-effort symlink validation happened earlier,
-                // but this reopen remains TOCTOU-prone by design for now.
                 match OpenOptions::new()
                     .create(true)
                     .write(true)
@@ -1257,7 +1211,6 @@ impl TransferJob {
                     }
                 }
             } else if Path::new(&file_path).exists() {
-                // If `file_path` exists, seek (reader) to the offset
                 match File::open(&file_path).await {
                     Ok(f) => f,
                     Err(e) => {
@@ -1288,17 +1241,11 @@ impl TransferJob {
         }
         if self.is_download() {
             self.confirm_download(r);
-            // Open receiver resume streams in write() so validation errors reach the caller.
             if matches!(r.union, Some(file_transfer_send_confirm_request::Union::OffsetBlk(offset)) if offset > 0) {
                 return true;
             }
         }
         if self.file_num() != r.file_num {
-            // This branch will always be hit if:
-            // 1. `confirm()` is called in `ui_cm_interface.rs`
-            // 2. Not resuming
-            //
-            // It is ok. Because `confirm()` in `ui_cm_interface.rs` is only used for resuming.
             log::info!("file num truncated, ignoring");
         } else {
             match r.union {
@@ -1311,7 +1258,6 @@ impl TransferJob {
                 }
                 Some(file_transfer_send_confirm_request::Union::OffsetBlk(offset)) => {
                     self.set_file_confirmed(true);
-                    // If offset is greater than 0, we need to seek to the offset
                     if offset > 0 {
                         self.set_stream_offset(r.file_num as usize, offset as u64)
                             .await;
@@ -1507,11 +1453,9 @@ pub async fn handle_read_jobs(
                         None => stream.send(&new_done(job.id(), job.file_num())).await?,
                     }
                 } else {
-                    // waiting confirmation.
                 }
             }
         }
-        // Break to handle jobs one by one.
         break;
     }
     for id in finished {
@@ -1630,16 +1574,12 @@ pub fn is_write_need_confirmation(
     let digest_file = format!("{}.digest", file_path);
     let download_file = format!("{}.download", file_path);
     if is_resume && Path::new(&digest_file).exists() && Path::new(&download_file).exists() {
-        // If the digest file exists, it means the file was transferred before.
-        // We can use the digest file to check whether the file is the same.
         if let Ok(content) = std::fs::read_to_string(digest_file) {
             if let Ok(local_digest) = serde_json::from_str::<FileDigest>(&content) {
                 let is_identical = local_digest.modified == digest.last_modified
                     && local_digest.size == digest.file_size;
                 if is_identical {
                     if let Ok(download_metadata) = std::fs::metadata(download_file) {
-                        // Get the file size of the local file
-                        // Only send confirmation if the file is not empty.
                         let transferred_size = download_metadata.len();
                         if transferred_size > 0 {
                             return Ok(DigestCheckResult::NeedConfirm(FileTransferDigest {
@@ -1663,9 +1603,6 @@ pub fn is_write_need_confirmation(
         let modified_time = metadata.modified()?;
         let remote_mt = Duration::from_secs(digest.last_modified);
         let local_mt = modified_time.duration_since(UNIX_EPOCH)?;
-        // [Note]
-        // We decide to give the decision whether to override the existing file to users,
-        // which obey the behavior of the file manager in our system.
         let mut is_identical = false;
         if remote_mt == local_mt && digest.file_size == metadata.len() {
             is_identical = true;
@@ -1679,7 +1616,6 @@ pub fn is_write_need_confirmation(
             ..Default::default()
         }))
     } else {
-        // If the file does not exist, or the digest file and download file do not exist, we return NoSuchFile.
         Ok(DigestCheckResult::NoSuchFile)
     }
 }
@@ -1746,7 +1682,7 @@ mod tests {
             id,
             JobType::Generic,
             "/fake/remote".to_string(),
-            DataSource::FilePath(std::env::temp_dir().join(format!("rustdesk_validation_{id}"))),
+            DataSource::FilePath(std::env::temp_dir().join(format!("supportdesk_validation_{id}"))),
             0,
             false,
             true,
@@ -1780,7 +1716,7 @@ mod tests {
 
     #[test]
     fn path_traversal_e2e_write_rejects_relative_escape() {
-        let tmp_root = TestTempDir::new("rustdesk_e2e_relative");
+        let tmp_root = TestTempDir::new("supportdesk_e2e_relative");
         let downloads = tmp_root.join("downloads");
         std::fs::create_dir_all(&downloads).expect("create downloads dir");
 
@@ -1792,7 +1728,7 @@ mod tests {
 
     #[test]
     fn path_traversal_e2e_write_rejects_absolute_path() {
-        let tmp_root = TestTempDir::new("rustdesk_e2e_absolute");
+        let tmp_root = TestTempDir::new("supportdesk_e2e_absolute");
         let downloads = tmp_root.join("downloads");
         let absolute_target = tmp_root.join("fake_ssh").join("authorized_keys");
         std::fs::create_dir_all(&downloads).expect("create downloads dir");
@@ -1806,7 +1742,7 @@ mod tests {
     #[test]
     #[cfg_attr(windows, ignore = "requires symlink privilege to create test symlink")]
     fn path_traversal_e2e_write_rejects_symlink_escape() {
-        let tmp_root = TestTempDir::new("rustdesk_e2e_symlink");
+        let tmp_root = TestTempDir::new("supportdesk_e2e_symlink");
         let downloads = tmp_root.join("downloads");
         let outside = tmp_root.join("outside");
         let escaped_target = outside.join("escape.txt");
@@ -1870,7 +1806,7 @@ mod tests {
 
     #[test]
     fn rename_file_rejects_invalid_new_name() {
-        let tmp_root = TestTempDir::new("rustdesk_rename_invalid");
+        let tmp_root = TestTempDir::new("supportdesk_rename_invalid");
         let src = tmp_root.join("source.txt");
         std::fs::create_dir_all(&tmp_root.path).expect("create temp dir");
         std::fs::write(&src, b"content").expect("create source file");
@@ -1905,7 +1841,7 @@ mod tests {
 
     #[test]
     fn rename_file_accepts_valid_new_name() {
-        let tmp_root = TestTempDir::new("rustdesk_rename_ok");
+        let tmp_root = TestTempDir::new("supportdesk_rename_ok");
         let src = tmp_root.join("rename_src.txt");
         let dst = tmp_root.join("renamed.txt");
         std::fs::create_dir_all(&tmp_root.path).expect("create temp dir");

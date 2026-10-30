@@ -1,14 +1,3 @@
-// flutter/lib/common/widgets/keyboard_shortcuts/recording_dialog.dart
-//
-// Modal dialog used by the Keyboard Shortcuts settings page to capture a new
-// key combination for a given action. The dialog listens for KeyDown events,
-// extracts the modifier set + non-modifier key, validates that at least one
-// modifier is present, and reports any conflict with another already-bound
-// action.
-//
-// On Save, returns the new binding map ({action, mods, key}) plus the
-// optional id of the action whose binding should be cleared (the conflict
-// "Replace" path). On Cancel, returns null.
 
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
@@ -17,27 +6,14 @@ import 'package:flutter/services.dart';
 import '../../../common.dart';
 import 'shortcut_utils.dart';
 
-/// Result of the recording dialog.
 class RecordingResult {
-  /// The new binding map to write: {action, mods, key}.
   final Map<String, dynamic> binding;
 
-  /// If the chosen combo conflicted with another action, the user chose
-  /// "Replace" — the caller must clear this action's binding before writing
-  /// the new one.
   final String? clearActionId;
 
   RecordingResult(this.binding, this.clearActionId);
 }
 
-/// Show the recording dialog.
-///
-/// [actionId] is the action being edited (used for the title and to detect
-/// "binding to itself" — that's not a conflict).
-/// [actionLabel] is the translated, user-facing action name.
-/// [existingBindings] is the current bindings list (used for conflict detection).
-/// [actionLabelLookup] resolves an actionId to its translated label, used in
-/// the conflict warning.
 Future<RecordingResult?> showRecordingDialog({
   required BuildContext context,
   required String actionId,
@@ -77,23 +53,11 @@ class _RecordingDialog extends StatefulWidget {
 class _RecordingDialogState extends State<_RecordingDialog> {
   final FocusNode _focusNode = FocusNode();
 
-  // Captured combo. null until the user presses something with a non-modifier.
   Set<String> _mods = {};
   String? _key;
 
-  // Human-readable label for the most recent press that we couldn't bind to
-  // (e.g. F13, media keys). null when the last press was either supported or
-  // a modifier-only press. Cleared whenever a supported key arrives, so a
-  // user who hits an unsupported key after a valid capture sees the warning
-  // until they press something else. Distinct from `_key == null` so the
-  // status line can tell the user *why* their press was ignored instead of
-  // silently doing nothing.
   String? _unsupportedKey;
 
-  // Modifier LogicalKeyboardKeys we should *not* treat as "unsupported" when
-  // they fail to map to a key name. A modifier-only press is normal during
-  // combo capture (the user is building up their combo) — only non-modifier
-  // unmapped keys deserve the warning.
   static final _modifierKeys = <LogicalKeyboardKey>{
     LogicalKeyboardKey.shift,
     LogicalKeyboardKey.shiftLeft,
@@ -132,15 +96,8 @@ class _RecordingDialogState extends State<_RecordingDialog> {
       defaultTargetPlatform == TargetPlatform.macOS ||
       defaultTargetPlatform == TargetPlatform.iOS;
 
-  /// True when the captured combo includes at least one modifier. Lower bound
-  /// for any sensible binding — pure single-key bindings would swallow normal
-  /// typing the moment shortcuts are enabled. Beyond one mod the user is on
-  /// their own; the in-session pass-through toggle is the escape hatch when
-  /// a chosen combo collides with something needed on the remote.
   bool get _hasRequiredPrefix => _mods.isNotEmpty;
 
-  /// Return the actionId that this combo currently conflicts with, or null.
-  /// The action being edited is not a conflict with itself.
   String? get _conflictActionId {
     if (_key == null || !_hasRequiredPrefix) return null;
     for (final b in widget.existingBindings) {
@@ -168,11 +125,6 @@ class _RecordingDialogState extends State<_RecordingDialog> {
     final logical = event.logicalKey;
     final keyName = shortcutKeyNameForEvent(event);
 
-    // Mirror of `normalize_modifiers` in src/keyboard/shortcuts.rs:
-    //   * macOS: Cmd → primary, Ctrl → ctrl (distinct).
-    //   * Win/Linux: Ctrl → primary, no separate Ctrl modifier.
-    // The two halves must agree on labels, otherwise saved bindings will not
-    // match the events the matcher sees at runtime.
     final mods = <String>{};
     if (HardwareKeyboard.instance.isAltPressed) mods.add('alt');
     if (HardwareKeyboard.instance.isShiftPressed) mods.add('shift');
@@ -192,14 +144,9 @@ class _RecordingDialogState extends State<_RecordingDialog> {
         _unsupportedKey = LogicalKeyboardKey.altGraph.keyLabel;
         return;
       }
-      // Match runtime dispatch: modifiers added after a held letter do not
-      // produce a new shortcut key-down event.
       _key = keyName;
       _unsupportedKey = null;
       if (keyName == null && !_modifierKeys.contains(logical)) {
-        // Non-modifier key we don't recognize (e.g. F13, media keys, IME
-        // compose keys). Surface a warning instead of silently dropping the
-        // press — the dialog otherwise looks unresponsive.
         final label = logical.keyLabel.isNotEmpty
             ? logical.keyLabel
             : (logical.debugName ?? 'this key');
@@ -212,7 +159,6 @@ class _RecordingDialogState extends State<_RecordingDialog> {
   KeyEventResult _onRawKeyEvent(FocusNode node, RawKeyEvent event) {
     final data = event.data;
     const gtkMod5Mask = 1 << 7;
-    // GTK can expose AltGr only through Mod5, without a logical AltGraph key.
     if (event is RawKeyDownEvent &&
         data is RawKeyEventDataLinux &&
         data.keyHelper is GtkKeyHelper &&
@@ -238,15 +184,11 @@ class _RecordingDialogState extends State<_RecordingDialog> {
   }
 
   String _formatPrefix() {
-    // Used in the "must include..." validation row; lists the modifier set
-    // a binding can pick from. Localised modifier glyphs aren't used here so
-    // the names stay greppable for users searching for "Option" / "Cmd".
     if (_isMac) return 'Cmd / Control / Option / Shift';
     return 'Ctrl / Alt / Shift';
   }
 
   String _formatCombo() {
-    // Plain-text labels (see same rationale in display.dart::_keyDisplay).
     final parts = <String>[];
     for (final m in ['primary', 'ctrl', 'alt', 'shift']) {
       if (!_mods.contains(m)) continue;
@@ -302,10 +244,6 @@ class _RecordingDialogState extends State<_RecordingDialog> {
 
     Widget statusLine;
     if (_unsupportedKey != null) {
-      // Most recent press was unsupported. Take precedence over the
-      // captured-combo states so the user gets explicit feedback that their
-      // last keystroke was ignored, regardless of whether a previous combo
-      // is still captured.
       statusLine = Row(
         children: [
           const Icon(Icons.close, size: 16, color: Colors.red),

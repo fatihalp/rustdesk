@@ -50,8 +50,7 @@ pub enum GrabState {
 
 pub type NotifyMessageBox = fn(String, String, String, String) -> dyn Future<Output = ()>;
 
-// the executable name of the portable version
-pub const PORTABLE_APPNAME_RUNTIME_ENV_KEY: &str = "RUSTDESK_APPNAME";
+pub const PORTABLE_APPNAME_RUNTIME_ENV_KEY: &str = "SUPPORTDESK_APPNAME";
 
 pub const PLATFORM_WINDOWS: &str = "Windows";
 pub const PLATFORM_LINUX: &str = "Linux";
@@ -70,18 +69,8 @@ pub mod input {
     pub const MOUSE_TYPE_UP: i32 = 2;
     pub const MOUSE_TYPE_WHEEL: i32 = 3;
     pub const MOUSE_TYPE_TRACKPAD: i32 = 4;
-    /// Relative mouse movement type for gaming/3D applications.
-    /// This type sends delta (dx, dy) values instead of absolute coordinates.
-    /// NOTE: This is only supported by the Flutter client. The Sciter client (deprecated)
-    /// does not support relative mouse mode due to:
-    /// 1. Fixed send_mouse() function signature that doesn't allow type differentiation
-    /// 2. Lack of pointer lock API in Sciter/TIS
-    /// 3. No OS cursor control (hide/show/clip) FFI bindings in Sciter UI
     pub const MOUSE_TYPE_MOVE_RELATIVE: i32 = 5;
 
-    /// Mask to extract the mouse event type from the mask field.
-    /// The lower 3 bits contain the event type (MOUSE_TYPE_*), giving a valid range of 0-7.
-    /// Currently defined types use values 0-5; values 6 and 7 are reserved for future use.
     pub const MOUSE_TYPE_MASK: i32 = 0x7;
 
     pub const MOUSE_BUTTON_LEFT: i32 = 0x01;
@@ -99,9 +88,7 @@ lazy_static::lazy_static! {
 }
 
 lazy_static::lazy_static! {
-    // Is server process, with "--server" args
     static ref IS_SERVER: bool = std::env::args().nth(1) == Some("--server".to_owned());
-    // Is server logic running. The server code can invoked to run by the main process if --server is not running.
     static ref SERVER_RUNNING: Arc<RwLock<bool>> = Default::default();
     static ref IS_MAIN: bool = std::env::args().nth(1).map_or(true, |arg| !arg.starts_with("--"));
     static ref IS_CM: bool = std::env::args().nth(1) == Some("--cm".to_owned());
@@ -149,15 +136,11 @@ pub fn is_support_multi_ui_session_num(ver: i64) -> bool {
     ver >= hbb_common::get_version_number(MIN_VER_MULTI_UI_SESSION)
 }
 
-/// Peers from the 1.5.0 release name a cursor by `cursor_content_id`; older ones by the
-/// platform handle, which apps mint anew for the same shape.
 #[inline]
 pub fn is_peer_naming_cursors_by_content(ver: i64) -> bool {
     ver >= hbb_common::get_version_number("1.5.0")
 }
 
-/// One id per cursor look, however many handles a platform gives it. Held to 53 bits: the web
-/// client decodes a u64 into a JS number and drops the whole message when it does not fit.
 pub fn cursor_content_id(width: i32, height: i32, hotx: i32, hoty: i32, colors: &[u8]) -> u64 {
     let mut hasher = xxhash_rust::xxh3::Xxh3::new();
     for v in [width, height, hotx, hoty] {
@@ -207,8 +190,6 @@ pub fn is_support_file_transfer_resume_num(ver: i64) -> bool {
     ver >= hbb_common::get_version_number("1.4.2")
 }
 
-/// Minimum server version required for relative mouse mode support.
-/// This constant must mirror Flutter's `kMinVersionForRelativeMouseMode` in `consts.dart`.
 const MIN_VERSION_RELATIVE_MOUSE_MODE: &str = "1.4.5";
 
 #[inline]
@@ -221,7 +202,6 @@ pub fn is_support_relative_mouse_mode_num(ver: i64) -> bool {
     ver >= hbb_common::get_version_number(MIN_VERSION_RELATIVE_MOUSE_MODE)
 }
 
-// is server process, with "--server" args
 #[inline]
 pub fn is_server() -> bool {
     *IS_SERVER
@@ -239,15 +219,6 @@ pub fn need_fs_cm_send_files() -> bool {
     }
 }
 
-/// Android peers may access only the current shared file-transfer location.
-///
-/// Every peer supplied path must be validated with this before it reaches the
-/// filesystem, for reads, writes, renames, creations and deletions alike. The path is
-/// resolved to its canonical form (of the deepest existing ancestor, so paths that are
-/// about to be created are handled too) so symlinks cannot escape the workspace.
-///
-/// Only the `ReadDir` protocol action treats an empty path as the home directory.
-/// Callers must opt in to that protocol-specific behavior with `allow_empty`.
 #[cfg(target_os = "android")]
 pub fn is_peer_path_allowed(path: &str, allow_empty: bool) -> bool {
     use std::path::{Component, Path, PathBuf};
@@ -268,7 +239,6 @@ pub fn is_peer_path_allowed(path: &str, allow_empty: bool) -> bool {
         };
     }
 
-    // Canonicalize the deepest existing ancestor and re-append the missing tail.
     fn resolve(path: &Path) -> Option<PathBuf> {
         let mut tail: Vec<std::ffi::OsString> = Vec::new();
         let mut base = path.to_path_buf();
@@ -290,7 +260,6 @@ pub fn is_peer_path_allowed(path: &str, allow_empty: bool) -> bool {
         return allow_empty;
     }
     let path = Path::new(path);
-    // `..` is never needed by the protocol and would defeat the prefix check below.
     if !path.is_absolute() || path.components().any(|c| c == Component::ParentDir) {
         return false;
     }
@@ -299,7 +268,6 @@ pub fn is_peer_path_allowed(path: &str, allow_empty: bool) -> bool {
     if home.as_os_str().is_empty() {
         return false;
     }
-    // `Path::starts_with` compares whole components, and is true for equal paths.
     resolve(path).map_or(false, |target| target.starts_with(&home))
 }
 
@@ -337,7 +305,6 @@ pub fn is_cm() -> bool {
     *IS_CM
 }
 
-// Is server logic running.
 #[inline]
 pub fn is_server_running() -> bool {
     *SERVER_RUNNING.read().unwrap()
@@ -354,7 +321,6 @@ pub fn valid_for_numlock(evt: &KeyEvent) -> bool {
     }
 }
 
-/// Set sound input device.
 pub fn set_sound_input(device: String) {
     let prior_device = get_option("audio-input".to_owned());
     if prior_device != device {
@@ -367,7 +333,6 @@ pub fn set_sound_input(device: String) {
     }
 }
 
-/// Get system's default sound input device name.
 #[inline]
 #[cfg(not(any(target_os = "android", target_os = "ios")))]
 pub fn get_default_sound_input() -> Option<String> {
@@ -754,7 +719,6 @@ async fn test_nat_type_() -> ResultType<bool> {
         let mut socket =
             socket_client::connect_tcp_local(server, local_addr, CONNECT_TIMEOUT).await?;
         if i == 0 {
-            // reuse the local addr is required for nat test
             local_addr = Some(socket.local_addr());
             Config::set_option(
                 "local-ip-addr".to_owned(),
@@ -840,7 +804,6 @@ pub async fn get_nat_type(ms_timeout: u64) -> i32 {
     crate::ipc::get_nat_type(ms_timeout).await
 }
 
-// used for client to test which server is faster in case stop-servic=Y
 #[tokio::main(flavor = "current_thread")]
 async fn test_rendezvous_server_() {
     let servers = Config::get_rendezvous_servers();
@@ -924,15 +887,12 @@ pub fn run_me<T: AsRef<std::ffi::OsStr>>(args: Vec<T>) -> std::io::Result<std::p
 
 #[inline]
 pub fn username() -> String {
-    // fix bug of whoami
     #[cfg(not(any(target_os = "android", target_os = "ios")))]
     return whoami::username().trim_end_matches('\0').to_owned();
     #[cfg(any(target_os = "android", target_os = "ios"))]
     return DEVICE_NAME.lock().unwrap().clone();
 }
 
-// Exactly the implementation of "whoami::hostname()".
-// This wrapper is to suppress warnings.
 #[inline(always)]
 #[cfg(not(target_os = "ios"))]
 pub fn whoami_hostname() -> String {
@@ -947,7 +907,6 @@ pub fn hostname() -> String {
     {
         #[allow(unused_mut)]
         let mut name = whoami_hostname();
-        // some time, there is .local, some time not, so remove it for osx
         #[cfg(target_os = "macos")]
         if name.ends_with(".local") {
             name = name.trim_end_matches(".local").to_owned();
@@ -974,7 +933,7 @@ pub fn get_sysinfo() -> serde_json::Value {
     let cpu = if cpu_freq > 0. {
         format!("{}, {}GHz, ", cpu_name, cpu_freq)
     } else {
-        "".to_owned() // android
+        "".to_owned()
     };
     let num_cpus = num_cpus::get();
     let num_pcpus = num_cpus::get_physical();
@@ -984,7 +943,7 @@ pub fn get_sysinfo() -> serde_json::Value {
     {
         os = format!("{os} - {}", system.os_version().unwrap_or_default());
     }
-    let hostname = hostname(); // sys.hostname() return localhost on android in my test
+    let hostname = hostname();
     #[cfg(any(target_os = "android", target_os = "ios"))]
     let out;
     #[cfg(not(any(target_os = "android", target_os = "ios")))]
@@ -1086,7 +1045,7 @@ pub(crate) fn release_id_from_update_url(update_url: &str) -> ResultType<String>
         ["rustdesk", "rustdesk", "releases", "tag", release_id] => *release_id,
         ["rustdesk", "rustdesk", "releases", "tag", release_id, ""] => *release_id,
         _ => bail!(
-            "Update URL is not a RustDesk release tag URL: {}",
+            "Update URL is not a SupportDesk release tag URL: {}",
             update_url
         ),
     };
@@ -1159,8 +1118,6 @@ fn process_software_update_check_response(bytes: Bytes) -> ResultType<()> {
     Ok(())
 }
 
-// No need to check `danger_accept_invalid_cert` for now.
-// Because the url is always `https://api.rustdesk.com/version/latest`.
 #[tokio::main(flavor = "current_thread")]
 pub async fn do_check_software_update() -> hbb_common::ResultType<()> {
     let (request, url) =
@@ -1214,8 +1171,8 @@ pub fn get_app_name() -> String {
 }
 
 #[inline]
-pub fn is_rustdesk() -> bool {
-    hbb_common::config::APP_NAME.read().unwrap().eq("RustDesk")
+pub fn is_supportdesk() -> bool {
+    hbb_common::config::APP_NAME.read().unwrap().eq("SupportDesk")
 }
 
 #[inline]
@@ -1364,9 +1321,6 @@ pub fn get_audit_server(api: String, custom: String, typ: String) -> String {
     format!("{}/api/audit/{}", url, typ)
 }
 
-/// Check if we should use raw TCP proxy for API calls.
-/// Returns true if USE_RAW_TCP_FOR_API builtin option is "Y", WebSocket is off,
-/// and the target URL belongs to the configured non-public API host.
 #[inline]
 fn should_use_raw_tcp_for_api(url: &str) -> bool {
     get_builtin_option(keys::OPTION_USE_RAW_TCP_FOR_API) == "Y"
@@ -1374,7 +1328,6 @@ fn should_use_raw_tcp_for_api(url: &str) -> bool {
         && is_tcp_proxy_api_target(url)
 }
 
-/// Check if we can attempt raw TCP proxy fallback for this target URL.
 #[inline]
 fn can_fallback_to_raw_tcp(url: &str) -> bool {
     !use_ws() && is_tcp_proxy_api_target(url)
@@ -1442,13 +1395,6 @@ fn get_tcp_proxy_addr() -> String {
     check_port(Config::get_rendezvous_server(), RENDEZVOUS_PORT)
 }
 
-/// Send an HTTP request via the rendezvous server's TCP proxy using protobuf.
-/// Connects with `connect_tcp` + `secure_tcp`, sends `HttpProxyRequest`,
-/// receives `HttpProxyResponse`.
-///
-/// The entire operation (connect + handshake + send + receive) is wrapped in
-/// an overall timeout of `CONNECT_TIMEOUT + READ_TIMEOUT` so that a stall at
-/// any stage cannot block the caller indefinitely.
 async fn tcp_proxy_request(
     method: &str,
     url: &str,
@@ -1508,8 +1454,6 @@ async fn tcp_proxy_request(
     .await?
 }
 
-/// Build HeaderEntry list from "Key: Value" style header string (used by post_request).
-/// If the caller supplies a Content-Type header it overrides the default `application/json`.
 fn parse_simple_header(header: &str) -> Vec<HeaderEntry> {
     let mut entries = Vec::new();
     let mut has_content_type = false;
@@ -1539,7 +1483,6 @@ fn parse_simple_header(header: &str) -> Vec<HeaderEntry> {
     entries
 }
 
-/// POST request via TCP proxy.
 async fn post_request_via_tcp_proxy(url: &str, body: &str, header: &str) -> ResultType<String> {
     let headers = parse_simple_header(header);
     let resp = tcp_proxy_request("POST", url, body.as_bytes(), headers).await?;
@@ -1586,7 +1529,6 @@ fn parse_json_header_entries(header: &str) -> ResultType<Vec<HeaderEntry>> {
     }
 }
 
-/// Returns (status_code, body_text). Separating status so the wrapper can decide on fallback.
 async fn post_request_http(url: &str, body: &str, header: &str) -> ResultType<(u16, String)> {
     let proxy_conf = Config::get_socks();
     let tls_url = get_url_for_tls(url, &proxy_conf);
@@ -1607,8 +1549,6 @@ async fn post_request_http(url: &str, body: &str, header: &str) -> ResultType<(u
     Ok((status, text))
 }
 
-/// Try `http_fn` first; on connection failure or 5xx, fall back to `tcp_fn`
-/// if the URL is eligible. 4xx responses are returned as-is.
 async fn with_tcp_proxy_fallback<HttpFut, TcpFut>(
     url: &str,
     method: &str,
@@ -1659,12 +1599,6 @@ where
     http_result.map(|(_status, text)| text)
 }
 
-/// POST request with raw TCP proxy support.
-/// - If `USE_RAW_TCP_FOR_API` is "Y" and WS is off, goes directly through TCP proxy.
-/// - Otherwise tries HTTP first; on connection failure or 5xx status,
-///   falls back to TCP proxy if WS is off.
-/// - 4xx responses are returned as-is (server is reachable, business logic error).
-/// - If fallback also fails, returns the original HTTP result (text or error).
 pub async fn post_request(url: String, body: String, header: &str) -> ResultType<String> {
     with_tcp_proxy_fallback(
         &url,
@@ -1675,7 +1609,6 @@ pub async fn post_request(url: String, body: String, header: &str) -> ResultType
     .await
 }
 
-/// POST request via TCP proxy, preserving the HTTP status code.
 async fn post_request_via_tcp_proxy_status(
     url: &str,
     body: &str,
@@ -1692,9 +1625,6 @@ async fn post_request_via_tcp_proxy_status(
     ))
 }
 
-/// Like `post_request`, but returns the HTTP status code so callers can tell
-/// a server-side failure from success. Same fallback rules: on connection
-/// failure or 5xx, retry once through the raw TCP proxy when eligible.
 pub async fn post_request_with_status(
     url: String,
     body: String,
@@ -1760,8 +1690,6 @@ async fn post_request_(
     req = req.header("Content-Type", "application/json");
     let to = std::time::Duration::from_secs(12);
     if tls_type.is_some() && danger_accept_invalid_cert.is_some() {
-        // This branch is used to reduce a `clone()` when both `tls_type` and
-        // `danger_accept_invalid_cert` are cached.
         match req.body(body.clone()).timeout(to).send().await {
             Ok(resp) => {
                 upsert_tls_cache(
@@ -1939,8 +1867,6 @@ async fn get_http_response_async(
     }
 }
 
-/// Returns (status_code, json_string) so the caller can inspect the status
-/// without re-parsing the serialized JSON.
 async fn http_request_http(
     url: &str,
     method: &str,
@@ -1962,7 +1888,6 @@ async fn http_request_http(
         danger_accept_invalid_cert,
     )
     .await?;
-    // Serialize response headers
     let mut response_headers = Map::new();
     for (key, value) in response.headers() {
         response_headers.insert(key.to_string(), json!(value.to_str().unwrap_or("")));
@@ -1971,19 +1896,16 @@ async fn http_request_http(
     let status_code = response.status().as_u16();
     let response_body = response.text().await?;
 
-    // Construct the JSON object
     let mut result = Map::new();
     result.insert("status_code".to_string(), json!(status_code));
     result.insert("headers".to_string(), Value::Object(response_headers));
     result.insert("body".to_string(), json!(response_body));
 
-    // Convert map to JSON string
     let json_str = serde_json::to_string(&result)
         .map_err(|e| anyhow!("Failed to serialize response: {}", e))?;
     Ok((status_code, json_str))
 }
 
-/// HTTP request with raw TCP proxy support.
 #[tokio::main(flavor = "current_thread")]
 pub async fn http_request_sync(
     url: String,
@@ -2000,8 +1922,6 @@ pub async fn http_request_sync(
     .await
 }
 
-/// General HTTP request via TCP proxy. Header is a JSON string (used by http_request_sync).
-/// Returns a JSON string with status_code, headers, body (same format as http_request_sync).
 async fn http_request_via_tcp_proxy(
     url: &str,
     method: &str,
@@ -2117,10 +2037,6 @@ pub fn make_empty_dirs_response_to_json(res: &ReadEmptyDirsResponse) -> String {
     serde_json::to_string(&map).unwrap_or("".into())
 }
 
-/// The function to handle the url scheme sent by the system.
-///
-/// 1. Try to send the url scheme from ipc.
-/// 2. If failed to send the url scheme, we open a new main window to handle this url scheme.
 pub fn handle_url_scheme(url: String) {
     #[cfg(not(target_os = "ios"))]
     if let Err(err) = crate::ipc::send_url_scheme(url.clone()) {
@@ -2262,7 +2178,6 @@ pub fn check_process(arg: &str, mut same_uid: bool) -> bool {
         if same_uid && p.user_id() != my_uid {
             continue;
         }
-        // on mac, p.cmd() get "/Applications/RustDesk.app/Contents/MacOS/RustDesk", "XPC_SERVICE_NAME=com.carriez.RustDesk_server"
         let parg = if p.cmd().len() <= 1 { "" } else { &p.cmd()[1] };
         if arg.is_empty() {
             if !parg.starts_with("--") {
@@ -2276,19 +2191,12 @@ pub fn check_process(arg: &str, mut same_uid: bool) -> bool {
 }
 
 async fn secure_tcp_impl(conn: &mut Stream, key: &str, log_on_success: bool) -> ResultType<()> {
-    // Skip additional encryption when using WebSocket connections (wss://)
-    // as WebSocket Secure (wss://) already provides transport layer encryption.
-    // This doesn't affect the end-to-end encryption between clients,
-    // it only avoids redundant encryption between client and server.
     if use_ws() {
         return Ok(());
     }
     key_exchange(conn, key, log_on_success).await.map(|_| ())
 }
 
-/// The server's key exchange on `conn`. `Ok(true)` once the stream is encrypted. `Ok(false)`
-/// when the server sent something else first, nothing parseable, or closed: `secure_tcp`
-/// tolerates that for servers from before the exchange, `secure_tcp_required` does not.
 async fn key_exchange(conn: &mut Stream, key: &str, log_on_success: bool) -> ResultType<bool> {
     let rs_pk = get_rs_pk(key);
     let Some(rs_pk) = rs_pk else {
@@ -2306,9 +2214,6 @@ async fn key_exchange(conn: &mut Stream, key: &str, log_on_success: bool) -> Res
                             .map_err(|_| anyhow!("Signature mismatch in key exchange"))?;
                         let their_pk_b = get_pk(&their_pk_b)
                             .context("Wrong their public length in key exchange")?;
-                        // The signed X25519 high bit marks servers that sign their parameters.
-                        // X25519 ignores that bit, so old clients use the key unchanged; keep
-                        // the bytes as signed, since the transcript and KxParams carry them so.
                         if their_pk_b[31] & 0x80 != 0 || !ex.signed_params.is_empty() {
                             let params = sign::verify(&ex.signed_params, &rs_pk)
                                 .ok()
@@ -2366,11 +2271,6 @@ async fn secure_tcp_silent(conn: &mut Stream, key: &str) -> ResultType<()> {
     secure_tcp_impl(conn, key, false).await
 }
 
-/// Like [`secure_tcp`], but returns only once the server's key exchange has actually encrypted
-/// the stream; a server that answers with anything else, or with nothing, is an error, so the
-/// caller can withhold what it was about to send instead of sending it in the clear.
-/// `secure_tcp` keeps tolerating such a server, which the paths from before the exchange depend
-/// on. WebSocket is treated as `secure_tcp` treats it, as a transport that is encrypted already.
 pub async fn secure_tcp_required(conn: &mut Stream, key: &str) -> ResultType<()> {
     if use_ws() {
         return Ok(());
@@ -2407,10 +2307,6 @@ pub fn decode_id_pk(signed: &[u8], key: &sign::PublicKey) -> ResultType<(String,
     Ok((id, pk))
 }
 
-/// Like [`decode_id_pk`] but also returns the signed DTLS certificate fingerprint (empty string
-/// for non-WebRTC peers), used to bind a WebRTC DTLS channel to the verified peer identity, and
-/// the newest key exchange version the peer speaks (0, the original scheme, for a peer from
-/// before versions).
 pub fn decode_id_pk_dtls(
     signed: &[u8],
     key: &sign::PublicKey,
@@ -2425,9 +2321,6 @@ pub fn decode_id_pk_dtls(
     }
 }
 
-/// Whether the DTLS fingerprint a WebRTC peer signed into its identity is the one of the channel
-/// actually negotiated. An empty signed value binds nothing: on a WebRTC channel it is either a
-/// peer that could not sign one or a rendezvous/relay that stripped it, and both fail closed.
 pub fn dtls_fingerprint_bound(signed_fp: &str, actual_fp: &str) -> bool {
     !signed_fp.is_empty() && signed_fp == actual_fp
 }
@@ -2475,7 +2368,6 @@ impl ThrottledInterval {
                     self.next_tick = now + self.min_interval;
                     Poll::Ready(instant)
                 } else {
-                    // This call is required since tokio 1.27
                     cx.waker().wake_by_ref();
                     Poll::Pending
                 }
@@ -2485,10 +2377,10 @@ impl ThrottledInterval {
     }
 }
 
-pub type RustDeskInterval = ThrottledInterval;
+pub type SupportDeskInterval = ThrottledInterval;
 
 #[inline]
-pub fn rustdesk_interval(i: Interval) -> ThrottledInterval {
+pub fn supportdesk_interval(i: Interval) -> ThrottledInterval {
     ThrottledInterval::new(i)
 }
 
@@ -2555,16 +2447,12 @@ fn read_custom_client_advanced_settings(
             } else {
                 let k2 = k.replace("_", "-");
                 let k = k2.replace("-", "_");
-                // display
                 display_settings.insert(k.clone(), v.to_owned());
                 display_settings.insert(k2.clone(), v.to_owned());
-                // local
                 local_settings.insert(k.clone(), v.to_owned());
                 local_settings.insert(k2.clone(), v.to_owned());
-                // server
                 server_settings.insert(k.clone(), v.to_owned());
                 server_settings.insert(k2.clone(), v.to_owned());
-                // buildin
                 buildin_settings.insert(k.clone(), v.to_owned());
                 buildin_settings.insert(k2.clone(), v.to_owned());
             }
@@ -2575,8 +2463,6 @@ fn read_custom_client_advanced_settings(
 #[inline]
 #[cfg(target_os = "macos")]
 pub fn get_dst_align_rgba() -> usize {
-    // https://developer.apple.com/forums/thread/712709
-    // Memory alignment should be multiple of 64.
     if crate::ui_interface::use_texture_render() {
         64
     } else {
@@ -2693,34 +2579,11 @@ pub fn get_builtin_option(key: &str) -> String {
 
 #[inline]
 pub fn is_custom_client() -> bool {
-    get_app_name() != "RustDesk"
+    get_app_name() != "SupportDesk"
 }
 
 pub fn verify_login(_raw: &str, _id: &str) -> bool {
     true
-    /*
-    if is_custom_client() {
-        return true;
-    }
-    #[cfg(debug_assertions)]
-    return true;
-    let Ok(pk) = crate::decode64("IycjQd4TmWvjjLnYd796Rd+XkK+KG+7GU1Ia7u4+vSw=") else {
-        return false;
-    };
-    let Some(key) = get_pk(&pk).map(|x| sign::PublicKey(x)) else {
-        return false;
-    };
-    let Ok(v) = crate::decode64(raw) else {
-        return false;
-    };
-    let raw = sign::verify(&v, &key).unwrap_or_default();
-    let v_str = std::str::from_utf8(&raw)
-        .unwrap_or_default()
-        .split(":")
-        .next()
-        .unwrap_or_default();
-    v_str == id
-    */
 }
 
 #[inline]
@@ -2728,23 +2591,16 @@ pub fn is_udp_disabled() -> bool {
     Config::get_option(keys::OPTION_DISABLE_UDP) == "Y"
 }
 
-/// Run KCP with its congestion window (nc=0) instead of the turbo profile it has always shipped.
-///
-/// Opt-in: which profile wins depends on why packets are lost — nc=1 deepens real congestion,
-/// while nc=0 reads random loss as congestion and its RTO backoff drops cwnd to 1. Undecidable
-/// without a shaped link, so keep what users run today.
 #[inline]
 pub fn get_kcp_cc_enabled() -> bool {
     let k = keys::OPTION_ALLOW_KCP_CC;
     config::option2bool(k, &Config::get_option(k))
 }
 
-// this crate https://github.com/yoshd/stun-client supports nat type
 async fn stun_ipv6_test(stun_server: String) -> ResultType<(SocketAddr, String)> {
     use stunclient::StunClient;
-    let local_addr = SocketAddr::from(([0u16; 8], 0)); // [::]:0
+    let local_addr = SocketAddr::from(([0u16; 8], 0));
     let socket = UdpSocket::bind(&local_addr).await?;
-    // Resolve via tokio so DNS never blocks the async runtime worker.
     let Some(stun_addr) = tokio::net::lookup_host(&stun_server)
         .await?
         .find(|x| x.is_ipv6())
@@ -2763,22 +2619,13 @@ async fn stun_ipv6_test(stun_server: String) -> ResultType<(SocketAddr, String)>
     })
 }
 
-/// A global address to ask the kernel for a route to; libwebrtc's QueryDefaultLocalAddress asks
-/// for the same one. Nothing is ever sent to it.
 const IPV6_ROUTE_PROBE: std::net::Ipv6Addr =
     std::net::Ipv6Addr::new(0x2001, 0x4860, 0x4860, 0, 0, 0, 0, 0x8888);
-/// The public IPv6 address the STUN servers report is looked for in the background, and for no
-/// longer than this: a probe that outlived the minute could write an earlier network's address
-/// over a later probe's.
 const STUN_IPV6_TIMEOUT_MS: u64 = 5_000;
 
 async fn test_bind_ipv6() -> ResultType<SocketAddr> {
-    let local_addr = SocketAddr::from(([0u16; 8], 0)); // [::]:0
+    let local_addr = SocketAddr::from(([0u16; 8], 0));
     let socket = UdpSocket::bind(local_addr).await?;
-    // Nothing is sent - `connect` only makes the kernel pick a route and a source address - so
-    // the target can be any global address, and given as a number it is: this is awaited on the
-    // connection path, and resolving a STUN host's name first was the one thing on it that
-    // could wait on the network - for as long as the resolver takes, when there is none.
     socket
         .connect(SocketAddr::from((IPV6_ROUTE_PROBE, 53)))
         .await?;
@@ -2787,8 +2634,6 @@ async fn test_bind_ipv6() -> ResultType<SocketAddr> {
 
 pub async fn test_ipv6() -> Option<tokio::task::JoinHandle<()>> {
     {
-        // One look and one claim of the minute, under one lock: two connections arriving
-        // together would otherwise both find it over and both probe.
         let mut cached = PUBLIC_IPV6_ADDR.lock().unwrap();
         if cached
             .1
@@ -2818,35 +2663,6 @@ pub async fn test_ipv6() -> Option<tokio::task::JoinHandle<()>> {
             log::warn!("Failed to bind IPv6 socket: {}", e);
         }
     }
-    // Interestingly, on my macOS, sometimes my ipv6 works, sometimes not (test with ping6 or https://test-ipv6.com/).
-    // I checked ifconfig, could not see any difference. Both secure ipv6 and temporary ipv6 are there.
-    // So we can not rely on the local ipv6 address queries with if_addrs.
-    // above test_bind_ipv6 is safer, because it can fail in this case.
-    /*
-    std::thread::spawn(|| {
-        if let Ok(ifaces) = if_addrs::get_if_addrs() {
-            for iface in ifaces {
-                if let if_addrs::IfAddr::V6(v6) = iface.addr {
-                    let ip = v6.ip;
-                    if !ip.is_loopback()
-                        && !ip.is_unspecified()
-                        && !ip.is_multicast()
-                        && !ip.is_unique_local()
-                        && !ip.is_unicast_link_local()
-                        && (ip.segments()[0] & 0xe000) == 0x2000
-                    {
-                        // only use the first one, on mac, the first one is the stable
-                        // one, the last one is the temporary one. The middle ones are deperecated.
-                        *PUBLIC_IPV6_ADDR.lock().unwrap() =
-                            Some((SocketAddr::from((ip, 0)), Instant::now()));
-                        log::debug!("Found public IPv6 address locally: {}", ip);
-                        break;
-                    }
-                }
-            }
-        }
-    });
-    */
 
     Some(tokio::spawn(async {
         use hbb_common::futures::future::{select_ok, FutureExt};
@@ -2858,7 +2674,7 @@ pub async fn test_ipv6() -> Option<tokio::task::JoinHandle<()>> {
         match hbb_common::timeout(STUN_IPV6_TIMEOUT_MS, select_ok(tests)).await {
             Ok(Ok(res)) => {
                 let mut addr = res.0 .0;
-                addr.set_port(0); // Set port to 0 to avoid conflicts
+                addr.set_port(0);
                 PUBLIC_IPV6_ADDR.lock().unwrap().0 = Some(addr);
                 log::debug!(
                     "Found public IPv6 address via STUN server {}: {}",
@@ -2876,10 +2692,6 @@ pub async fn test_ipv6() -> Option<tokio::task::JoinHandle<()>> {
     }))
 }
 
-// A punch packet carries a magic and a transaction id so a reply can be *proven* to answer this
-// probe. The punch it replaces sent a zero-length datagram and called the hole open on whatever
-// arrived next - which the rendezvous NAT test's own leftover replies satisfied instantly, so the
-// retry loop below never actually ran and its success meant nothing.
 const PUNCH_PROBE: [u8; 4] = *b"RDP?";
 const PUNCH_ACK: [u8; 4] = *b"RDP!";
 const PUNCH_PACKET_LEN: usize = 12;
@@ -2898,22 +2710,6 @@ fn punch_tid(packet: &[u8], tag: &[u8; 4]) -> Option<u64> {
     packet[4..].try_into().ok().map(u64::from_le_bytes)
 }
 
-/// Punch until one of our own probes is acknowledged. Both ends run this identically - each
-/// probes, each answers the other's probes - and each returns only once a reply carrying its own
-/// transaction id comes back, the one thing that proves the pair carries traffic both ways.
-///
-/// Returning is therefore a fact rather than a guess, which is what lets the caller stop instead
-/// of handing a dead socket to a transport whose only way to discover the truth is to time out.
-///
-/// A datagram that is neither probe nor acknowledgement is returned rather than dropped: it means
-/// the peer finished first and is already speaking KCP, whose SYN is never retransmitted.
-///
-/// Only the connector stops on its own acknowledgement, because only it has something to send
-/// next. An acknowledgement proves our probe came back, not that the peer's probe was answered -
-/// and after this returns nothing answers probes any more, since KCP's io loop drops anything
-/// shorter than its header. A listener that stopped here would go mute while a peer whose own
-/// probe or answer was lost - the normal state of a hole that is still opening - kept probing an
-/// endpoint that works, until it timed out. So the listener stops on the peer's first real packet.
 pub async fn punch_udp(
     socket: Arc<UdpSocket>,
     listen: bool,
@@ -2921,14 +2717,10 @@ pub async fn punch_udp(
     let tid = ((hbb_common::time_based_rand() as u64) << 32) | hbb_common::time_based_rand() as u64;
     let probe = punch_packet(&PUNCH_PROBE, tid);
     let mut data = [0u8; 1500];
-    // `connect` does not flush the receive queue, so the NAT test's extra replies are still in it.
     while socket.try_recv(&mut data).is_ok() {}
 
     let mut retry_interval = Duration::from_millis(20);
     const MAX_INTERVAL: Duration = Duration::from_millis(200);
-    // Both ends start within one rendezvous round trip of each other and the acknowledgement is
-    // one peer round trip, so a pair that has not answered in this long is not going to. The old
-    // 20s came from having no way to tell "not yet" from "never".
     const MAX_TIME: Duration = Duration::from_secs(3);
     let mut probes_sent = 0u32;
     let mut probes_seen = 0u32;
@@ -2937,10 +2729,6 @@ pub async fn punch_udp(
     socket.send(&probe).await.ok();
     probes_sent += 1;
     let tm = Instant::now();
-    // Absolute instants, not relative sleeps: `select!` rebuilds every arm each iteration, so a
-    // peer that keeps the receive side ready restarts a relative timer before it can fire. That
-    // both defeats MAX_TIME and starves the retransmit, and the peer decides the rate - an
-    // old-build peer's empty datagrams match no arm below and loop without even a pause.
     let deadline = tm + MAX_TIME;
     let mut next_probe = tm + retry_interval;
 
@@ -2957,9 +2745,6 @@ pub async fn punch_udp(
             }
             res = socket.recv(&mut data) => match res {
                 Err(e) => {
-                    // ICMP unreachable from the peer's NAT is expected while the hole forms and
-                    // surfaces here as ConnectionReset/Refused; treat it as loss, MAX_TIME bounds
-                    // the attempt. Log only the first - this retries every 10ms.
                     recv_errors += 1;
                     if recv_errors == 1 {
                         log::debug!("UDP punch recv error (treated as loss): {e}");
@@ -3024,10 +2809,8 @@ pub async fn get_ipv6_socket() -> Option<(Arc<UdpSocket>, bytes::Bytes)> {
     None
 }
 
-// The color is the same to `str2color()` in flutter.
 pub fn str2color(s: &str, alpha: u8) -> u32 {
     let bytes = s.as_bytes();
-    // dart code `160 << 16 + 114 << 8 + 91` results `0`.
     let mut hash: u32 = 0;
     for &byte in bytes {
         let code = byte as u32;
@@ -3040,9 +2823,6 @@ pub fn str2color(s: &str, alpha: u8) -> u32 {
     (alpha as u32) << 24 | rgb
 }
 
-/// Check control permission state from a u64 bitmap.
-/// Each permission uses 2 bits: 0 = not set, 1 = disable, 2 = enable, 3 = invalid (treated as not set)
-/// Returns: Some(true) = enabled, Some(false) = disabled, None = not set or invalid
 pub fn get_control_permission(
     permissions: u64,
     permission: hbb_common::rendezvous_proto::control_permissions::Permission,
@@ -3053,9 +2833,9 @@ pub fn get_control_permission(
         let shift = index * 2;
         let value = (permissions >> shift) & 0b11;
         match value {
-            1 => Some(false), // disable
-            2 => Some(true),  // enable
-            _ => None,        // 0 = not set, 3 = invalid
+            1 => Some(false),
+            2 => Some(true),
+            _ => None,
         }
     } else {
         None
@@ -3066,12 +2846,9 @@ pub fn is_direct_ip_access(peer: &str) -> bool {
     hbb_common::is_ip_str(peer) || hbb_common::is_domain_port_str(peer)
 }
 
-// Align the maximum length of the peer id to the maximum length of the peer id in the server.
 const MAX_UNTRUSTED_PEER_ID_LEN: usize = 253;
 const UNTRUSTED_PEER_ID_FORBIDDEN_CHARS: &[char] = &['"', '<', '>', '/', '\\', '|', '?', '*'];
 
-// Shared validation for peer/connect ids that cross untrusted boundaries before
-// they are stored or written into command/script contexts.
 pub fn is_valid_untrusted_peer_id(id: &str) -> bool {
     !id.is_empty()
         && id.len() <= MAX_UNTRUSTED_PEER_ID_LEN
@@ -3090,7 +2867,7 @@ mod tests {
     use std::collections::HashSet;
 
     #[test]
-    fn parses_stable_rustdesk_release_url() {
+    fn parses_stable_supportdesk_release_url() {
         let update_url = "https://github.com/rustdesk/rustdesk/releases/tag/v1.4.6";
 
         assert_eq!(release_id_from_update_url(update_url).unwrap(), "v1.4.6");
@@ -3156,9 +2933,6 @@ mod tests {
         )
     }
 
-    // The deadline must hold against a peer that keeps the receive side ready. `select!` rebuilds
-    // its arms every iteration, so a relative sleep would be restarted by every datagram and the
-    // punch would run for as long as the peer keeps talking, with no outer timeout to stop it.
     #[tokio::test]
     async fn test_udp_punch_deadline_survives_a_talkative_peer() {
         let a = UdpSocket::bind("127.0.0.1:0").await.unwrap();
@@ -3166,8 +2940,6 @@ mod tests {
         let (a_addr, b_addr) = (a.local_addr().unwrap(), b.local_addr().unwrap());
         a.connect(b_addr).await.unwrap();
         b.connect(a_addr).await.unwrap();
-        // Empty datagrams answer no probe and match no return branch, so they only feed the loop.
-        // Sent well past the punch deadline so a restarted timer would show up as a long run.
         let flooder = tokio::spawn(async move {
             let end = Instant::now() + Duration::from_secs(12);
             while Instant::now() < end {
@@ -3211,13 +2983,12 @@ mod tests {
         }
     }
 
-    // ThrottledInterval tick less times than tokio interval, if there're sleeps
     #[allow(non_snake_case)]
     #[tokio::test]
-    async fn test_RustDesk_interval_sleep() {
+    async fn test_SupportDesk_interval_sleep() {
         let base_intervals = [interval_maker, interval_at_maker];
         for (i, maker) in base_intervals.into_iter().enumerate() {
-            let mut timer = rustdesk_interval(maker());
+            let mut timer = supportdesk_interval(maker());
             let mut times = Vec::new();
             sleep(Duration::from_secs(3)).await;
             loop {
@@ -3230,15 +3001,13 @@ mod tests {
                     }
                 }
             }
-            // No multiple ticks in the `interval` time.
-            // Values in "times" are unique and are less than normal tokio interval.
             let times2: HashSet<u128> = HashSet::from_iter(times.clone());
             assert_eq!(times.len(), times2.len(), "test: {}", i);
         }
     }
 
     #[test]
-    fn test_is_public_matches_rustdesk_root_domain() {
+    fn test_is_public_matches_supportdesk_root_domain() {
         assert!(is_public("rustdesk.com/"));
         assert!(is_public("rustdesk.com:21117"));
         assert!(is_public("api.rustdesk.com:21117"));
@@ -3335,7 +3104,6 @@ mod tests {
         assert!(err.contains("TCP proxy error: dial failed"));
     }
 
-    /// A stand-in rendezvous server on loopback: accepts one connection and hands it to `serve`.
     async fn rendezvous_stub<F, Fut>(serve: F) -> String
     where
         F: FnOnce(hbb_common::tcp::FramedStream) -> Fut + Send + 'static,
@@ -3387,7 +3155,6 @@ mod tests {
     #[tokio::test]
     async fn test_secure_tcp_required_refuses_a_server_without_the_exchange() {
         let (key, _) = server_key();
-        // A server from before the exchange answers the first message with something else.
         let serve = |mut s: hbb_common::tcp::FramedStream| async move {
             let mut msg = RendezvousMessage::new();
             msg.set_register_peer_response(RegisterPeerResponse::new());
@@ -3398,7 +3165,6 @@ mod tests {
         let mut conn = connect(&host).await;
         assert!(secure_tcp_required(&mut conn, &key).await.is_err());
         assert!(!conn.is_secured());
-        // The legacy call tolerates the same server, and the stream stays in the clear.
         let host = rendezvous_stub(serve).await;
         let mut conn = connect(&host).await;
         secure_tcp(&mut conn, &key).await.unwrap();
@@ -3544,7 +3310,6 @@ mod tests {
                     ex.signed_params = sign::sign(&params.write_to_bytes().unwrap(), &sk).into();
                 }
                 "signed_id_pk_as_params" => {
-                    // The server signs IdPk with the same key; its `id` sits where `pk` does.
                     let mut pk = [0x2au8; box_::PUBLICKEYBYTES];
                     pk[30] = 0xc2;
                     pk[31] = 0xaa;
@@ -3606,8 +3371,6 @@ mod tests {
         assert!(!dtls_fingerprint_bound(&signed_fp, "sha-256 0A:1B:2D"));
         assert!(!dtls_fingerprint_bound("", ""));
 
-        // The fingerprint is under the signature: a blob verified with another key yields
-        // nothing, and one whose payload was edited in transit fails verification.
         let (other_pk, _) = sign::gen_keypair();
         assert!(decode_id_pk_dtls(&signed, &other_pk).is_err());
         let mut tampered = signed.clone();
@@ -3615,8 +3378,6 @@ mod tests {
         tampered[last] ^= 1;
         assert!(decode_id_pk_dtls(&tampered, &pk).is_err());
 
-        // `decode_id_pk` is the same blob minus the fingerprint, so the field is invisible to
-        // non-WebRTC handshakes.
         assert_eq!(decode_id_pk(&signed, &pk).unwrap(), (id, their_pk));
     }
 }

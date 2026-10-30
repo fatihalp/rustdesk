@@ -1,29 +1,8 @@
 #!/bin/bash
 
-#
-# Script to build F-Droid release of RustDesk
-#
-# Copyright (C) 2024, The RustDesk Authors
-#               2024, Vasyl Gello <vasek.gello@gmail.com>
-#
 
-# The script is invoked by F-Droid builder system step-by-step.
-#
-# It accepts the following arguments:
-#
-# - versionName from https://github.com/rustdesk/rustdesk/releases/download/fdroid-version/rustdesk-version.txt
-# - versionCode from https://github.com/rustdesk/rustdesk/releases/download/fdroid-version/rustdesk-version.txt
-# - Android architecture to build APK for: armeabi-v7a arm64-v8av x86 x86_64
-# - The build step to execute:
-#
-#   + prebuild: patch sources and do other stuff before the build
-#   + build: perform actual build of APK file
-#
 
-# Start of functions
 
-# Install Flutter of version `VERSION` from Github repository
-# into directory `FLUTTER_DIR` and apply patches if needed
 
 prepare_flutter() {
 	VERSION="${1}"
@@ -38,7 +17,6 @@ prepare_flutter() {
 	git restore .
 	git checkout "${VERSION}"
 
-	# Patch flutter
 
 	if dpkg --compare-versions "${VERSION}" ge "3.24.4"; then
 		git apply "${ROOTDIR}/.github/patches/flutter_3.24.4_dropdown_menu_enableFilter.diff"
@@ -46,18 +24,15 @@ prepare_flutter() {
 
 	flutter config --no-analytics
 
-	popd # ${FLUTTER_DIR}
+	popd
 }
 
-# Start of script
 
 set -x
 
-# Note current working directory as root dir for patches
 
 ROOTDIR="${PWD}"
 
-# Parse command-line arguments
 
 VERNAME="${1}"
 VERCODE="${2}"
@@ -70,32 +45,31 @@ if [ -z "${VERNAME}" ] || [ -z "${VERCODE}" ] || [ -z "${ANDROID_ABI}" ] ||
 	exit 1
 fi
 
-# Set various architecture-specific identifiers
 
 case "${ANDROID_ABI}" in
 arm64-v8a)
 	FLUTTER_TARGET=android-arm64
 	NDK_TARGET=aarch64-linux-android
 	RUST_TARGET=aarch64-linux-android
-	RUSTDESK_FEATURES='flutter,hwcodec'
+	SUPPORTDESK_FEATURES='flutter,hwcodec'
 	;;
 armeabi-v7a)
 	FLUTTER_TARGET=android-arm
 	NDK_TARGET=arm-linux-androideabi
 	RUST_TARGET=armv7-linux-androideabi
-	RUSTDESK_FEATURES='flutter,hwcodec'
+	SUPPORTDESK_FEATURES='flutter,hwcodec'
 	;;
 x86_64)
 	FLUTTER_TARGET=android-x64
 	NDK_TARGET=x86_64-linux-android
 	RUST_TARGET=x86_64-linux-android
-	RUSTDESK_FEATURES='flutter'
+	SUPPORTDESK_FEATURES='flutter'
 	;;
 x86)
 	FLUTTER_TARGET=android-x86
 	NDK_TARGET=i686-linux-android
 	RUST_TARGET=i686-linux-android
-	RUSTDESK_FEATURES='flutter'
+	SUPPORTDESK_FEATURES='flutter'
 	;;
 *)
 	echo "ERROR: Unknown Android ABI '${ANDROID_ABI}'!" >&2
@@ -103,39 +77,27 @@ x86)
 	;;
 esac
 
-# Check ANDROID_SDK_ROOT and sdkmanager present on PATH
 
 if [ ! -d "${ANDROID_SDK_ROOT}" ] || ! command -v sdkmanager 1>/dev/null; then
 	echo "ERROR: Can not find Android SDK!" >&2
 	exit 1
 fi
 
-# Export necessary variables
 
 export PATH="${PATH}:${HOME}/flutter/bin:${HOME}/depot_tools"
 
 export VCPKG_ROOT="${HOME}/vcpkg"
 
-# Now act depending on build step
 
-# NOTE: F-Droid maintainers require explicit declaration of dependencies
-# as root via `Builds.sudo` F-Droid metadata directive:
-# https://gitlab.com/fdroid/fdroiddata/-/merge_requests/15343#note_1988918695
 
 case "${BUILDSTEP}" in
 prebuild)
-	# prebuild: patch sources and do other stuff before the build
 
-	#
-	# Extract required versions for NDK, Rust, Flutter from
-	# '.github/workflows/flutter-build.yml'
-	#
 
 	CARGO_NDK_VERSION="$(yq -r \
 		.env.CARGO_NDK_VERSION \
 		.github/workflows/flutter-build.yml)"
 
-	# Flutter used to compile main Rustdesk library
 
 	FLUTTER_VERSION="$(yq -r \
 		.env.ANDROID_FLUTTER_VERSION \
@@ -147,7 +109,6 @@ prebuild)
 			.github/workflows/flutter-build.yml)"
 	fi
 
-	# Flutter used to compile Flutter<->Rust bridge files
 
 	CARGO_EXPAND_VERSION="$(yq -r \
 		.env.CARGO_EXPAND_VERSION \
@@ -182,7 +143,6 @@ prebuild)
 		exit 1
 	fi
 
-	# Map NDK version to revision
 	NDK_VERSION="$(curl https://gitlab.com/fdroid/android-sdk-transparency-log/-/raw/master/signed/checksums.json |
 		jq -r ".\"https://dl.google.com/android/repository/android-ndk-${NDK_VERSION}-linux.zip\"[0].\"source.properties\"" |
 		sed -n -E 's/.*Pkg.Revision = ([0-9.]+).*/\1/p')"
@@ -195,26 +155,21 @@ prebuild)
 	export ANDROID_NDK_HOME="${ANDROID_SDK_ROOT}/ndk/${NDK_VERSION}"
 	export ANDROID_NDK_ROOT="${ANDROID_SDK_ROOT}/ndk/${NDK_VERSION}"
 
-	#
-	# Install the components
-	#
 
 	set -e
 
-	# Install Android NDK
 
 	if [ ! -d "${ANDROID_NDK_ROOT}" ]; then
 		sdkmanager --install "ndk;${NDK_VERSION}"
 	fi
 
-	# Install Rust
 
 	if [ ! -f "${HOME}/rustup/rustup-init.sh" ]; then
 		pushd "${HOME}"
 
 		git clone --depth 1 https://github.com/rust-lang/rustup
 
-		popd # ${HOME}
+		popd
 	fi
 
 	pushd "${HOME}/rustup"
@@ -227,14 +182,12 @@ prebuild)
 		. "${HOME}/.cargo/env"
 	fi
 
-	# Install cargo-ndk
 
 	cargo install \
 		cargo-ndk \
 		--version "${CARGO_NDK_VERSION}" \
 		--locked
 
-	# Install rust bridge generator
 
 	cargo install \
 		cargo-expand \
@@ -245,7 +198,6 @@ prebuild)
 		--features "uuid" \
 		--locked
 
-	# Populate native vcpkg dependencies
 
 	if [ ! -d "${VCPKG_ROOT}" ]; then
 		pushd "${HOME}"
@@ -269,9 +221,9 @@ prebuild)
 
 		cmake --build .
 
-		popd # build
+		popd
 
-		popd # vcpkg-tool
+		popd
 
 		pushd vcpkg
 
@@ -279,16 +231,14 @@ prebuild)
 
 		cp -a ../vcpkg-tool/build/vcpkg vcpkg
 
-		# disable telemetry
 
 		touch "vcpkg.disable-metrics"
 
-		popd # vcpkg
+		popd
 
-		popd # ${HOME}
+		popd
 	fi
 
-	# Install depot-tools for x86
 
 	if [ "${ANDROID_ABI}" = "x86" ]; then
 		if [ ! -d "${HOME}/depot_tools" ]; then
@@ -298,19 +248,14 @@ prebuild)
 				--depth 1 \
 				https://chromium.googlesource.com/chromium/tools/depot_tools.git
 
-			popd # ${HOME}
+			popd
 		fi
 	fi
 
-	# Patch the RustDesk sources
 
 	git apply res/fdroid/patches/*.patch
 
-	# Generate bridge files using `FLUTTER_BRIDGE_VERSION`, which may differ
-	# from the Flutter version used to compile RustDesk library, and restore
-	# the pubspec later
 
-	# Find first libclang.so and set BRIDGE_LLVM_PATH
 
 	BRIDGE_LLVM_PATH="$(find /usr/lib/ -name libclang.so | head -n1)"
 
@@ -322,46 +267,36 @@ prebuild)
 	BRIDGE_LLVM_PATH="$(dirname "${BRIDGE_LLVM_PATH}")"
 	BRIDGE_LLVM_PATH="$(dirname "${BRIDGE_LLVM_PATH}")"
 
-	# Install Flutter bridge version
 
-	# Unbraced on purpose: F-Droid recipes rewrite the braced form with sed to
-	# pin a version, but the bridge generator only works with the Flutter
-	# version bridge.yml uses
 
 	prepare_flutter "$FLUTTER_BRIDGE_VERSION" "${HOME}/flutter"
 
-	# Save changes
 
 	git add .
 
-	# Edit pubspec to make flutter bridge version work
 
 	sed \
 		-i \
 		-e 's/extended_text: 14.0.0/extended_text: 13.0.0/g' \
 		flutter/pubspec.yaml
 
-	# Download Flutter dependencies
 
 	pushd flutter
 
 	flutter clean
 	flutter packages pub get --enforce-lockfile
 
-	popd # flutter
+	popd
 
-	# Generate FFI bindings
 
 	flutter_rust_bridge_codegen \
 		--rust-input ./src/flutter_ffi.rs \
 		--dart-output ./flutter/lib/generated_bridge.dart \
 		--llvm-path "${BRIDGE_LLVM_PATH}"
 
-	# Add bridge files to save-list
 
 	git add -f ./flutter/lib/generated_bridge.* ./src/bridge_generated.*
 
-	# Restore everything
 
 	git checkout '*'
 	git clean -dffx
@@ -369,11 +304,9 @@ prebuild)
 
 	unset BRIDGE_LLVM_PATH
 
-	# Install Flutter version for RustDesk library build
 
 	prepare_flutter "${FLUTTER_VERSION}" "${HOME}/flutter"
 
-	# gms is not in these files now, but we still keep the following line for future reference(maybe).
 
 	sed \
 		-i \
@@ -381,14 +314,12 @@ prebuild)
 		flutter/android/build.gradle \
 		flutter/android/app/build.gradle
 
-	# Gradle 8 / AGP 8 thrash in the default 1 GiB heap; raise it as CI does
 
 	sed \
 		-i \
 		-e 's/org.gradle.jvmargs=-Xmx1024M/org.gradle.jvmargs=-Xmx2g/g' \
 		flutter/android/gradle.properties
 
-	# `firebase_analytics` is not in these files now, but we still keep the following lines.
 
 	sed \
 		-i \
@@ -407,16 +338,10 @@ prebuild)
 
 	;;
 build)
-	# build: perform actual build of APK file
 
 	set -e
 
-	#
-	# Extract required versions for NDK, Rust, Flutter from
-	# '.github/workflows/flutter-build.yml'
-	#
 
-	# Flutter used to compile main Rustdesk library
 
 	FLUTTER_VERSION="$(yq -r \
 		.env.ANDROID_FLUTTER_VERSION \
@@ -432,7 +357,6 @@ build)
 		.env.NDK_VERSION \
 		.github/workflows/flutter-build.yml)"
 
-	# Map NDK version to revision
 	NDK_VERSION="$(curl https://gitlab.com/fdroid/android-sdk-transparency-log/-/raw/master/signed/checksums.json |
 		jq -r ".\"https://dl.google.com/android/repository/android-ndk-${NDK_VERSION}-linux.zip\"[0].\"source.properties\"" |
 		sed -n -E 's/.*Pkg.Revision = ([0-9.]+).*/\1/p')"
@@ -449,20 +373,17 @@ build)
 		. "${HOME}/.cargo/env"
 	fi
 
-	# Download Flutter dependencies
 
 	pushd flutter
 
 	flutter clean
 	flutter packages pub get
 
-	popd # flutter
+	popd
 
-	# Build host android deps
 
 	bash flutter/build_android_deps.sh "${ANDROID_ABI}"
 
-	# Build rustdesk lib
 
 	cargo ndk \
 		--platform 21 \
@@ -471,12 +392,12 @@ build)
 		build \
 		--locked \
 		--release \
-		--features "${RUSTDESK_FEATURES}"
+		--features "${SUPPORTDESK_FEATURES}"
 
 	mkdir -p "flutter/android/app/src/main/jniLibs/${ANDROID_ABI}"
 
-	cp "target/${RUST_TARGET}/release/liblibrustdesk.so" \
-		"flutter/android/app/src/main/jniLibs/${ANDROID_ABI}/librustdesk.so"
+	cp "target/${RUST_TARGET}/release/liblibsupportdesk.so" \
+		"flutter/android/app/src/main/jniLibs/${ANDROID_ABI}/libsupportdesk.so"
 
 	cp "${ANDROID_NDK_HOME}/toolchains/llvm/prebuilt/linux-x86_64/sysroot/usr/lib/${NDK_TARGET}/libc++_shared.so" \
 		"flutter/android/app/src/main/jniLibs/${ANDROID_ABI}/"
@@ -484,7 +405,6 @@ build)
 	"${ANDROID_NDK_HOME}/toolchains/llvm/prebuilt/linux-x86_64/bin/llvm-strip" \
 		"flutter/android/app/src/main/jniLibs/${ANDROID_ABI}"/*
 
-	# Build flutter-jit-release for x86
 
 	if [ "${ANDROID_ABI}" = "x86" ]; then
 		pushd flutter-sdk
@@ -579,11 +499,11 @@ build)
 			x86_jit_release.jar \
 			x86_debug.jar
 
-		popd # out/android_jit_release_x86
+		popd
 
-		popd # src
+		popd
 
-		popd # flutter-sdk
+		popd
 
 		echo "# Clean up intermediate engine files and show free space"
 
@@ -600,7 +520,6 @@ build)
 		mv flutter-out flutter-sdk/src/out
 	fi
 
-	# Build the apk
 
 	pushd flutter
 
@@ -620,11 +539,10 @@ build)
 			--target-platform "${FLUTTER_TARGET}"
 	fi
 
-	popd # flutter
+	popd
 
 	rm -rf flutter-sdk
 
-	# Special step for fdroiddata CI builds to remove .gitconfig
 
 	rm -f /home/vagrant/.gitconfig
 
@@ -635,6 +553,5 @@ build)
 	;;
 esac
 
-# Report success
 
 echo "All done!"

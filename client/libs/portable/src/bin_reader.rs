@@ -5,25 +5,20 @@ use std::{
     path::Path,
 };
 
-// The generic payload, shared by every customer and compiled in once per release.
 #[cfg(windows)]
 const BIN_DATA: &[u8] = include_bytes!("../data.bin");
 
-// The per-customer payload, injected into the RCDATA resource after the template
-// has been built, so that customizing a client needs no recompilation.
 #[cfg(windows)]
 const PACKAGE_RESOURCE_NAME: &str = "RDPKG";
 
-// 4bytes
 const LENGTH: usize = 4;
-const IDENTIFIER: &[u8] = b"rustdesk";
+const IDENTIFIER: &[u8] = b"supportdesk";
 const IDENTIFIER_LENGTH: usize = 8;
 const MD5_LENGTH: usize = 32;
 const BUF_SIZE: usize = 4096;
 
 pub(crate) struct BinaryData {
     pub md5_code: &'static [u8],
-    // compressed gzip data
     pub raw: &'static [u8],
     pub path: String,
 }
@@ -31,10 +26,6 @@ pub(crate) struct BinaryData {
 pub(crate) struct BinaryReader {
     pub files: Vec<BinaryData>,
     pub exe: String,
-    // Paths supplied by the per-customer package. Recorded so that a file dropped
-    // from a later package -- a logo the customer removed, say -- can be deleted
-    // from an existing extraction, which the timestamp wipe no longer covers now
-    // that the packer is built once per release rather than once per customer.
     pub package_paths: Vec<String>,
 }
 
@@ -51,7 +42,6 @@ impl BinaryReader {
     }
 }
 
-// Folds the per-customer package into the generic payload.
 fn merge(
     embedded: (Vec<BinaryData>, String),
     package: (Vec<BinaryData>, String),
@@ -65,9 +55,6 @@ fn merge(
         package_exe
     };
 
-    // The generic payload ships the executable under its stock name, the package
-    // decides the final one. Rename on extraction so the process is always
-    // `<appname>.exe`, which the app itself relies on to find its own sessions.
     if !generic_exe.is_empty() && normalize_path(&exe) != normalize_path(&generic_exe) {
         let generic_key = normalize_path(&generic_exe);
         for file in files.iter_mut() {
@@ -77,7 +64,6 @@ fn merge(
         }
     }
 
-    // Per-customer entries replace the generic ones they shadow.
     if !package_files.is_empty() {
         let overridden: HashSet<String> = package_files
             .iter()
@@ -101,7 +87,6 @@ fn read_u32(blob: &[u8], at: usize) -> Option<u32> {
     Some(u32::from_be_bytes([bytes[0], bytes[1], bytes[2], bytes[3]]))
 }
 
-// Returns the files and the executable to launch, or None if the blob is absent or malformed.
 fn parse(blob: &'static [u8]) -> Option<(Vec<BinaryData>, String)> {
     let mut base = 0usize;
     let mut parsed = Vec::new();
@@ -167,15 +152,11 @@ fn read_package() -> Result<(Vec<BinaryData>, String), String> {
     Ok(Default::default())
 }
 
-// Reads an RCDATA resource out of the running image. Resources live in the mapped
-// image for the lifetime of the process, so the slice is genuinely 'static and no
-// copy is needed.
 #[cfg(windows)]
 fn read_resource(name: &str) -> Option<&'static [u8]> {
     use std::ptr::null_mut;
     use winapi::um::libloaderapi::{FindResourceW, LoadResource, LockResource, SizeofResource};
 
-    // MAKEINTRESOURCEW(10), avoids depending on the winuser feature for RT_RCDATA.
     const RT_RCDATA: *const u16 = 10 as _;
 
     let name: Vec<u16> = name.encode_utf16().chain(std::iter::once(0)).collect();
@@ -217,12 +198,10 @@ impl BinaryData {
             }
         }
         if p.exists() {
-            // check md5
             let f = fs::read(p.clone()).unwrap_or_default();
             let digest = format!("{:x}", md5::compute(&f));
             let md5_record = String::from_utf8_lossy(self.md5_code);
             if digest == md5_record {
-                // same, skip this file
                 println!("skip {}", &self.path);
                 return;
             } else {
@@ -256,8 +235,6 @@ impl BinaryReader {
 mod tests {
     use super::*;
 
-    // Builds a blob in the same layout generate.py writes, so these tests pin the
-    // cross-language format contract as well as the merge rules.
     fn blob(files: &[(&str, &[u8])], exe: &str) -> &'static [u8] {
         let mut out = Vec::new();
         out.extend_from_slice(IDENTIFIER);
@@ -288,18 +265,17 @@ mod tests {
 
     #[test]
     fn without_a_package_the_stock_payload_is_untouched() {
-        let embedded = parse(blob(&[("./rustdesk.exe", b"app")], "./rustdesk.exe")).unwrap();
+        let embedded = parse(blob(&[("./supportdesk.exe", b"app")], "./supportdesk.exe")).unwrap();
         let (files, exe) = merge(embedded, Default::default());
-        assert_eq!(exe, "./rustdesk.exe");
-        assert!(entry(&files, "./rustdesk.exe").is_some());
+        assert_eq!(exe, "./supportdesk.exe");
+        assert!(entry(&files, "./supportdesk.exe").is_some());
     }
 
     #[test]
     fn renames_the_stock_executable_to_the_package_name() {
-        // x86: the big executable stays in the generic payload and only gets renamed.
         let embedded = parse(blob(
-            &[("./rustdesk.exe", b"app"), ("./sciter.dll", b"dll")],
-            "./rustdesk.exe",
+            &[("./supportdesk.exe", b"app"), ("./sciter.dll", b"dll")],
+            "./supportdesk.exe",
         ))
         .unwrap();
         let package = parse(blob(&[("./custom.txt", b"cfg")], "./acme.exe")).unwrap();
@@ -308,21 +284,19 @@ mod tests {
 
         assert_eq!(exe, "./acme.exe");
         assert!(entry(&files, "./acme.exe").is_some());
-        assert!(entry(&files, "./rustdesk.exe").is_none());
-        // Untouched neighbours survive.
+        assert!(entry(&files, "./supportdesk.exe").is_none());
         assert_eq!(entry(&files, "./sciter.dll").unwrap().raw, b"dll");
         assert_eq!(entry(&files, "./custom.txt").unwrap().raw, b"cfg");
     }
 
     #[test]
     fn package_entries_win_over_the_generic_payload() {
-        // x64: the customized executable and icons ship in the package instead.
         let embedded = parse(blob(
             &[
                 ("./data/flutter_assets/assets/icon.ico", b"stock-icon"),
-                ("./librustdesk.dll", b"core"),
+                ("./libsupportdesk.dll", b"core"),
             ],
-            "./rustdesk.exe",
+            "./supportdesk.exe",
         ))
         .unwrap();
         let package = parse(blob(
@@ -350,6 +324,6 @@ mod tests {
                 .count(),
             1
         );
-        assert_eq!(entry(&files, "./librustdesk.dll").unwrap().raw, b"core");
+        assert_eq!(entry(&files, "./libsupportdesk.dll").unwrap().raw, b"core");
     }
 }

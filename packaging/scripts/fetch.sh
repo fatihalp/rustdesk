@@ -1,5 +1,4 @@
 #!/usr/bin/env bash
-# Downloads the brand manifest, logo and unbranded base client into ./work.
 set -euo pipefail
 platform="$1"
 mkdir -p work

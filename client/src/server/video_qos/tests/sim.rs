@@ -1,34 +1,5 @@
-//! Closed-loop network simulation for the QoS controller.
-//!
-//! The controller is driven the way `Connection` drives it: one TestDelay probe per
-//! second, a single probe outstanding, `user_delay_response_elapsed` on every timer
-//! tick, `update_display_data` once per second.  Video frames and probes share one
-//! FIFO, which stands for the downstream shared path (stream, transport, link): the
-//! probe measures the bytes that were handed to that path in front of it.  It is not
-//! the server's `tx_video` channel, which the probe does not pass through, and the
-//! model does not stall the timer while a send is blocked, as the real loop does.
-//!
-//! Three independent random streams keep an A/B comparison paired: the network
-//! trace (capacity wobble, stalls, loss events) is generated before the run from the
-//! network stream alone, probe jitter is a per-second table from its own stream,
-//! and scene changes follow the wall clock, so two controllers with the same seed
-//! face the same link, the same jitter and the same content timeline whatever they
-//! decide.  Only the frame size noise depends on how many frames were produced.
-//!
-//! The encoder model conserves its bitrate budget: a scene change costs three
-//! frames' worth of data and the surplus is repaid by the following frames, so the
-//! long-term offered load does not depend on the frame rate under CBR.
-//!
-//! It still is a model, not a network: it does not reproduce a real transport's
-//! congestion control or a real encoder.  Its job is to show how the controller
-//! reacts to the *kind* of behaviour a home Wi-Fi, a stable relay or a saturated
-//! uplink produce, deterministically and over many seeds.
-//!
-//! The CI run uses seeds 1 to 20.  Scenario
-//! parameters are educated guesses until a recorded `qos_trace` calibrates them.
 use super::*;
 
-/// xorshift64* generator, so the tests need no external crate and stay reproducible.
 struct Rng(u64);
 
 impl Rng {
@@ -45,7 +16,6 @@ impl Rng {
         x.wrapping_mul(0x2545_F491_4F6C_DD1D)
     }
 
-    /// Uniform in `[0, 1)`.
     fn uniform(&mut self) -> f64 {
         (self.next_u64() >> 11) as f64 / (1u64 << 53) as f64
     }
@@ -71,20 +41,13 @@ impl Rng {
 
 #[derive(Clone)]
 pub struct Link {
-    /// Step schedule `(from_ms, kbps)`, sorted by time.
     pub capacity_kbps: Vec<(u32, f64)>,
-    /// Slow random walk of the capacity, as a fraction of the nominal value.
     pub wobble: f64,
     pub base_rtt_ms: f64,
-    /// Log-normal jitter added to every probe round trip.
     pub jitter_median_ms: f64,
     pub jitter_sigma: f64,
-    /// Loss events per second.  A reliable stream turns a loss into a 200-400 ms
-    /// retransmission stall followed by a second at half rate.
     pub loss_per_s: f64,
-    /// Mean interval between link stalls in seconds, `0` for none.
     pub stall_mean_interval_s: f64,
-    /// Uniform stall duration range in milliseconds.
     pub stall_ms: (f64, f64),
 }
 
@@ -98,7 +61,6 @@ impl Link {
             .unwrap_or(self.capacity_kbps[0].1)
     }
 
-    /// Time at which the capacity was last restored to its initial value, if it ever dropped.
     fn restore_ms(&self) -> Option<u32> {
         let initial = self.capacity_kbps[0].1;
         let mut dropped = false;
@@ -113,10 +75,9 @@ impl Link {
     }
 }
 
-/// Everything the link does during a run, decided before the run starts.
 struct LinkTrace {
-    capacity_kbps: Vec<f64>, // per tick, wobble and retransmission backoff applied
-    stalled: Vec<bool>,      // per tick
+    capacity_kbps: Vec<f64>,
+    stalled: Vec<bool>,
 }
 
 fn mark(flags: &mut [bool], from_ms: f64, to_ms: f64) {
@@ -171,22 +132,13 @@ fn link_trace(link: &Link, ticks: usize, rng: &mut Rng) -> LinkTrace {
 
 #[derive(Clone, Copy, PartialEq)]
 pub enum Content {
-    /// Every frame changes: a video call or a movie.
     Video,
-    /// Mostly static: a couple of changed frames per second.
     Office,
 }
 
-/// How the encoder turns a bitrate into frame sizes.
 #[derive(Clone, Copy, PartialEq)]
 pub enum EncoderModel {
-    /// VP8, VP9 and AV1 run CBR against millisecond timestamps: fewer frames per
-    /// second means bigger frames, the bitrate stays.  Only the ratio moves bytes.
     Cbr,
-    /// Hardware encoders configured for a fixed 30 fps rate-control assumption:
-    /// every frame carries a thirtieth of the bitrate, so fewer frames mean fewer
-    /// bytes.  Actual hardware behaviour is backend dependent (Android's MediaCodec
-    /// path runs VBR).
     FixedRate,
 }
 
@@ -203,21 +155,14 @@ pub struct Scenario {
     pub seed: u64,
 }
 
-/// Bitrate at ratio 1.0; balanced quality (0.67) then encodes at about 4 Mbps.
 const BASE_KBPS: f64 = 6000.0;
-/// The frame rate hardware encoders are configured for.
 const ENCODER_CONFIGURED_FPS: f64 = 30.0;
-/// Log-normal spread of frame sizes around their budget.
 const FRAME_SIZE_SIGMA: f64 = 0.35;
 const TICK_MS: u32 = 10;
-/// Samples taken before this instant belong to the cold start, not the steady state.
 const WARM_UP_MS: u32 = 15_000;
-/// A recovery counts once target and queue have held for this long.
 const SUSTAINED_MS: u32 = 5_000;
-/// Seeds every scenario is run with.
 pub const SEEDS: std::ops::RangeInclusive<u64> = 1..=20;
 
-/// Frame sizes with a conserved bitrate budget.
 struct Encoder {
     model: EncoderModel,
     content: Content,
@@ -226,30 +171,23 @@ struct Encoder {
     debt_bits: f64,
 }
 
-/// A scene change every five seconds of video.
 const SCENE_INTERVAL_MS: u32 = 5_000;
 
 impl Encoder {
     fn frame_bits(&mut self, now_ms: u32, bitrate_kbps: f64, produce_rate: f64) -> f64 {
         let target = match (self.content, self.model) {
-            // A changed region of a static screen is small whatever the rate control does.
             (Content::Office, _) => bitrate_kbps * 1000.0 / ENCODER_CONFIGURED_FPS * 0.3,
             (Content::Video, EncoderModel::Cbr) => bitrate_kbps * 1000.0 / produce_rate,
             (Content::Video, EncoderModel::FixedRate) => {
                 bitrate_kbps * 1000.0 / ENCODER_CONFIGURED_FPS
             }
         };
-        // Mean one: the spread must not change the offered load.
         let noise = self.rng.log_normal(1.0, FRAME_SIZE_SIGMA)
             * (-FRAME_SIZE_SIGMA * FRAME_SIZE_SIGMA / 2.0).exp();
         let mut bits = target * noise;
-        // Scene changes follow the wall clock, not the frame count, so every
-        // controller meets the same content timeline.
         let scene_change = self.content == Content::Video && now_ms >= self.next_scene_ms;
         if scene_change {
             self.next_scene_ms += SCENE_INTERVAL_MS;
-            // A scene change costs a few frames' worth of data; rate control claws
-            // it back from the frames that follow.
             bits *= 3.0;
             self.debt_bits += bits - target;
         } else if self.debt_bits > 0.0 {
@@ -272,30 +210,20 @@ pub struct Report {
     pub name: String,
     pub seed: u64,
     pub limit: u32,
-    /// Controller target, sampled every 100 ms after the warm-up.
     pub mean_target_fps: f64,
     pub p10_target_fps: u32,
     pub min_target_fps: u32,
-    /// Share of the measured time the target spent below half of the limit.
     pub below_half_pct: f64,
-    /// Frames the encoder produced per second.
     pub produced_fps: f64,
-    /// Frames that left the shared path per second.
     pub delivered_fps: f64,
-    /// Time a delivered frame spent in the shared path, 95th percentile.
     pub frame_age_p95_ms: u32,
     pub queue_p95_ms: u32,
     pub max_delay_ms: u32,
-    /// Whether the link drops and restores its capacity at all.
     pub has_restore: bool,
-    /// Time from the capacity restore until target at the limit and queue below
-    /// 200 ms held for `SUSTAINED_MS`.
     pub recovery_ms: Option<u32>,
-    /// Lowest target during the first `WARM_UP_MS`.
     pub cold_start_min_fps: u32,
-    /// First time the target reached 90% of the limit.
     pub time_to_90pct_ms: Option<u32>,
-    pub trace: Vec<(u32, u32, u32, f32)>, // (time_ms, target fps, queue_ms, ratio)
+    pub trace: Vec<(u32, u32, u32, f32)>,
 }
 
 fn percentile_u32(values: &[u32], p: f64) -> u32 {
@@ -329,8 +257,6 @@ pub fn run(sc: &Scenario) -> Report {
     let total_ms = sc.seconds * 1000;
     let ticks = (total_ms / TICK_MS) as usize;
     let link = link_trace(&sc.link, ticks, &mut network_rng);
-    // Probe jitter indexed by the probe's send second, so the number of probes a
-    // controller manages to send does not change the jitter the next one meets.
     let probe_jitter_ms: Vec<f64> = (0..=sc.seconds)
         .map(|_| probe_rng.log_normal(sc.link.jitter_median_ms, sc.link.jitter_sigma))
         .collect();
@@ -347,7 +273,7 @@ pub fn run(sc: &Scenario) -> Report {
     let mut encode_phase = 0.0_f64;
     let mut encoded_this_second = 0_usize;
     let mut probe_sent: Option<u32> = None;
-    let mut replies: Vec<(u32, u32)> = Vec::new(); // (arrive_ms, delay_ms)
+    let mut replies: Vec<(u32, u32)> = Vec::new();
     let restore_ms = sc.link.restore_ms();
 
     let mut fps_samples = Vec::new();
@@ -367,8 +293,6 @@ pub fn run(sc: &Scenario) -> Report {
         qos.advance_ms(TICK_MS as u64);
         let capacity_kbps = link.capacity_kbps[tick];
 
-        // Encoder: frames at the controller's rate, sized by the controller's ratio.
-        // The video loop reports the bitrate as soon as it applies a new ratio.
         let fps = qos.fps();
         let ratio = qos.ratio();
         let bitrate_kbps = BASE_KBPS * ratio as f64;
@@ -393,7 +317,6 @@ pub fn run(sc: &Scenario) -> Report {
             queued_bits += bits;
         }
 
-        // Shared path drain: probes are tiny and leave as soon as they reach the head.
         if !link.stalled[tick] {
             let mut budget = capacity_kbps * TICK_MS as f64;
             while budget > 0.0 {
@@ -419,7 +342,6 @@ pub fn run(sc: &Scenario) -> Report {
             }
         }
 
-        // Probe replies reach the controller.
         replies.sort_by_key(|r| r.0);
         while replies.first().is_some_and(|r| r.0 <= now) {
             let (_, delay) = replies.remove(0);
@@ -428,7 +350,6 @@ pub fn run(sc: &Scenario) -> Report {
             qos.user_network_delay(1, delay);
         }
 
-        // The connection's one second timer.
         if now % 1000 == 0 {
             if probe_sent.is_none() {
                 probe_sent = Some(now);
@@ -497,7 +418,6 @@ pub fn run(sc: &Scenario) -> Report {
     }
 }
 
-/// One scenario over all seeds, summarised by the statistics the assertions use.
 #[derive(Debug)]
 pub struct Summary {
     pub name: String,
@@ -509,10 +429,8 @@ pub struct Summary {
     pub delivered_median: f64,
     pub frame_age_p95_p90: u32,
     pub has_restore: bool,
-    /// Slowest sustained recovery, `None` when any seed never recovered.
     pub recovery_worst_ms: Option<u32>,
     pub cold_start_min_median: u32,
-    /// Slowest time to 90% of the limit, `None` when any seed never got there.
     pub time_to_90pct_worst_ms: Option<u32>,
 }
 
@@ -583,9 +501,6 @@ fn clean_link(capacity_kbps: f64) -> Link {
     }
 }
 
-/// Weak-signal home Wi-Fi with ample average capacity: heavy-tailed jitter,
-/// retransmissions, and a link stall of up to 2.5 s every twenty seconds or so.
-/// Deliberately nasty; it isolates "capacity is fine, timing is not".
 fn home_wifi_link() -> Link {
     Link {
         capacity_kbps: vec![(0, 20_000.0)],
@@ -612,7 +527,6 @@ fn intercontinental_link() -> Link {
     }
 }
 
-/// 8 Mbps for a minute, 2.5 Mbps for the next, 8 Mbps again.
 fn halved_link() -> Link {
     Link {
         capacity_kbps: vec![(0, 8_000.0), (60_000, 2_500.0), (120_000, 8_000.0)],
@@ -690,7 +604,6 @@ pub fn scenarios() -> Vec<Scenario> {
     ]
 }
 
-/// Runs every scenario over `SEEDS` and returns the per-scenario summaries.
 pub fn run_all() -> Vec<(Summary, Vec<Report>)> {
     scenarios()
         .iter()
@@ -705,7 +618,7 @@ pub fn run_all() -> Vec<(Summary, Vec<Report>)> {
 
 fn write_traces(results: &[(Summary, Vec<Report>)]) {
     use std::fmt::Write;
-    if let Ok(path) = std::env::var("RUSTDESK_QOS_SIM_CSV") {
+    if let Ok(path) = std::env::var("SUPPORTDESK_QOS_SIM_CSV") {
         let mut csv = String::from("scenario,seed,time_ms,target_fps,queue_ms,ratio\n");
         for (_, reports) in results {
             for report in reports {
@@ -730,7 +643,7 @@ fn sim_scenarios() {
     for (summary, _) in &results {
         println!("{}", summary.row());
     }
-    if std::env::var("RUSTDESK_QOS_SIM_VERBOSE").is_ok() {
+    if std::env::var("SUPPORTDESK_QOS_SIM_VERBOSE").is_ok() {
         for (_, reports) in &results {
             for r in reports {
                 println!(
@@ -753,11 +666,6 @@ fn sim_scenarios() {
     }
 }
 
-/// The bounds every scenario summary has to meet in the CI run over `SEEDS`.
-/// They state what the product needs,
-/// not what one seed produced.  If a new seed or a new scenario violates a bound,
-/// change the design or loosen the bound with a written reason; never tune a
-/// controller constant until the bound passes.
 pub fn bound_violations(s: &Summary) -> Vec<&'static str> {
     let name = s.name.as_str();
     let limit = s.limit as f64;
@@ -768,9 +676,6 @@ pub fn bound_violations(s: &Summary) -> Vec<&'static str> {
         }
     };
     if name.starts_with("home_wifi") || name.starts_with("office_home_wifi") {
-        // A jittery but healthy link must stay fast: the whole point of the change.
-        // The target rarely leaves the limit, never collapses, and stalls of up to
-        // 2.5 s leave about a second of queue at worst.
         check(
             s.mean_target_median >= 0.85 * limit,
             "median target below 85%",
@@ -781,16 +686,8 @@ pub fn bound_violations(s: &Summary) -> Vec<&'static str> {
         if name != "office_home_wifi_30" {
             check(s.delivered_median >= 0.8 * limit, "delivered below 80%");
         }
-        // Frame age is the time a delivered frame spent in the shared path: what a
-        // viewer waits for on top of the round trip.  A jittery high-capacity link
-        // contains isolated stalls of up to 2.5 s, and the bound is on the p90 of
-        // per-seed p95 frame age: isolated stalls are tolerated, but they must not
-        // turn into a sustained multi-second backlog.  A regression bound, not a
-        // latency target; set from the scenario, not from a run.
         check(s.frame_age_p95_p90 < 1500, "frame age p95 p90 over 1.5 s");
     } else if name.starts_with("city_relay") {
-        // A clean link is where the developers test; every seed sits at the limit,
-        // and a fresh connection reaches 90% of it within ten seconds.
         check(s.p10_target_worst == s.limit, "left the limit");
         check(s.queue_p95_p90 < 50, "queue on a clean link");
         check(s.frame_age_p95_p90 < 100, "frame age on a clean link");
@@ -799,7 +696,6 @@ pub fn bound_violations(s: &Summary) -> Vec<&'static str> {
             "cold start over 10 s",
         );
     } else if name == "intercontinental_30" {
-        // High but stable RTT is not congestion, not even during the cold start.
         check(
             s.mean_target_median >= 0.9 * limit,
             "median target below 90%",
@@ -808,19 +704,12 @@ pub fn bound_violations(s: &Summary) -> Vec<&'static str> {
             s.cold_start_min_median >= INIT_FPS,
             "cold start below INIT_FPS",
         );
-        // Frame age excludes the round trip, so a high RTT earns no allowance.
         check(s.frame_age_p95_p90 < 150, "frame age over 150 ms");
         check(
             s.time_to_90pct_worst_ms.is_some_and(|ms| ms <= 10_000),
             "cold start over 10 s",
         );
     } else if let Some((queue_p95_bound_ms, below_half_bound_pct)) = match name {
-        // Real congestion must be detected, drained and recovered from.  With a CBR
-        // encoder only the bitrate drains the queue, and three probe replies at one
-        // second cadence plus a three second ratio cooldown are needed before a
-        // confirmed cut, so a few seconds of queue are inherent there.  Without
-        // ABR nothing drains a CBR queue at all, so that combination is reported
-        // but not asserted.
         "bandwidth_halved_30" => Some((3000, 40.0)),
         "bandwidth_halved_fixed_rate_30" => Some((2000, 10.0)),
         "bandwidth_halved_fixed_rate_no_abr_30" => Some((3000, 30.0)),
@@ -844,15 +733,7 @@ pub fn bound_violations(s: &Summary) -> Vec<&'static str> {
     v
 }
 
-/// Replays `qos_trace` lines through a fresh controller and returns
-/// `(time_ms, id, recorded_fps, replayed_fps)` per line.  Open loop, FPS only:
-/// the recorded delays do not react to the replayed decisions, the session runs
-/// with ABR off, and connections are replayed as separate viewers of one 30 fps
-/// balanced session.  Time advances by the wall-clock delta between consecutive
-/// lines whatever their connection, or by one second per line when a trace
-/// predates the `t=` field.
 pub fn replay(text: &str) -> Vec<(u64, i32, u64, u32)> {
-    // A present but malformed value is a corrupt trace, not a missing field.
     let field = |line: &str, key: &str| -> Option<u64> {
         line.split_whitespace()
             .find_map(|kv| kv.strip_prefix(key).and_then(|v| v.strip_prefix('=')))
@@ -891,10 +772,9 @@ pub fn replay(text: &str) -> Vec<(u64, i32, u64, u32)> {
     trace
 }
 
-/// Replays the log named by `RUSTDESK_QOS_TRACE` and prints the result.
 #[test]
 fn replay_recorded_trace() {
-    let Ok(path) = std::env::var("RUSTDESK_QOS_TRACE") else {
+    let Ok(path) = std::env::var("SUPPORTDESK_QOS_TRACE") else {
         return;
     };
     let trace = replay(&std::fs::read_to_string(&path).unwrap());

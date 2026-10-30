@@ -163,7 +163,6 @@ else()
     vcpkg_cmake_get_vars(cmake_vars_file)
     include("${cmake_vars_file}")
 
-    # Set environment variables for configure
     if(VCPKG_DETECTED_CMAKE_C_COMPILER MATCHES "([^\/]*-)gcc$")
         message(STATUS "Cross-building for ${TARGET_TRIPLET} with ${CMAKE_MATCH_1}")
         set(ENV{CROSS} ${CMAKE_MATCH_1})
@@ -187,7 +186,6 @@ else()
         set(LIBVPX_TARGET "${LIBVPX_TARGET_ARCH}-linux-gcc")
     elseif(VCPKG_TARGET_IS_ANDROID)
         set(LIBVPX_TARGET "generic-gnu")
-        # Settings
         if(VCPKG_TARGET_ARCHITECTURE STREQUAL x86)
             set(OPTIONS "${OPTIONS} --disable-sse4_1 --disable-avx --disable-avx2 --disable-avx512")
         elseif(VCPKG_TARGET_ARCHITECTURE STREQUAL x64)
@@ -197,12 +195,9 @@ else()
         elseif(VCPKG_TARGET_ARCHITECTURE STREQUAL arm64)
             set(OPTIONS "${OPTIONS} --enable-thumb")
         endif()
-        # Set environment variables for configure
         set(ENV{AS} ${VCPKG_DETECTED_CMAKE_C_COMPILER})
         set(ENV{LDFLAGS} "${LDFLAGS} --target=${VCPKG_DETECTED_CMAKE_C_COMPILER_TARGET}")
-        # Set clang target
         set(OPTIONS "${OPTIONS} --extra-cflags=--target=${VCPKG_DETECTED_CMAKE_C_COMPILER_TARGET} --extra-cxxflags=--target=${VCPKG_DETECTED_CMAKE_CXX_COMPILER_TARGET}")
-        # Unset nasm and let AS do its job
         unset(AS_NASM)
     elseif(VCPKG_TARGET_IS_OSX)
         if(VCPKG_TARGET_ARCHITECTURE STREQUAL "arm64")
@@ -265,7 +260,6 @@ else()
         )
     endif()
 
-    # --- --- ---
 
     if(NOT DEFINED VCPKG_BUILD_TYPE OR VCPKG_BUILD_TYPE STREQUAL "debug")
         message(STATUS "Configuring libvpx for Debug")

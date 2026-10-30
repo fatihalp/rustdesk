@@ -92,8 +92,7 @@ class CursorShape {
   });
 }
 
-class RustdeskImpl {
-  // The core answers through the callback, before callMethod returns.
+class SupportdeskImpl {
   Future<CursorShape?> sessionGetCursorShape(
       {required UuidValue sessionId, required String id, dynamic hint}) {
     final completer = Completer<CursorShape?>();
@@ -762,7 +761,6 @@ class RustdeskImpl {
       required int width,
       required int height,
       dynamic hint}) {
-    // note: restore on disconnected
     return Future(() => js.context.callMethod('setByName', [
           'change_resolution',
           jsonEncode({'display': display, 'width': width, 'height': height})
@@ -833,12 +831,10 @@ class RustdeskImpl {
     return Future.value();
   }
 
-  // get server settings
   Future<String> mainGetOptions({dynamic hint}) {
     return Future(() => mainGetOptionsSync());
   }
 
-  // get server settings
   String mainGetOptionsSync({dynamic hint}) {
     return js.context.callMethod('getByName', ['options']);
   }
@@ -849,7 +845,6 @@ class RustdeskImpl {
 
   Future<String> mainTestIfValidServer(
       {required String server, required bool testWithProxy, dynamic hint}) {
-    // TODO: implement
     return Future.value('');
   }
 
@@ -878,7 +873,6 @@ class RustdeskImpl {
   }
 
   Future<String> mainGetLicense({dynamic hint}) {
-    // TODO: implement
     return Future(() => '');
   }
 
@@ -905,7 +899,6 @@ class RustdeskImpl {
   }
 
   String mainGetPeerSync({required String id, dynamic hint}) {
-    // TODO:
     throw UnimplementedError("mainGetPeerSync");
   }
 
@@ -970,13 +963,10 @@ class RustdeskImpl {
     return v;
   }
 
-  // Do not return the real environment variables.
-  // Use the global variable as the environment variable in web.
   String mainGetEnv({required String key, dynamic hint}) {
     return js.context.callMethod('getByName', ['envvar', key]);
   }
 
-  // Use the global variable as the environment variable in web.
   void mainSetEnv({required String key, String? value, dynamic hint}) {
     js.context.callMethod('setByName', [
       'envvar',
@@ -992,9 +982,6 @@ class RustdeskImpl {
         ]));
   }
 
-  // Tell the JS-side matcher (flutter/web/js/src/shortcut_matcher.ts) to
-  // use the same platform-filtered bindings as the Flutter matcher, while
-  // keeping unsupported saved bindings in LocalStorage.
   void mainReloadKeyboardShortcuts({dynamic hint}) {
     final config = ShortcutModel.config(active: true);
     js.context.callMethod('reloadShortcuts', [
@@ -1006,10 +993,6 @@ class RustdeskImpl {
     ]);
   }
 
-  // Web has no Rust at runtime, so the defaults seed comes from the
-  // [kDefaultShortcutBindings] canonical in shortcut_constants.dart. Parity
-  // with Rust's `default_bindings()` is enforced by tests on both sides
-  // against `flutter/test/fixtures/default_keyboard_shortcuts.json`.
   String mainGetDefaultKeyboardShortcuts({dynamic hint}) {
     return jsonEncode(kDefaultShortcutBindings);
   }
@@ -1017,10 +1000,6 @@ class RustdeskImpl {
   String mainGetInputSource({dynamic hint}) {
     final inputSource =
         js.context.callMethod('getByName', ['option:local', 'input-source']);
-    // // js grab mode
-    // export const CONFIG_INPUT_SOURCE_1 = "Input source 1";
-    // // flutter grab mode
-    // export const CONFIG_INPUT_SOURCE_2 = "Input source 2";
     return inputSource != '' ? inputSource : 'Input source 1';
   }
 
@@ -1260,11 +1239,6 @@ class RustdeskImpl {
   }
 
   Future<void> mainInit({required String appDir, dynamic hint}) {
-    // JS -> Dart shortcut bridge. The matcher in flutter/web/js/src/
-    // shortcut_matcher.ts calls `window.onShortcutTriggered(actionId)` when a
-    // binding fires; route it to the active session's ShortcutModel.
-    // Web uses a JS-side connection, so the event does not arrive through the
-    // native session event stream.
     js.context['onShortcutTriggered'] = (dynamic action) {
       if (action is String) {
         ShortcutModel.onWebTriggered(action);
@@ -1275,12 +1249,10 @@ class RustdeskImpl {
   }
 
   Future<void> mainDeviceId({required String id, dynamic hint}) {
-    // TODO: ?
     throw UnimplementedError("mainDeviceId");
   }
 
   Future<void> mainDeviceName({required String name, dynamic hint}) {
-    // TODO: ?
     throw UnimplementedError("mainDeviceName");
   }
 
@@ -1554,8 +1526,6 @@ class RustdeskImpl {
         js.context.callMethod('setByName', ['query_onlines', jsonEncode(ids)]));
   }
 
-  // Dup to the function in hbb_common, lib.rs
-  // Maybe we need to move this function to js part.
   int versionToNumber({required String v, dynamic hint}) {
     return int.tryParse(
             js.context.callMethod('getByName', ['get_version_number', v])) ??
@@ -1637,9 +1607,6 @@ class RustdeskImpl {
 
   Future<void> mainAccountAuth(
       {required String op, required bool rememberMe, dynamic hint}) {
-    // Safari only allows auth popups while handling the original user gesture.
-    // Use Future.sync so the JS call runs synchronously (pre-opening the OIDC
-    // window) while any interop error still surfaces as a Future error.
     return Future.sync(() => js.context.callMethod('setByName', [
           'account_auth',
           jsonEncode({'op': op, 'remember': rememberMe})
@@ -1689,12 +1656,10 @@ class RustdeskImpl {
   }
 
   Future<void> mainTestWallpaper({required int second, dynamic hint}) {
-    // TODO: implement mainTestWallpaper
     return Future.value();
   }
 
   Future<bool> mainSupportRemoveWallpaper({dynamic hint}) {
-    // TODO: implement mainSupportRemoveWallpaper
     return Future.value(false);
   }
 
@@ -1707,27 +1672,22 @@ class RustdeskImpl {
   }
 
   bool isCustomClient({dynamic hint}) {
-    // is_custom_client() checks if app name is not "RustDesk"
-    return mainGetAppNameSync(hint: hint) != "RustDesk";
+    return mainGetAppNameSync(hint: hint) != "SupportDesk";
   }
 
   bool isDisableSettings({dynamic hint}) {
-    // Checks HARD_SETTINGS["disable-settings"] == "Y"
     return mainGetHardOption(key: "disable-settings", hint: hint) == "Y";
   }
 
   bool isDisableAb({dynamic hint}) {
-    // Checks HARD_SETTINGS["disable-ab"] == "Y"
     return mainGetHardOption(key: "disable-ab", hint: hint) == "Y";
   }
 
   bool isDisableGroupPanel({dynamic hint}) {
-    // Checks LocalConfig::get_option("disable-group-panel") == "Y"
     return mainGetLocalOption(key: "disable-group-panel", hint: hint) == "Y";
   }
 
   bool isDisableAccount({dynamic hint}) {
-    // Checks HARD_SETTINGS["disable-account"] == "Y"
     return mainGetHardOption(key: "disable-account", hint: hint) == "Y";
   }
 

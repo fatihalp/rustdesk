@@ -1,14 +1,3 @@
-// Generated from the installed cursor theme by `adwaita_hotspot_survey` (the ignored test in
-// `drm_capturer.rs`); see its doc comment for the command. adwaita-icon-theme 50.0-1, every shape
-// the theme ships as a real file, at its 24 px nominal size - the GNOME default cursor size.
-//
-// Each entry is the shape name, the hotspot the THEME declares, and the sprite's alpha mask: one
-// bit per pixel, row-major, most significant bit first, set where alpha >= 128. The mask is all
-// the hotspot guess reads, and rotating a mask is exact, so it is the whole fixture.
-//
-// The point of carrying these is that the expected value comes from the theme author, not from
-// our own heuristic: a test that compares the guess against the guess cannot say whether the
-// guess is right.
 const THEME_SHAPES: &[(&str, u32, u32, i32, i32, &str)] = &[
     ("X_cursor", 24, 24, 11, 12, "00000000000000000000000000000001830003c78007ffc007ffc007ffc003ff8001ff0001ff8003ff8007ffc007ffc003ef8003c780000000000000000000000000000000000000"),
     ("alias", 24, 24, 18, 5, "00000000000000000001ffc000ffc0007fc0003fc0007fc0007fc000ffc000ffc001fdc001f8c001f04001e00001e00001e00000e00000e000007000003000000000000000000000"),

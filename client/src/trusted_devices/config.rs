@@ -49,7 +49,6 @@ pub fn sync_config(value: Config, options: Config2) -> ResultType<()> {
     Config::set(value);
     Config2::set(options.clone());
     snapshot()?;
-    // Explicit configuration sync carries the source's grants and removals.
     options.sync_trusted_devices()
 }
 
@@ -75,7 +74,6 @@ pub async fn refresh_from_server() -> ResultType<()> {
             hbb_common::log::warn!(
                 "Host unavailable during service removal; revoking local trusted devices (re-enrollment required): {error:#}"
             );
-            // The next service import must not restore an inactive, stale grant copy.
             update(super::clear).await
         }
     }
@@ -217,7 +215,6 @@ pub(super) fn change<T>(affected: bool, apply: impl FnOnce() -> ResultType<T>) -
     let mut grants = super::Grants::default();
     grants.revoke(None)?;
     storage.write(&grants)?;
-    // Keep the credential lock until the new authentication settings are visible.
     let result = apply()?;
     grants.revoke(Some(snapshot()?.scope))?;
     storage.write(&grants)?;
@@ -242,7 +239,6 @@ pub fn changes_password(value: &str) -> bool {
         return false;
     }
     let (password, salt) = Config::get_local_permanent_password_storage_and_salt();
-    // Match the setter's no-op cases; existing local passwords are re-encrypted.
     if !password.is_empty() {
         return true;
     }

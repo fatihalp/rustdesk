@@ -17,8 +17,6 @@ use std::{
 
 const CONNECT_TIMEOUT_MS: u64 = 3000;
 
-/// Before `opened` the controller may only have used `INITIAL_WINDOW`.
-/// `charged` is the running total of `charge(len)`, not of raw lengths.
 fn pending_fits(charged: usize, add_len: usize) -> bool {
     charged.saturating_add(charge(add_len) as usize) <= INITIAL_WINDOW as usize
 }
@@ -29,14 +27,10 @@ struct Entry {
     window: Arc<Mutex<RecvWindow>>,
 }
 
-/// The controlled side of one multiplexed tunnel. The main loop owns it and
-/// forwards every `PortForwardChannel` frame here; each channel is a task.
 pub struct PortForwardMux {
     channels: HashMap<i32, Entry>,
     tx: Sender,
     login_target: String,
-    /// Raised once, by `close_all`, for the channels its `clear` cannot reach:
-    /// one parked on its target socket is not on the inbound queue.
     teardown: watch::Sender<bool>,
 }
 
@@ -50,8 +44,6 @@ impl PortForwardMux {
         }
     }
 
-    /// `tunnel_permitted` is consulted for `open` alone, so the lookup is not
-    /// made per 64 KiB of data.
     pub fn handle(&mut self, frame: PortForwardChannel, tunnel_permitted: impl FnOnce() -> bool) {
         match frame.union {
             Some(port_forward_channel::Union::Open(open)) => {
@@ -69,8 +61,6 @@ impl PortForwardMux {
                 if delivered {
                     return;
                 }
-                // Dropped here and now, so the peer cannot queue anything more
-                // for this id while the task is still on its way out.
                 let Some(entry) = self.channels.remove(&d.channel_id) else {
                     return;
                 };
@@ -123,8 +113,6 @@ impl PortForwardMux {
             ..Default::default()
         };
         let (addr, is_rdp) = Connection::normalize_port_forward_target(&mut pf);
-        // Approval and permission checks saw the login's target; a tunnel
-        // serves that one target and nothing else.
         if addr != self.login_target {
             log::warn!(
                 "port forward channel {} asked for {} on a tunnel logged in for {}",
@@ -169,19 +157,12 @@ impl PortForwardMux {
         self.channels.len()
     }
 
-    /// Every task ends and drops its target socket: the queue's senders go for
-    /// a task on the queue, `teardown` reaches one parked on the socket.
     pub fn close_all(&mut self) {
         self.channels.clear();
-        // Not `send`: with no channel live it stores nothing, and one opened
-        // as the tunnel closes would never see it.
         self.teardown.send_replace(true);
     }
 }
 
-/// Owns the whole channel lifecycle: connect under a `select!` in which a
-/// queued command always wins over the connect, buffer what arrives
-/// meanwhile, then relay.
 async fn run_controlled_channel(
     id: i32,
     addr: String,
@@ -198,9 +179,6 @@ async fn run_controlled_channel(
     tokio::pin!(connect);
     let socket = loop {
         tokio::select! {
-            // Biased with the command arm first: a `close` that is already
-            // queued must win over a connect that completed on the same poll,
-            // or `opened` would go out for a channel the controller has dropped.
             biased;
             cmd = inbound.recv() => match cmd {
                 Some(Inbound::Data(b)) => {
@@ -230,7 +208,6 @@ async fn run_controlled_channel(
             }
         }
     };
-    // Granted before `opened` leaves, so the peer can never be ahead of it.
     window.lock().unwrap().grant(CHANNEL_WINDOW - INITIAL_WINDOW);
     if sink
         .send_ordered(opened_msg(id, true, "", CHANNEL_WINDOW))
@@ -243,8 +220,6 @@ async fn run_controlled_channel(
     run_channel(id, reader, writer, Vec::new(), pending, credit, window, inbound, sink, teardown).await;
 }
 
-/// The same words the raw pipe puts in its login error, so one problem reads
-/// the same whichever path the peer takes.
 fn unreachable_message(addr: &str, is_rdp: bool) -> String {
     format!(
         "Failed to access remote {}. Please make sure it is reachable/open.",
@@ -274,7 +249,6 @@ mod tests {
             .unwrap()
     }
 
-    /// An echo server standing in for the forward target.
     async fn echo_target() -> u16 {
         let l = TcpListener::bind("127.0.0.1:0").await.unwrap();
         let port = l.local_addr().unwrap().port();
@@ -382,8 +356,6 @@ mod tests {
             let mut mux = PortForwardMux::new(tx, format!("127.0.0.1:{}", port));
             mux.handle(open(1, port), || true);
             assert_eq!(opened(&next_frame(&mut rx).await), (1, true));
-            // `enable-tunnel` is consulted per `open`, so turning it off
-            // mid-session stops new channels; the live one keeps relaying.
             mux.handle(open(2, port), || false);
             assert_eq!(opened(&next_frame(&mut rx).await), (2, false));
             mux.handle(data(1, b"still relayed"), || false);
@@ -427,8 +399,6 @@ mod tests {
             opened(&next_frame(&mut rx).await);
             let too_much = vec![0u8; CHANNEL_WINDOW as usize + 1];
             mux.handle(data(1, &too_much), || true);
-            // Gone before the channel task has run: whatever the peer keeps
-            // sending for this id can no longer queue anything.
             assert_eq!(mux.live_channels(), 0);
             mux.handle(data(1, &too_much), || true);
             assert_eq!(mux.live_channels(), 0);
@@ -449,7 +419,6 @@ mod tests {
             let mut mux = PortForwardMux::new(tx, format!("127.0.0.1:{}", a));
             mux.handle(open(1, a), || true);
             assert_eq!(opened(&next_frame(&mut rx).await), (1, true));
-            // Approval was for target a; b needs a login of its own.
             mux.handle(open(2, b), || true);
             let ch = next_frame(&mut rx).await;
             match &ch.union {
@@ -463,8 +432,6 @@ mod tests {
         });
     }
 
-    /// A target that accepts and hangs up at once, so every channel ends on
-    /// the target's EOF — the case where only the next `open` frees the entry.
     async fn drop_target() -> u16 {
         let l = TcpListener::bind("127.0.0.1:0").await.unwrap();
         let port = l.local_addr().unwrap().port();
@@ -486,8 +453,6 @@ mod tests {
             for id in 1..=(MAX_CHANNELS as i32 * 2) {
                 mux.handle(open(id, port), || true);
                 assert_eq!(opened(&next_frame(&mut rx).await), (id, true));
-                // The task sends `close` on the target's EOF and exits; the
-                // entry is dead until the next `open` drops it.
                 let ch = next_frame(&mut rx).await;
                 match &ch.union {
                     Some(port_forward_channel::Union::Close(c)) => assert_eq!(c.channel_id, id),

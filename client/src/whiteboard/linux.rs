@@ -63,7 +63,6 @@ const SHAPE_INPUT: std::ffi::c_int = 2;
 
 fn get_display_from_xwayland() -> Option<String> {
     if let Ok(output) = crate::platform::run_cmds("pgrep -a Xwayland") {
-        // 1410 /usr/bin/Xwayland :1 -auth /run/user/1000/xauth_RoDZey -listenfd 8 -listenfd 9 -displayfd 76 -wm 78 -rootless -enable-ei-portal
         if output.contains("Xwayland") {
             if let Some(display) = output.split_whitespace().nth(2) {
                 if display.starts_with(':') {
@@ -80,9 +79,6 @@ fn preset_env() -> bool {
         return true;
     }
     if let Some(display) = get_display_from_xwayland() {
-        // https://github.com/rust-windowing/winit/blob/f6893a4390dfe6118ce4b33458d458fd3efd3025/src/event_loop.rs#L99
-        // It is acceptable to modify global environment variables here because this process is an isolated,
-        // dedicated "whiteboard" process.
         std::env::set_var("DISPLAY", display);
         std::env::remove_var("WAYLAND_DISPLAY");
         return true;
@@ -133,7 +129,6 @@ pub fn run() {
 
 struct WindowState {
     window: Arc<Window>,
-    // NOTE: This surface must be dropped before the `Window`.
     surface: Surface<DisplayHandle<'static>, Arc<Window>>,
     ripples: Vec<Ripple>,
     last_cursors: HashMap<String, Cursor>,
@@ -141,9 +136,6 @@ struct WindowState {
 
 struct WhiteboardApplication {
     windows: Vec<WindowState>,
-    // Drawing context.
-    //
-    // With OpenGL it could be EGLDisplay.
     context: Option<Context<DisplayHandle<'static>>>,
     face: Option<Face<'static>>,
     close_requested: bool,
@@ -151,8 +143,6 @@ struct WhiteboardApplication {
 
 impl WhiteboardApplication {
     fn new<T>(event_loop: &EventLoop<T>) -> ResultType<Self> {
-        // https://github.com/rust-windowing/winit/blob/f6893a4390dfe6118ce4b33458d458fd3efd3025/examples/window.rs#L91
-        // SAFETY: we drop the context right before the event loop is stopped, thus making it safe.
         let context = match Context::new(unsafe {
             std::mem::transmute::<DisplayHandle<'_>, DisplayHandle<'static>>(
                 event_loop.display_handle()?,
@@ -213,7 +203,7 @@ impl ApplicationHandler<(String, CustomEvent)> for WhiteboardApplication {
         };
 
         let window_attributes = Window::default_attributes()
-            .with_title("RustDesk whiteboard")
+            .with_title("SupportDesk whiteboard")
             .with_inner_size(PhysicalSize::new(w, h))
             .with_position(PhysicalPosition::new(x, y))
             .with_decorations(false)
@@ -248,19 +238,12 @@ impl ApplicationHandler<(String, CustomEvent)> for WhiteboardApplication {
             }
         };
 
-        // Both the following block and `window.set_cursor_hittest(false)` in `draw()` are necessary to ensure cursor events are properly passed through the window.
-        // These issues may be related to winit X11 handling.
-        // https://github.com/rust-windowing/winit/issues/3509
-        // https://github.com/rust-windowing/winit/issues/4120
-        // If either block is removed, cursor events may not be passed through as expected.
-        // If you update winit, please revisit this workaround.
         match (rwh.as_raw(), display.as_raw()) {
             (RawWindowHandle::Xlib(xlib_window), RawDisplayHandle::Xlib(xlib_display)) => {
                 unsafe {
                     let xwindow = xlib_window.window;
                     if let Some(display_ptr) = xlib_display.display {
                         let xdisplay = display_ptr.as_ptr() as *mut Display;
-                        // Mouse event passthrough
                         let empty_region = XFixesCreateRegion(xdisplay, std::ptr::null_mut(), 0);
                         if empty_region == 0 {
                             log::error!("XFixesCreateRegion failed: returned null region");
@@ -286,7 +269,6 @@ impl ApplicationHandler<(String, CustomEvent)> for WhiteboardApplication {
         }
 
         let Some(ctx) = self.context.as_ref() else {
-            // unreachable
             self.close_requested = true;
             return;
         };
@@ -345,7 +327,6 @@ impl ApplicationHandler<(String, CustomEvent)> for WhiteboardApplication {
     }
 
     fn exiting(&mut self, _event_loop: &ActiveEventLoop) {
-        // We must drop the context here.
         self.context = None;
     }
 }
@@ -385,7 +366,6 @@ impl WindowState {
             let (radius, alpha) = ripple.get_radius_alpha();
 
             let mut ripple_paint = Paint::default();
-            // Note: The real color is bgra here.
             ripple_paint.set_color_rgba8(64, 64, 255, (alpha * 128.0) as u8);
             ripple_paint.anti_alias = true;
 

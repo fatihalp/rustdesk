@@ -234,13 +234,11 @@ class JobTable: Reactor.Component {
         job.confirmed = true;
         return;
       }else if (job.type == "del-dir"){
-        // TODO: include_hidden is always true
         handler.remove_dir_all(job.id, job.path, job.is_remote, true);
         job.confirmed = true;
         return;
       }
     }
-    // polling finish 
     if (is_remote) file_transfer.remote_folder_view.table.resetCurrent();
     else file_transfer.local_folder_view.table.resetCurrent();
   }
@@ -251,7 +249,6 @@ class JobTable: Reactor.Component {
       if(job.confirmed){
         continue;
       }
-      // set confirmed true, prevent other polling action
       if(job.type == "del-file" || job.type == "del-dir"){
         job.confirmed = true;
         job.err = "cancel"
@@ -288,8 +285,7 @@ class JobTable: Reactor.Component {
       if (s) s += " / ";
       res += ", " + s + getSize(0, job.total_size);
     }
-    // below has problem if some file skipped
-    var percent = job.total_size == 0 ? 100 : (100. * job.finished_size / job.total_size).toInteger(); // (100. * i / (n || 1)).toInteger();
+    var percent = job.total_size == 0 ? 100 : (100. * job.finished_size / job.total_size).toInteger();
     if (job.finished) percent = '100';
     if (percent) res += ", " + percent + "%";
     if (job.finished) {
@@ -332,7 +328,6 @@ class JobTable: Reactor.Component {
         if (!err) {
           handler.remove_dir(job.id, job.path, job.is_remote);
           refreshDir(job.is_remote);
-          // Use the job's is_remote; local variable `is_remote` is undefined in this scope.
           if (job.is_remote) file_transfer.remote_folder_view.table.resetCurrent();
           else file_transfer.local_folder_view.table.resetCurrent();
         }
@@ -386,7 +381,6 @@ class FolderView : Reactor.Component {
       }
     }
 
-    // sort predicate
     function foldersFirst(a, b) {
       if (a.type <= 3 && b.type > 3) return -1;
       if (a.type > 3 && b.type <= 3) return +1;
@@ -503,7 +497,7 @@ class FolderView : Reactor.Component {
 
     function goto(path, push) {
       if (!path) return;
-      if (this.sep() == "\\" && path.length == 2) { // windows drive
+      if (this.sep() == "\\" && path.length == 2) {
         path += "\\";
       }
       if (push) this.pushHistory();
@@ -701,7 +695,6 @@ function initializeFileTransfer()
 }
 
 handler.updateFolderFiles = function(fd) {
-  // stdout.println("update folder files: " + JSON.stringify(fd));
   fd.entries = fd.entries || [];
   if (fd.id > 0) {
     var jt = file_transfer.job_table;
@@ -752,8 +745,7 @@ handler.clearAllJobs = function() {
   file_transfer.job_table.clearAllJobs();
 }
 
-handler.addJob = function (id, path, to, file_num, show_hidden, is_remote, auto_start) { // load last job
-  // stdout.println("restore job: " + is_remote);
+handler.addJob = function (id, path, to, file_num, show_hidden, is_remote, auto_start) {
   file_transfer.job_table.addJob(id,path,to,file_num,show_hidden,is_remote,auto_start);
 }
 

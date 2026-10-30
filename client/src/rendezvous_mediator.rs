@@ -56,25 +56,11 @@ lazy_static::lazy_static! {
     static ref WEBRTC_ICE_TXS: Mutex<HashMap<String, IceRoute>> = Default::default();
     static ref ICE_DIGEST_STATE: RandomState = Default::default();
 }
-/// Remote ICE candidates buffered per session while the answerer applies them. Same depth as the
-/// controller's own buffer (`Client::MAX_PENDING_WEBRTC_ICE`), though that one evicts its oldest
-/// where a full channel here refuses the newest.
 const MAX_PENDING_REMOTE_ICE: usize = 64;
-/// Queued candidates remembered so the controller's re-send is skipped instead of taking a slot
-/// of its own. Far more than an honest peer gathers, at eight bytes each.
 const ICE_DEDUP_WINDOW: usize = 256;
-/// Answerers between an offer and an open data channel. An offer arrives before any password or
-/// accept prompt, and each one builds a peer connection that binds a socket per interface and
-/// runs ICE for up to `CONNECT_TIMEOUT`, where a forged TCP punch costs one connect. Past this
-/// many the offer is declined, and the controller carries on over punch and relay as it does
-/// for a peer without WebRTC. A guard against pathological setup concurrency, above what
-/// legitimate controllers reach at once in the seconds ICE takes; once the channel is open the
-/// connection is one like any other, and the connection layer bounds unauthenticated
-/// connections in number and in time for every transport alike.
 const MAX_WEBRTC_ANSWERERS: usize = 16;
 static WEBRTC_ANSWERERS: AtomicUsize = AtomicUsize::new(0);
 
-/// One of the `MAX_WEBRTC_ANSWERERS` slots, given back on drop.
 struct AnswererSlot;
 
 impl AnswererSlot {
@@ -94,28 +80,12 @@ impl Drop for AnswererSlot {
     }
 }
 
-/// Punches in flight: each holds a socket of its own and waits up to `CONNECT_TIMEOUT` for the
-/// peer, and neither request behind them needs authentication, anyone who knows this id can ask
-/// hbbs to have us open one. A place is given up the moment the peer's session is up, so it
-/// stands for that wait and nothing past it: the places turn over on their own, within
-/// `CONNECT_TIMEOUT` and the few seconds a punch's phases add to it, and at the limit an arrival
-/// is declined rather than an older punch cut short. Declined is the listen alone, never the
-/// reply: that carries the WebRTC answer and the v6 address as well, and those go on without a
-/// v4 punch.
-///
-/// Two pools, so that neither transport pays for the other's crowd: a connection costs a place in
-/// each, the controller's preferred request punching UDP and its TCP fallback request punching
-/// TCP, and the transports that lose the race hold theirs for the whole wait.
 struct PunchPool {
     places: AtomicUsize,
     max: usize,
 }
 
-/// UDP over v4 and v6. A request that carries a v6 address costs two, until the one the peer
-/// does not use times out.
 static UDP_PUNCHES: PunchPool = PunchPool::new(32);
-/// The TCP punch's listener, and the LAN listen a FetchLocalAddr opens, which is that listener
-/// again.
 static TCP_PUNCHES: PunchPool = PunchPool::new(32);
 
 impl PunchPool {
@@ -135,9 +105,6 @@ impl PunchPool {
             .map(|_| PunchSlot(self))
     }
 
-    /// For a request that punches over both, v4 first: at the last place it is then the v6
-    /// punch that goes without, whatever order the two listens start in - v4 is the one the
-    /// peer can count on, v6 the one it may have no route for.
     fn take_pair(&'static self, v4: bool, v6: bool) -> (Option<PunchSlot>, Option<PunchSlot>) {
         let v4 = v4.then(|| self.take()).flatten();
         let v6 = v6.then(|| self.take()).flatten();
@@ -145,7 +112,6 @@ impl PunchPool {
     }
 }
 
-/// One of a pool's places, given back on drop.
 pub(crate) struct PunchSlot(&'static PunchPool);
 
 impl Drop for PunchSlot {
@@ -153,12 +119,7 @@ impl Drop for PunchSlot {
         self.0.places.fetch_sub(1, Ordering::AcqRel);
     }
 }
-// The rendezvous ICE route is reachable without a prior punch and the peer decides how many
-// candidates it sends, so these sites would let someone else set how much this machine writes to
-// its log file. One line a minute each, carrying the suppressed count.
 const ICE_LOG_INTERVAL: std::time::Duration = std::time::Duration::from_secs(60);
-/// A declined punch is one line a minute, carrying the number it stands for, for the same
-/// reason: the peer decides how often it asks.
 const PUNCH_LOG_INTERVAL: std::time::Duration = std::time::Duration::from_secs(60);
 static UNKNOWN_ICE_SESSION_LOG: hbb_common::log_throttle::LogThrottle =
     hbb_common::log_throttle::LogThrottle::new(ICE_LOG_INTERVAL);
@@ -180,21 +141,15 @@ impl IceRoute {
         }
     }
 
-    /// Keeps `queue` the only way onto the channel, so nothing reaches it unrecorded.
     fn is_same_channel(&self, other: &mpsc::Sender<String>) -> bool {
         self.tx.same_channel(other)
     }
 
-    /// Skip the controller's re-send of a candidate already queued: the ICE agent that dedups
-    /// repeats is downstream of this queue, so the copy would spend a slot of its own.
-    /// False means the candidate was dropped.
     fn queue(&mut self, candidate: String) -> bool {
         let digest = ICE_DIGEST_STATE.hash_one(candidate.as_str());
         if self.recent.contains(&digest) {
-            // Only honest about the drop if the route is still alive to have taken it.
             return !self.tx.is_closed();
         }
-        // Recorded once queued, never before: a refused candidate stays repairable by the re-send.
         if self.tx.try_send(candidate).is_err() {
             return false;
         }
@@ -212,19 +167,11 @@ static SENT_REGISTER_PK: AtomicBool = AtomicBool::new(false);
 pub(crate) static NEEDS_DEPLOY: AtomicBool = AtomicBool::new(false);
 #[cfg(target_os = "android")]
 static NOTIFIED_NEEDS_DEPLOY: AtomicBool = AtomicBool::new(false);
-// register_pk retry interval (ms) when device is awaiting deployment
 const DEPLOY_RETRY_INTERVAL: i64 = 30_000;
 lazy_static::lazy_static! {
     static ref LAST_NOT_DEPLOYED_REGISTER: Mutex<Option<Instant>> = Mutex::new(None);
 }
 
-// Single source of truth for the "awaiting deployment" backoff. The server has
-// already told us this device is not in its db; until the operator runs
-// `rustdesk --deploy --token <api_token>` there is no point re-running the
-// register path more often than DEPLOY_RETRY_INTERVAL. Gating in the timer
-// loops (rather than only inside register_pk) also avoids the
-// last_register_sent / fails / latency / UDP-rebind churn the loop would
-// otherwise spin on while no response ever comes back.
 async fn deploy_register_throttled() -> bool {
     if !NEEDS_DEPLOY.load(Ordering::SeqCst) {
         return false;
@@ -320,16 +267,11 @@ impl RendezvousMediator {
                     futs.push(tokio::spawn(async move {
                         if let Err(err) = Self::start(server, host).await {
                             let err = format!("rendezvous mediator error: {err}");
-                            // When user reboot, there might be below error, waiting too long
-                            // (CONNECT_TIMEOUT 18s) will make user think there is bug
                             if err.contains("10054") || err.contains("11001") {
-                                // No such host is known. (os error 11001)
-                                // An existing connection was forcibly closed by the remote host. (os error 10054): also happens for UDP
                                 *timeout.write().unwrap() = 3000;
                             }
                             log::error!("{err}");
                         }
-                        // SHOULD_EXIT here is to ensure once one exits, the others also exit.
                         SHOULD_EXIT.store(true, Ordering::SeqCst);
                     }));
                 }
@@ -345,7 +287,6 @@ impl RendezvousMediator {
                     sleep(((timeout - elapsed) / 1000) as _).await;
                 }
             } else {
-                // https://github.com/rustdesk/rustdesk/issues/12233
                 sleep(0.033).await;
             }
         }
@@ -375,7 +316,7 @@ impl RendezvousMediator {
             keep_alive: crate::DEFAULT_KEEP_ALIVE,
         };
 
-        let mut timer = crate::rustdesk_interval(interval(crate::TIMER_OUT));
+        let mut timer = crate::supportdesk_interval(interval(crate::TIMER_OUT));
         const MIN_REG_TIMEOUT: i64 = 3_000;
         const MAX_REG_TIMEOUT: i64 = 30_000;
         let mut reg_timeout = MIN_REG_TIMEOUT;
@@ -426,7 +367,7 @@ impl RendezvousMediator {
                                 log::debug!("Non-protobuf message bytes received: {:?}", bytes);
                             }
                         },
-                        Some(Err(e)) => bail!("Failed to receive next: {}", e),  // maybe socks5 tcp disconnected
+                        Some(Err(e)) => bail!("Failed to receive next: {}", e),
                         None => {
                             bail!("Socket receive none. Maybe socks5 server is down.");
                         },
@@ -436,20 +377,14 @@ impl RendezvousMediator {
                     if SHOULD_EXIT.load(Ordering::SeqCst) {
                         break;
                     }
-                    // The server already told us this device is not deployed. Skip
-                    // the whole register / fails / latency / UDP-rebind path until
-                    // DEPLOY_RETRY_INTERVAL elapses, otherwise the loop spins every
-                    // few seconds (log spam + misapplied network-recovery rebind)
-                    // until the operator runs `rustdesk --deploy`.
                     if deploy_register_throttled().await {
                         continue;
                     }
                     let now = Some(Instant::now());
                     let expired = last_register_resp.map(|x| x.elapsed().as_millis() as i64 >= REG_INTERVAL).unwrap_or(true);
                     let timeout = last_register_sent.map(|x| x.elapsed().as_millis() as i64 >= reg_timeout).unwrap_or(false);
-                    // temporarily disable exponential backoff for android before we add wakeup trigger to force connect in android
                     #[cfg(not(any(target_os = "android", target_os = "ios")))]
-                    if crate::using_public_server() { // only turn on this for public server, may help DDNS self-hosting user.
+                    if crate::using_public_server() {
                         if timeout && reg_timeout < MAX_REG_TIMEOUT {
                             reg_timeout += MIN_REG_TIMEOUT;
                         }
@@ -461,8 +396,6 @@ impl RendezvousMediator {
                                 Config::update_latency(&host, -1);
                                 old_latency = 0;
                                 if last_dns_check.elapsed().as_millis() as i64 > DNS_INTERVAL {
-                                    // in some case of network reconnect (dial IP network),
-                                    // old UDP socket not work any more after network recover
                                     if let Some((s, new_addr)) = socket_client::rebind_udp_for(&rz.host).await? {
                                         socket = s;
                                         rz.addr = new_addr.clone();
@@ -516,12 +449,9 @@ impl RendezvousMediator {
                     }
                     Ok(register_pk_response::Result::NOT_DEPLOYED) => {
                         if !NEEDS_DEPLOY.load(Ordering::SeqCst) {
-                            log::warn!("Server requires deployment. Run `rustdesk --deploy --token <api_token>` on this device.");
+                            log::warn!("Server requires deployment. Run `supportdesk --deploy --token <api_token>` on this device.");
                         }
                         NEEDS_DEPLOY.store(true, Ordering::SeqCst);
-                        // Clear key_confirmed so the UI reflects the truth: this device is
-                        // not currently registered. Covers the case where an online device
-                        // was deleted by an admin while running.
                         Config::set_key_confirmed(false);
                         Config::set_host_key_confirmed(&self.host_prefix, false);
                         #[cfg(target_os = "android")]
@@ -598,10 +528,9 @@ impl RendezvousMediator {
             host_prefix: Self::get_host_prefix(&host),
             keep_alive: crate::DEFAULT_KEEP_ALIVE,
         };
-        let mut timer = crate::rustdesk_interval(interval(crate::TIMER_OUT));
+        let mut timer = crate::supportdesk_interval(interval(crate::TIMER_OUT));
         let mut last_register_sent: Option<Instant> = None;
         let mut last_recv_msg = Instant::now();
-        // we won't support connecting to multiple rendzvous servers any more, so we can use a global variable here.
         Config::set_host_key_confirmed(&rz.host_prefix, false);
         loop {
             let mut update_latency = || {
@@ -616,10 +545,8 @@ impl RendezvousMediator {
                     last_recv_msg = Instant::now();
                     let bytes = res.ok_or_else(|| anyhow::anyhow!("Rendezvous connection is reset by the peer"))??;
                     if bytes.is_empty() {
-                        // After fixing frequent register_pk, for websocket, nginx need to set proxy_read_timeout to more than 60 seconds, eg: 120s
-                        // https://serverfault.com/questions/1060525/why-is-my-websocket-connection-gets-closed-in-60-seconds
                         conn.send_bytes(bytes::Bytes::new()).await?;
-                        continue; // heartbeat
+                        continue;
                     }
                     let msg = Message::parse_from_bytes(&bytes)?;
                     rz.handle_resp(msg.union, Sink::Stream(&mut conn), &server, &mut update_latency).await?
@@ -628,7 +555,6 @@ impl RendezvousMediator {
                     if SHOULD_EXIT.load(Ordering::SeqCst) {
                         break;
                     }
-                    // https://www.emqx.com/en/blog/mqtt-keep-alive
                     if last_recv_msg.elapsed().as_millis() as u64 > rz.keep_alive as u64 * 3 / 2 {
                         bail!("Rendezvous connection is timeout");
                     }
@@ -646,7 +572,6 @@ impl RendezvousMediator {
 
     pub async fn start(server: ServerPtr, host: String) -> ResultType<()> {
         log::info!("start rendezvous mediator of {}", host);
-        //If the investment agent type is http or https, then tcp forwarding is enabled.
         if (cfg!(debug_assertions) && option_env!("TEST_TCP").is_some())
             || Config::is_proxy()
             || use_ws()
@@ -662,7 +587,6 @@ impl RendezvousMediator {
         let addr = AddrMangle::decode(&rr.socket_addr);
         let last = *LAST_RELAY_MSG.lock().await;
         *LAST_RELAY_MSG.lock().await = (addr, Instant::now());
-        // skip duplicate relay request messages
         if last.0 == addr && last.1.elapsed().as_millis() < 100 {
             return Ok(());
         }
@@ -707,11 +631,6 @@ impl RendezvousMediator {
         );
 
         let mut socket = connect_tcp(&*self.host, CONNECT_TIMEOUT).await?;
-        // A relay response carrying an answer carries this machine's ICE candidates with it, so
-        // that half goes out only on an encrypted channel. A server that does not complete the
-        // exchange loses the answer, not the relay: the response goes without it, on a fresh
-        // socket since the failed exchange may have consumed a message on this one, and the
-        // controller falls back to its other transports.
         let mut webrtc_sdp_answer = webrtc_sdp_answer;
         if !webrtc_sdp_answer.is_empty() {
             let key = crate::get_key(true).await;
@@ -754,7 +673,6 @@ impl RendezvousMediator {
         let addr = AddrMangle::decode(&fla.socket_addr);
         let last = *LAST_MSG.lock().await;
         *LAST_MSG.lock().await = (addr, Instant::now());
-        // skip duplicate punch hole messages
         if last.0 == addr && last.1.elapsed().as_millis() < 100 {
             return Ok(());
         }
@@ -817,8 +735,6 @@ impl RendezvousMediator {
     ) -> ResultType<()> {
         let peer_addr = AddrMangle::decode(&fla.socket_addr);
         log::debug!("Handle intranet from {:?}", peer_addr);
-        // The listen this opens waits for the peer like a TCP punch and is declined like one; the
-        // caller then relays, as it does when the listen fails for any other reason.
         let Some(slot) = TCP_PUNCHES.take() else {
             hbb_common::throttled_log!(
                 PUNCH_LOG_INTERVAL,
@@ -830,7 +746,6 @@ impl RendezvousMediator {
         };
         let mut socket = connect_tcp(&*self.host, CONNECT_TIMEOUT).await?;
         let local_addr = socket.local_addr();
-        // we saw invalid local_addr while using proxy, local_addr.ip() == "::1"
         let local_addr: SocketAddr =
             format!("{}:{}", local_addr.ip(), local_addr.port()).parse()?;
         let mut msg_out = Message::new();
@@ -849,12 +764,6 @@ impl RendezvousMediator {
         Ok(())
     }
 
-    /// Build the WebRTC answerer for a punch-hole offer and return the SDP answer that rides in
-    /// the punch reply (PunchHoleSent / RelayResponse).
-    ///
-    /// Awaited inline on the punch-reply path, which only holds because everything here is local
-    /// (pc + keygen + SDP; trickle means the answer carries no candidates). Keep network I/O out
-    /// — connection setup belongs in the detached task below.
     async fn spawn_webrtc_answerer(
         &self,
         ph: &PunchHole,
@@ -878,21 +787,10 @@ impl RendezvousMediator {
         let session_key = stream.session_key().to_owned();
         let return_route = ph.socket_addr.clone();
 
-        // A duplicate PunchHole (the offerer re-sends the same request across punch attempts)
-        // resolves to the SESSIONS-cached stream. `take_local_ice_rx` yields the receiver
-        // exactly once per stream instance, so `None` here means an answerer was already
-        // spawned for this offer: return the (identical) cached answer without spawning a
-        // second connect task. Otherwise two `create_tcp_connection` tasks would detach and
-        // read the same data channel, interleaving the handshake and corrupting the session.
         let Some(mut local_ice_rx) = stream.take_local_ice_rx() else {
             return Ok(answer);
         };
 
-        // Bounded: how many candidates arrive is the sender's choice, while draining one costs a
-        // JSON parse and the ICE agent's lock, so an unbounded queue lets whoever can reach this
-        // session's route grow it without limit inside a long-lived service process. A full queue
-        // drops the newest candidate, and the controller re-sends it once — the digests beside the
-        // sender are what keep that re-send from spending a slot of its own.
         let (remote_ice_tx, mut remote_ice_rx) = mpsc::channel::<String>(MAX_PENDING_REMOTE_ICE);
         let own_ice_tx = remote_ice_tx.clone();
         WEBRTC_ICE_TXS
@@ -921,13 +819,6 @@ impl RendezvousMediator {
             let socket_addr = return_route.clone();
             let session_key_for_ice = session_key.clone();
             tokio::spawn(async move {
-                // Candidates ride a dedicated TCP connection to the rendezvous server, like
-                // the answer, NOT the mediator channel: that channel is UDP in the default
-                // setup, and target deployments front hbbs with websocket/TCP only, where
-                // its UDP port is unreachable. The server keeps candidate-carrying TCP
-                // connections open, so one lazily-opened connection serves the whole
-                // trickle, and TCP reliability replaces the old 400ms duplicate re-send
-                // (the controller keeps its own re-send for the server->peer UDP downlink).
                 let mut conn = None;
                 let key = crate::get_key(true).await;
                 while let Some(candidate) = local_ice_rx.recv().await {
@@ -938,15 +829,10 @@ impl RendezvousMediator {
                         candidate,
                         ..Default::default()
                     });
-                    // One reconnect attempt per candidate: the first send after an hbbs
-                    // restart or an idle-killed connection fails on the stale stream.
                     for _ in 0..2 {
                         if conn.is_none() {
                             match connect_tcp(&*host, CONNECT_TIMEOUT).await {
                                 Ok(mut s) => {
-                                    // Candidates are every interface address of this machine:
-                                    // sent only on a channel that is actually encrypted, else
-                                    // this WebRTC attempt goes without them.
                                     if let Err(err) = crate::secure_tcp_required(&mut s, &key).await
                                     {
                                         log::warn!(
@@ -986,10 +872,6 @@ impl RendezvousMediator {
         let session_key_for_cleanup = session_key.clone();
         tokio::spawn(async move {
             let result = stream.wait_connected(CONNECT_TIMEOUT).await;
-            // Only evict our own route. The key is the offer's DTLS fingerprint, identical across
-            // the controller's punch retries, so a retry that built a fresh answerer has already
-            // replaced this entry — removing it blindly would delete the live session's sender and
-            // leave it receiving no candidates at all.
             {
                 let mut txs = WEBRTC_ICE_TXS.lock().await;
                 if txs
@@ -1001,26 +883,10 @@ impl RendezvousMediator {
             }
             if let Err(err) = result {
                 log::warn!("webrtc wait_connected failed: {}", err);
-                // Release the pc now rather than waiting for the ICE agent to time out into a
-                // terminal state (~30s); this also drops the SESSIONS entry promptly. The slot
-                // goes with it and comes back when the teardown has finished, not when this task
-                // gives up on the offer: what it stands for is a peer connection built for an
-                // unauthenticated offer, and one that will not die still costs what it costs.
-                // `pc.close()` has no timeout of its own, so were the slot freed here a teardown
-                // that never finished would leave the pcs to pile up unbounded, with the count
-                // reading zero. Detached, the wait is on WEBRTC_RT, which owns the pc, and not on
-                // this task.
                 stream.close_detached_with(slot);
                 return;
             }
-            // The channel is open: from here the session is a connection like any other, and the
-            // connection layer's own limits apply to it.
             drop(slot);
-            // create_tcp_connection takes ownership of the stream; keep a handle to close the pc
-            // once the session returns. It runs the whole session and returns Ok on normal end,
-            // Err on setup failure — either way the pc must be closed, else it lingers forever in
-            // SESSIONS (its state handler only fires on a terminal ICE state, which a cleanly
-            // closed session may never reach) leaking the pc, channels, and socket fds.
             let stream_for_cleanup = stream.clone();
             if let Err(err) = crate::server::create_tcp_connection(
                 server,
@@ -1043,7 +909,6 @@ impl RendezvousMediator {
         let mut peer_addr = AddrMangle::decode(&ph.socket_addr);
         let last = *LAST_MSG.lock().await;
         *LAST_MSG.lock().await = (peer_addr, Instant::now());
-        // skip duplicate punch hole messages
         if last.0 == peer_addr && last.1.elapsed().as_millis() < 100 {
             return Ok(());
         }
@@ -1055,15 +920,8 @@ impl RendezvousMediator {
             ph.control_permissions.clone().into_option(),
             ph.controlled_context.clone().into_option(),
         );
-        // The controller's force_relay alone does not say whether ICE must be Relay-only; its
-        // offer envelope does. `ice_policy: "all"` means the relay was forced by the transport
-        // (ws), so answer with full ICE and let a direct pair form.
         let webrtc_relay_only =
             ph.force_relay && !WebRTCStream::endpoint_declares_all_ice(&ph.webrtc_sdp_offer);
-        // No enable-webrtc check here: it is LocalConfig, which the UI process writes and never
-        // syncs over IPC, so this (server) process would read the private-server default of "N"
-        // and refuse to answer in exactly the self-hosted deployments the transport is for.
-        // A proxy still rules it out — ICE would bypass it and leak the real IP.
         let webrtc_viable = !ph.webrtc_sdp_offer.is_empty()
             && !Config::is_proxy()
             && (!webrtc_relay_only || WebRTCStream::has_turn_server());
@@ -1083,11 +941,6 @@ impl RendezvousMediator {
         } else {
             String::new()
         };
-        // Whether the v4 legs relay is known here, and decides whether a v4 place is taken at
-        // all: the relay branch below runs the whole session, and a place held across it would
-        // let ordinary relay traffic use the pool up. The v6 punch is not relayed with them - a
-        // symmetric NAT on v4 says nothing about v6 - and its place is taken after the v4 one,
-        // or it could be the last and leave the punch the peer counts on with none.
         let relay_v4 = ph.nat_type.enum_value() == Ok(NatType::SYMMETRIC)
             || Config::get_nat_type() == NatType::SYMMETRIC as i32
             || relay
@@ -1108,12 +961,6 @@ impl RendezvousMediator {
             .await;
         }
         let relay_server = self.get_relay_server(ph.relay_server);
-        // for ensure, websocket go relay directly
-        // A symmetric NAT relays the legacy transports but deliberately not WebRTC: the answer
-        // built above rides along on the relay request, and ICE probes the candidate pairs rather
-        // than trusting this classification, so a direct WebRTC pair can still form on a
-        // connection this branch has already called relay-only. Do not gate the answerer on
-        // nat_type to make the two agree.
         if relay_v4 {
             let uuid = Uuid::new_v4().to_string();
             return self
@@ -1149,15 +996,9 @@ impl RendezvousMediator {
             return Ok(());
         }
         if !ph.webrtc_sdp_offer.is_empty() {
-            // Return the answer over its own short-lived TCP connection rather than the mediator
-            // channel: that channel is UDP by default, and hbbs applies UDP-punch semantics
-            // (source-address observation) to a PunchHoleSent that arrives on it. No TCP punch
-            // is made — the controller keeps its request socket for trickled ICE.
             let mut msg_out = Message::new();
             msg_out.set_punch_hole_sent(msg_punch);
             let mut socket = connect_tcp(&*self.host, CONNECT_TIMEOUT).await?;
-            // The answer goes out only on a channel that is actually encrypted; otherwise this
-            // WebRTC attempt is abandoned and the controller falls back to its other transports.
             crate::secure_tcp_required(&mut socket, &crate::get_key(true).await).await?;
             socket.send(&msg_out).await?;
             return Ok(());
@@ -1166,10 +1007,6 @@ impl RendezvousMediator {
         let mut socket = {
             let socket = connect_tcp(&*self.host, CONNECT_TIMEOUT).await?;
             let local_addr = socket.local_addr();
-            // key important here for punch hole to tell my gateway incoming peer is safe.
-            // Awaited rather than spawned so the mapping exists before `PunchHoleSent` goes out;
-            // `local_addr` itself is shared, not exclusive - every socket here binds it with the
-            // reuse flags `new_socket` sets.
             allow_err!(socket_client::connect_tcp_local(peer_addr, Some(local_addr), 30).await);
             socket
         };
@@ -1178,10 +1015,7 @@ impl RendezvousMediator {
         let bytes = msg_out.write_to_bytes()?;
         socket.send_raw(bytes).await?;
         let local_addr = socket.local_addr();
-        // The listener inside takes this address over, so the mediator's socket goes first.
         drop(socket);
-        // The reply went out above: declined is the listen alone, so the controller's TCP attempt
-        // meets nothing and its v6 one goes on.
         let Some(slot) = slot_tcp else {
             hbb_common::throttled_log!(
                 PUNCH_LOG_INTERVAL,
@@ -1208,10 +1042,6 @@ impl RendezvousMediator {
         let (socket, addr) = new_direct_udp_for(&self.host).await?;
         let data = msg_out.write_to_bytes()?;
         socket.send_to(&data, addr).await?;
-        // The reply is out, and with it the answer and the v6 address: declined is the listen
-        // alone, and the socket goes at once - a declined request is not worth one kept for its
-        // resends, and the controller re-asks on its own. Its v4 attempt at a mapping that no
-        // longer answers fails on its own while its other transports go on.
         let Some(slot) = slot else {
             hbb_common::throttled_log!(
                 PUNCH_LOG_INTERVAL,
@@ -1242,10 +1072,6 @@ impl RendezvousMediator {
     }
 
     async fn register_pk(&mut self, socket: Sink<'_>) -> ResultType<()> {
-        // Throttle register_pk when the device is awaiting deployment: server
-        // already told us we're not in its db; sending more often than every
-        // DEPLOY_RETRY_INTERVAL ms is wasted traffic until the operator runs
-        // `rustdesk --deploy --token <api_token>`.
         if NEEDS_DEPLOY.load(Ordering::SeqCst) {
             let mut last = LAST_NOT_DEPLOYED_REGISTER.lock().await;
             if let Some(t) = *last {
@@ -1359,7 +1185,6 @@ async fn direct_server(server: ServerPtr) {
                     );
                 }
                 Err(err) => {
-                    // to-do: pass to ui
                     log::error!(
                         "Failed to start direct server on port: {}, error: {}",
                         port,
@@ -1394,7 +1219,7 @@ async fn direct_server(server: ServerPtr) {
                             hbb_common::Stream::from(stream, local_addr),
                             addr,
                             false,
-                            ConnectionMeta::default(), // Direct connections don't have server-side user context.
+                            ConnectionMeta::default(),
                         )
                         .await
                     );
@@ -1429,8 +1254,6 @@ async fn start_ipv6(
     meta: ConnectionMeta,
     slot: Option<PunchSlot>,
 ) -> bytes::Bytes {
-    // Declining leaves the v4 path to carry the connection, as it already does wherever this
-    // machine has no public IPv6 address.
     let Some(slot) = slot else {
         hbb_common::throttled_log!(
             PUNCH_LOG_INTERVAL,
@@ -1480,8 +1303,6 @@ async fn udp_nat_listen(
             init_packet,
         )
         .await?;
-        // The KCP session is up: from here it is a connection like any other and the connection
-        // layer's own limits apply to it, so the place goes back for the next punch.
         drop(slot);
         crate::server::create_tcp_connection(server, stream.1, peer_addr_v4, true, meta).await?;
         Ok(())
@@ -1496,39 +1317,11 @@ async fn udp_nat_listen(
     Ok(())
 }
 
-/// Where the repeats start, and the factor they slow by. The controller's SYN arrives once, at an
-/// instant we are never told, inside a window we are not told either: `Client::connect` sizes its
-/// dial only after our PunchHoleSent, from its own rendezvous time and the direct failures it has
-/// recorded for us - `CONNECT_TIMEOUT` between two known-asymmetric NATs that never failed, as
-/// little as a second once one has. So the repeats cover our own ceiling instead, `CONNECT_TIMEOUT`,
-/// which is as long as the accept below has always been willing to take a connection, and back
-/// off across it: dense at the start, where every window begins and the short ones end, sparse
-/// afterwards, which is `punch_udp`'s shape for the same reason.
 const PUNCH_INTERVAL: f32 = 0.15;
 const PUNCH_BACKOFF: f32 = 1.5;
 const PUNCH_MAX_INTERVAL: f32 = 2.0;
-/// How long a punch in flight may run past the deadline, and the only timer it runs on. A punch
-/// is cancel-safe while it is still in SYN_SENT and not once the controller's SYN has crossed it:
-/// the socket is then half way through a handshake, and dropping it there cuts the connection the
-/// controller is opening - which its `connect` has already returned, so that attempt fails
-/// outright rather than falling back to relay. A timer cannot tell the two states apart, so no
-/// punch is cut on a schedule of its own, and none needs to be. A gateway that answers with RST
-/// fails the connect at once, and the loop punches again. One that drops the SYN in silence
-/// leaves the socket in SYN_SENT, where it holds the mapping open and the kernel re-sends the
-/// SYN, and any SYN of the controller's that arrives crosses it - a second punch has nothing to
-/// add. That leaves the deadline, and this much past it lets a crossing begun just before it
-/// complete; Windows gives a SYN up at about 21s anyway.
 const PUNCH_GRACE: u64 = 3000;
 
-/// The punch above leaves before hbbs has told the controller where to dial, so it is never in
-/// flight at the same time as the controller's SYN: it opens our NAT, meets nothing, and a gateway
-/// that answers it with RST takes the mapping down with it - leaving the listener below waiting on
-/// a hole that no longer exists. Punching again across the window in which the controller dials
-/// rebuilds it, and once the controller sits in SYN_SENT one of those punches meets its SYN and
-/// completes as a simultaneous open: a second way in, which a single punch never had.
-///
-/// `slot` is this punch's place among `TCP_PUNCHES`, given back the moment a connection is in
-/// hand and before the session runs on it: from there the connection layer's own limits apply.
 async fn punch_tcp_until_connected(
     server: ServerPtr,
     peer_addr: SocketAddr,
@@ -1537,12 +1330,8 @@ async fn punch_tcp_until_connected(
     slot: PunchSlot,
 ) {
     use hbb_common::tcp::new_listener;
-    // Shadows the module's `std::time::Instant`: the deadline is held against tokio's sleeps and
-    // timeouts, so it runs on their clock.
     use hbb_common::tokio::time::Instant;
 
-    // Not fatal on its own - the punch below can still meet the controller's SYN without it, and
-    // that half is the one a listener the OS refused to bind could not have covered anyway.
     let listener = match new_listener(local_addr, true).await {
         Ok(listener) => {
             log::info!("Server listening on: {local_addr}");
@@ -1553,8 +1342,6 @@ async fn punch_tcp_until_connected(
             None
         }
     };
-    // Bounds both halves: the punch keeps the mapping open only while the accept is still
-    // willing to take a connection through it.
     let until = Instant::now() + Duration::from_millis(CONNECT_TIMEOUT);
     let punch = punch_until(until, peer_addr, |ms| {
         socket_client::connect_tcp_local(peer_addr, Some(local_addr), ms)
@@ -1566,8 +1353,6 @@ async fn punch_tcp_until_connected(
         }
         return;
     };
-    // Accepting in a loop, not once: a transient `accept` error must not spend the whole window
-    // the controller still has to arrive in.
     let accept = async {
         loop {
             let left = until.saturating_duration_since(Instant::now()).as_millis() as u64;
@@ -1575,14 +1360,9 @@ async fn punch_tcp_until_connected(
                 break;
             }
             match hbb_common::timeout(left, listener.accept()).await {
-                // Not filtered by address, as `accept_connection` never did: hbbs saw the
-                // controller through one mapping and a NAT that pools its external addresses may
-                // dial us from another, and what keeps `meta`'s control permissions from a second
-                // peer is the handshake, plus that exactly one connection is ever served.
                 Ok(Ok(accepted)) => return Some(accepted),
                 Ok(Err(err)) => {
                     log::warn!("Failed to accept from {peer_addr}: {err}");
-                    // One that persists - EMFILE, say - would otherwise spin here for the window.
                     sleep(1.).await;
                 }
                 Err(_) => break,
@@ -1591,18 +1371,7 @@ async fn punch_tcp_until_connected(
         log::info!("Nothing connected to the hole punched to {peer_addr}");
         None
     };
-    // Only the accept races the punch. Racing `accept_connection` instead would race the whole
-    // session it goes on to run, so a punch landing mid-session would tear that session down.
-    //
-    // Whichever arrives first is the one connection this request produces. Serving the loser too
-    // would give a second peer the control permissions hbbs granted for this one controller, and
-    // no test on the connection itself can tell the two apart before `create_tcp_connection` has
-    // spoken to it - so the invariant is kept here, by there being no second serve.
     let punched = select! {
-        // Both ready at once is two connections, not one seen twice - a crossing carries the
-        // punch's four-tuple, which the listener never matches - and the punch is the one kept:
-        // it is known to have met something at the address hbbs gave, where the accept takes
-        // any address, and dropping it would reset the connection the controller is opening.
         biased;
         Some(stream) = punch => stream,
         Some((stream, addr)) = accept => {
@@ -1615,8 +1384,6 @@ async fn punch_tcp_until_connected(
     serve_punched(server, punched, peer_addr, meta).await;
 }
 
-/// The repeats of `punch_tcp_until_connected`, over any punch rather than `connect_tcp_local`
-/// alone.
 async fn punch_until<T, F, Fut>(
     until: tokio::time::Instant,
     peer_addr: SocketAddr,
@@ -1631,26 +1398,16 @@ where
     let mut interval = PUNCH_INTERVAL;
     let mut round = 0;
     loop {
-        // The deadline decides whether another punch starts, never how long one already in
-        // flight may take: that one runs to PUNCH_GRACE past it.
         let left = until.saturating_duration_since(Instant::now());
         if left.is_zero() {
             log::debug!("None of {round} punches to {peer_addr} was met");
             return None;
         }
-        // Cut at the deadline rather than slept out past it, so the window ends on a punch and
-        // not on a gap of up to PUNCH_MAX_INTERVAL: the controller's window opened after ours,
-        // on the PunchHoleSent hbbs relayed, so one as long as ours is still open through our tail.
         tokio::time::sleep(Duration::from_secs_f32(interval).min(left)).await;
         interval = (interval * PUNCH_BACKOFF).min(PUNCH_MAX_INTERVAL);
         let ms = until.saturating_duration_since(Instant::now()).as_millis() as u64 + PUNCH_GRACE;
         match punch(ms).await {
-            // The controller's SYN crossed this punch, so the stream is the connection it
-            // dialed, not a spare one: dropping it would reset that connection.
             Ok(stream) => return Some(stream),
-            // Not logged one by one, but the count says which gateway it was: RST fails a
-            // punch at once and fits a dozen into the window, a silent drop holds the one
-            // punch for the whole of it. `connect_tcp_local` keeps no errno anyway.
             Err(_) => round += 1,
         }
     }
@@ -1670,7 +1427,6 @@ async fn serve_punched(
     }
 }
 
-/// The accept half of `accept_connection`, kept here because only the accept may race the punch.
 async fn accept_punched_connection(
     server: ServerPtr,
     stream: tokio::net::TcpStream,
@@ -1691,12 +1447,6 @@ async fn accept_punched_connection(
     }
 }
 
-// When config is not yet synced from root, register_pk may have already been sent with a new generated pk.
-// After config sync completes, the pk may change. This struct detects pk changes and triggers
-// a re-registration by setting key_confirmed to false.
-// NOTE:
-// This only corrects PK registration for the current ID. If root uses a non-default mac-generated ID,
-// this does not resolve the multi-ID issue by itself.
 pub struct CheckIfResendPk {
     pk: Option<Vec<u8>>,
 }
@@ -1724,9 +1474,6 @@ mod tests {
     };
     use hbb_common::protobuf::Message as _;
 
-    // The places are the bound and they come back on drop: a punch past the limit is declined
-    // while the ones in flight are left alone, and the next one in is admitted only once a
-    // place has actually been given back.
     #[test]
     fn test_punch_slots_cap_and_release() {
         for pool in [&UDP_PUNCHES, &TCP_PUNCHES] {
@@ -1739,9 +1486,6 @@ mod tests {
         }
     }
 
-    // Declined is the listen, never the reply: with no place the PunchHoleSent still goes out,
-    // carrying the answer and the v6 address the controller's other transports run on, and the
-    // call returns at once - a listen would have waited for the peer's probe and failed without.
     #[tokio::test]
     async fn a_declined_udp_punch_still_replies() {
         let hbbs = tokio::net::UdpSocket::bind("127.0.0.1:0").await.unwrap();
@@ -1784,8 +1528,6 @@ mod tests {
 
     #[test]
     fn the_re_sent_copy_does_not_spend_a_queue_slot() {
-        // Two slots, three sends: without the dedup the re-send takes the second and "relay",
-        // the one that traverses NAT, is the one refused.
         let (tx, mut rx) = mpsc::channel::<String>(2);
         let mut route = IceRoute::new(tx);
         for _ in 0..2 {

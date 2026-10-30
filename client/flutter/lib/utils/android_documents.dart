@@ -6,16 +6,16 @@ import 'package:flutter/services.dart';
 import '../common.dart';
 
 class AndroidDocuments {
-  static const root = '/@rustdesk/';
+  static const root = '/@supportdesk/';
 
   static bool isPath(String path) => path.startsWith(root);
 
   static bool isRoot(String path) =>
-      RegExp(r'^/@rustdesk/tree/[^/]+/[^/]+$').hasMatch(path);
+      RegExp(r'^/@supportdesk/tree/[^/]+/[^/]+$').hasMatch(path);
 
   static String displayPath(String path) {
     if (!isPath(path)) return path;
-    return path.replaceFirst(RegExp(r'^/@rustdesk/tree/[^/]+/'), '');
+    return path.replaceFirst(RegExp(r'^/@supportdesk/tree/[^/]+/'), '');
   }
 
   static Future<Map<String, dynamic>?> selectFolder({bool share = false}) async {

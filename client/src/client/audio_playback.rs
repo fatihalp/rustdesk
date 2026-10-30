@@ -107,7 +107,6 @@ impl AudioPlaybackWriter {
         let mut buffer = match self.audio_buffer.try_lock() {
             Ok(buffer) => buffer,
             Err(TryLockError::WouldBlock) => {
-                // Keep queued PCM and its generation for the next successful read.
                 self.status.contentions.fetch_add(1, Ordering::Relaxed);
                 return 0;
             }

@@ -122,7 +122,6 @@ pub struct Display(dxgi::Display);
 
 impl Display {
     pub fn primary() -> io::Result<Display> {
-        // not implemented yet
         Err(NotFound.into())
     }
 
@@ -139,21 +138,17 @@ impl Display {
                 Vec::new()
             }
         };
-        // Win+P "Show only on 1/2" still enumerates detached DXGI outputs.
         displays_dxgi.retain(|d| d.is_online() && d.width() > 0 && d.height() > 0);
 
-        // Return gdi displays if dxgi is not supported
         if displays_dxgi.is_empty() {
             println!("Display got from gdi");
             return Ok(displays_gdi);
         }
 
-        // Return dxgi displays if length is not equal
         if displays_dxgi.len() != displays_gdi.len() {
             return Ok(displays_dxgi);
         }
 
-        // Check if names are equal
         let names_gdi = displays_gdi.iter().map(|d| d.name()).collect::<Vec<_>>();
         let names_dxgi = displays_dxgi.iter().map(|d| d.name()).collect::<Vec<_>>();
         for name in names_gdi.iter() {
@@ -162,13 +157,11 @@ impl Display {
             }
         }
 
-        // Reorder displays from dxgi
         let mut displays_dxgi_ordered = Vec::new();
         for name in names_gdi.iter() {
             let pos = match displays_dxgi.iter().position(|d| d.name() == *name) {
                 Some(pos) => pos,
                 None => {
-                    // unreachable!
                     0
                 }
             };
@@ -207,8 +200,6 @@ impl Display {
     }
 
     pub fn is_primary(&self) -> bool {
-        // https://docs.microsoft.com/en-us/windows/win32/api/wingdi/ns-wingdi-devmodea
-        // Detached outputs can still report origin (0,0) with a zero size.
         self.origin() == (0, 0) && self.width() > 0 && self.height() > 0
     }
 
@@ -238,7 +229,6 @@ impl CapturerMag {
     pub fn exclude(&mut self, cls: &str, name: &str) -> io::Result<bool> {
         self.inner.exclude(cls, name)
     }
-    // ((x, y), w, h)
     pub fn get_rect(&self) -> ((i32, i32), usize, usize) {
         self.inner.get_rect()
     }

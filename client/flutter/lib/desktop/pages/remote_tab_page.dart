@@ -25,7 +25,6 @@ import '../../models/platform_model.dart';
 
 class _MenuTheme {
   static const Color blueColor = MyTheme.button;
-  // kMinInteractiveDimension
   static const double height = 20.0;
   static const double dividerHeight = 12.0;
 }
@@ -107,7 +106,7 @@ class _ConnectionTabPageState extends State<ConnectionTabPage> {
       _update_remote_count();
     }
     tabController.onRemoved = (_, id) => onRemoveId(id);
-    rustDeskWinManager.setMethodHandler(_remoteMethodHandler);
+    supportDeskWinManager.setMethodHandler(_remoteMethodHandler);
   }
 
   @override
@@ -233,7 +232,6 @@ class _ConnectionTabPageState extends State<ConnectionTabPage> {
         : Obx(() => SubWindowDragToResizeArea(
               key: contentKey,
               child: tabWidget,
-              // Specially configured for a better resize area and remote control.
               childPadding: kDragToResizeAreaPadding,
               resizeEdgeSize: stateGlobal.resizeEdgeSize.value,
               enableResizeEdges: subWindowManagerEnableResizeEdges,
@@ -241,7 +239,6 @@ class _ConnectionTabPageState extends State<ConnectionTabPage> {
             ));
   }
 
-  // Note: Some dup code to ../widgets/remote_toolbar
   Widget _tabMenuBuilder(String key, CancelFunc cancelFunc) {
     final List<MenuEntryBase<String>> menu = [];
     const EdgeInsets padding = EdgeInsets.only(left: 8.0, right: 5.0);
@@ -360,11 +357,6 @@ class _ConnectionTabPageState extends State<ConnectionTabPage> {
 
   void onRemoveId(String id) async {
     if (tabController.state.value.tabs.isEmpty) {
-      // Keep calling until the window status is hidden.
-      //
-      // Workaround for Windows:
-      // If you click other buttons and close in msgbox within a very short period of time, the close may fail.
-      // `await WindowController.fromWindowId(windowId()).close();`.
       Future<void> loopCloseWindow() async {
         int c = 0;
         final windowController = WindowController.fromWindowId(windowId());
@@ -380,7 +372,6 @@ class _ConnectionTabPageState extends State<ConnectionTabPage> {
       loopCloseWindow();
     }
     ConnectionTypeState.delete(id);
-    // Clean up relative mouse mode state for this peer.
     stateGlobal.relativeMouseModeState.remove(id);
     _update_remote_count();
   }
@@ -425,7 +416,6 @@ class _ConnectionTabPageState extends State<ConnectionTabPage> {
         "[Remote Page] call ${call.method} with args ${call.arguments} from window $fromWindowId");
 
     dynamic returnValue;
-    // for simplify, just replace connectionId
     if (call.method == kWindowEventNewRemoteDesktop) {
       final args = jsonDecode(call.arguments);
       final id = args['id'];
@@ -478,7 +468,6 @@ class _ConnectionTabPageState extends State<ConnectionTabPage> {
         ),
       ));
     } else if (call.method == kWindowDisableGrabKeyboard) {
-      // ???
     } else if (call.method == "onDestroy") {
       tabController.clear();
     } else if (call.method == kWindowActionRebuild) {
@@ -509,7 +498,6 @@ class _ConnectionTabPageState extends State<ConnectionTabPage> {
           .toList()
           .join(';');
     } else if (call.method == kWindowEventGetCachedSessionData) {
-      // Ready to show new window and close old tab.
       final args = jsonDecode(call.arguments);
       final id = args['id'];
       final close = args['close'];
@@ -559,8 +547,6 @@ class _ConnectionTabPageState extends State<ConnectionTabPage> {
   }
 }
 
-/// A widget that displays a hint in the tab bar when relative mouse mode is active.
-/// This helps users remember how to exit relative mouse mode.
 class _RelativeMouseModeHint extends StatelessWidget {
   final DesktopTabController tabController;
 
@@ -570,12 +556,10 @@ class _RelativeMouseModeHint extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return Obx(() {
-      // Check if there are any tabs
       if (tabController.state.value.tabs.isEmpty) {
         return const SizedBox.shrink();
       }
 
-      // Get current selected tab's RemotePage
       final selectedTabInfo = tabController.state.value.selectedTabInfo;
       if (selectedTabInfo.page is! RemotePage) {
         return const SizedBox.shrink();
@@ -584,8 +568,6 @@ class _RelativeMouseModeHint extends StatelessWidget {
       final remotePage = selectedTabInfo.page as RemotePage;
       final String peerId = remotePage.id;
 
-      // Use global state to check relative mouse mode (synced from InputModel).
-      // This avoids timing issues with FFI registration.
       final isRelativeMouseMode =
           stateGlobal.relativeMouseModeState[peerId] ?? false;
 

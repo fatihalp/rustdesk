@@ -26,7 +26,7 @@ const kUsePermanentPassword = "use-permanent-password";
 const kUseBothPasswords = "use-both-passwords";
 
 class ServerModel with ChangeNotifier {
-  bool _isStart = false; // Android MainService status
+  bool _isStart = false;
   bool _mediaOk = false;
   bool _inputOk = false;
   bool _audioOk = false;
@@ -34,7 +34,7 @@ class ServerModel with ChangeNotifier {
   bool _clipboardOk = false;
   bool _showElevation = false;
   bool hideCm = false;
-  int _connectStatus = 0; // Rendezvous Server status
+  int _connectStatus = 0;
   String _verificationMethod = "";
   String _temporaryPasswordLength = "";
   bool _allowNumericOneTimePassword = false;
@@ -86,12 +86,6 @@ class ServerModel with ChangeNotifier {
 
   setVerificationMethod(String method) async {
     await bind.mainSetOption(key: kOptionVerificationMethod, value: method);
-    /*
-    if (method != kUsePermanentPassword) {
-      await bind.mainSetOption(
-          key: 'allow-hide-cm', value: bool2option('allow-hide-cm', false));
-    }
-    */
   }
 
   String get temporaryPasswordLength {
@@ -108,12 +102,6 @@ class ServerModel with ChangeNotifier {
 
   setApproveMode(String mode) async {
     await bind.mainSetOption(key: kOptionApproveMode, value: mode);
-    /*
-    if (mode != 'password') {
-      await bind.mainSetOption(
-          key: 'allow-hide-cm', value: bool2option('allow-hide-cm', false));
-    }
-    */
   }
 
   bool get allowNumericOneTimePassword => _allowNumericOneTimePassword;
@@ -136,18 +124,6 @@ class ServerModel with ChangeNotifier {
     _emptyIdShow = translate("Generating ...");
     _serverId = IDTextEditingController(text: _emptyIdShow);
 
-    /*
-    // initital _hideCm at startup
-    final verificationMethod =
-        bind.mainGetOptionSync(key: kOptionVerificationMethod);
-    final approveMode = bind.mainGetOptionSync(key: kOptionApproveMode);
-    _hideCm = option2bool(
-        'allow-hide-cm', bind.mainGetOptionSync(key: 'allow-hide-cm'));
-    if (!(approveMode == 'password' &&
-        verificationMethod == kUsePermanentPassword)) {
-      _hideCm = false;
-    }
-    */
 
     timerCallback() async {
       final connectionStatus =
@@ -167,7 +143,6 @@ class ServerModel with ChangeNotifier {
           if (_clients.isEmpty) {
             hideCmWindow();
             if (_zeroClientLengthCounter++ == 12) {
-              // 6 second
               windowManager.close();
             }
           } else {
@@ -191,18 +166,12 @@ class ServerModel with ChangeNotifier {
       });
     }
 
-    // Initial keyboard status is off on mobile
     if (isMobile) {
       bind.mainSetOption(key: kOptionEnableKeyboard, value: 'N');
     }
   }
 
-  /// 1. check android permission
-  /// 2. check config
-  /// audio true by default (if permission on) (false default < Android 10)
-  /// file true by default (if permission on)
   checkAndroidPermission() async {
-    // audio
     if (androidVersion < 30 ||
         !await AndroidPermissionManager.check(kRecordAudio)) {
       _audioOk = false;
@@ -212,12 +181,9 @@ class ServerModel with ChangeNotifier {
       _audioOk = audioOption != 'N';
     }
 
-    // Android file transfer is confined to app-specific storage. Files enter
-    // and leave the workspace through Android's system document picker.
     final fileOption = await bind.mainGetOption(key: kOptionEnableFileTransfer);
     _fileOk = fileOption != 'N';
 
-    // clipboard
     final clipOption = await bind.mainGetOption(key: kOptionEnableClipboard);
     _clipboardOk = clipOption != 'N';
 
@@ -234,14 +200,6 @@ class ServerModel with ChangeNotifier {
     final approveMode = await bind.mainGetOption(key: kOptionApproveMode);
     final numericOneTimePassword =
         await mainGetBoolOption(kOptionAllowNumericOneTimePassword);
-    /*
-    var hideCm = option2bool(
-        'allow-hide-cm', await bind.mainGetOption(key: 'allow-hide-cm'));
-    if (!(approveMode == 'password' &&
-        verificationMethod == kUsePermanentPassword)) {
-      hideCm = false;
-    }
-    */
     if (_approveMode != approveMode) {
       _approveMode = approveMode;
       update = true;
@@ -276,19 +234,6 @@ class ServerModel with ChangeNotifier {
       _allowNumericOneTimePassword = numericOneTimePassword;
       update = true;
     }
-    /*
-    if (_hideCm != hideCm) {
-      _hideCm = hideCm;
-      if (desktopType == DesktopType.cm) {
-        if (hideCm) {
-          await hideCmWindow();
-        } else {
-          await showCmWindow();
-        }
-      }
-      update = true;
-    }
-    */
     if (update) {
       notifyListeners();
     }
@@ -340,8 +285,6 @@ class ServerModel with ChangeNotifier {
       bind.mainSetOption(key: kOptionEnableKeyboard, value: 'N');
     } else {
       if (parent.target != null) {
-        /// the result of toggle-on depends on user actions in the settings page.
-        /// handle result, see [ServerModel.changeStatue]
         showInputWarnAlert(parent.target!);
       }
     }
@@ -375,7 +318,6 @@ class ServerModel with ChangeNotifier {
     return res;
   }
 
-  /// Toggle the screen sharing service.
   toggleService() async {
     if (_isStart) {
       final res = await parent.target?.dialogManager
@@ -438,13 +380,11 @@ class ServerModel with ChangeNotifier {
     }
   }
 
-  /// Start the screen sharing service.
   Future<void> startService() async {
     _isStart = true;
     notifyListeners();
     parent.target?.ffiModel.updateEventListener(parent.target!.sessionId, "");
     await parent.target?.invokeMethod("init_service");
-    // ugly is here, because for desktop, below is useless
     await bind.mainStartService();
     updateClientState();
     if (isAndroid) {
@@ -452,14 +392,12 @@ class ServerModel with ChangeNotifier {
     }
   }
 
-  /// Stop the screen sharing service.
   Future<void> stopService() async {
     _isStart = false;
     closeAll();
     await parent.target?.invokeMethod("stop_service");
     await bind.mainStopService();
     notifyListeners();
-    // for androidUpdatekeepScreenOn only
     WakelockManager.disable(_wakelockKey);
   }
 
@@ -494,7 +432,6 @@ class ServerModel with ChangeNotifier {
     notifyListeners();
   }
 
-  // force
   updateClientState([String? json]) async {
     if (isTest) return;
     var res = await bind.cmGetClientsState();
@@ -559,7 +496,6 @@ class ServerModel with ChangeNotifier {
         _clients.add(client);
       }
       _addTab(client);
-      // remove disconnected
       final index_disconnected = _clients
           .indexWhere((c) => c.disconnected && c.peerId == client.peerId);
       if (index_disconnected >= 0) {
@@ -588,7 +524,6 @@ class ServerModel with ChangeNotifier {
     Future.delayed(Duration.zero, () async {
       if (!hideCm) windowOnTop(null);
     });
-    // Only do the hidden task when on Desktop.
     if (client.authorized && isDesktop) {
       cmHiddenTimer = Timer(const Duration(seconds: 3), () {
         if (!hideCm) windowManager.minimize();
@@ -730,9 +665,6 @@ class ServerModel with ChangeNotifier {
     }
   }
 
-  /// `byOperator` false means the CM's window went away rather than a person asking for the
-  /// peers to go. The sessions end either way; only the close reason differs, and with it
-  /// whether the peer is allowed to reconnect. See `ipc::Data::CmWindowClosed`.
   Future<void> closeAll({bool byOperator = true}) async {
     await Future.wait(_clients.map((client) => byOperator
         ? bind.cmCloseConnection(connId: client.id)
@@ -765,7 +697,6 @@ class ServerModel with ChangeNotifier {
           if (isAndroid) {
             showVoiceCallDialog(client);
           } else {
-            // Has incoming phone call, let's set the window on top.
             Future.delayed(Duration.zero, () {
               windowOnTop(null);
             });
@@ -807,7 +738,7 @@ enum ClientType {
 }
 
 class Client {
-  int id = 0; // client connections inner count id
+  int id = 0;
   bool authorized = false;
   bool isFileTransfer = false;
   bool isViewCamera = false;
@@ -815,7 +746,7 @@ class Client {
   String portForward = "";
   String name = "";
   String avatar = "";
-  String peerId = ""; // peer user's id,show at app
+  String peerId = "";
   bool keyboard = false;
   bool clipboard = false;
   bool audio = false;
@@ -838,7 +769,6 @@ class Client {
     id = json['id'];
     authorized = json['authorized'];
     isFileTransfer = json['is_file_transfer'];
-    // TODO: no entry then default.
     isViewCamera = json['is_view_camera'];
     isTerminal = json['is_terminal'] ?? false;
     portForward = json['port_forward'];

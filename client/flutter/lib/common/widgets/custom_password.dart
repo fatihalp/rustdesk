@@ -1,4 +1,3 @@
-// https://github.com/rodrigobastosv/fancy_password_field
 import 'package:flutter/material.dart';
 import 'package:flutter_hbb/common.dart';
 import 'package:get/get.dart';

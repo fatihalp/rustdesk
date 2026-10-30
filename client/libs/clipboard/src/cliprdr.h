@@ -16,7 +16,6 @@ extern "C"
     typedef int BOOL;
     typedef unsigned char BYTE;
 
-/* Clipboard Messages */
 #define DEFINE_CLIPRDR_HEADER_COMMON() \
     UINT32 connID;                     \
     UINT16 msgType;                    \
@@ -152,7 +151,6 @@ extern "C"
 
     struct _NOTIFICATION_MESSAGE
     {
-        // 0 - info, 1 - warning, 2 - error
         UINT32 type;
         char *msg;
         char *details;
@@ -205,7 +203,6 @@ extern "C"
     typedef UINT (*pcCliprdrServerFileContentsResponse)(
         CliprdrClientContext *context, const CLIPRDR_FILE_CONTENTS_RESPONSE *fileContentsResponse);
 
-    // TODO: hide more members of clipboard context
     struct _cliprdr_client_context
     {
         void *Custom;
@@ -244,4 +241,4 @@ extern "C"
 }
 #endif
 
-#endif // WF_CLIPRDR_H__
+#endif

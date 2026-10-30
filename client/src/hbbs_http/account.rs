@@ -29,23 +29,19 @@ pub struct OidcAuthUrl {
 
 #[derive(Debug, Deserialize, Serialize, Default, Clone)]
 pub struct DeviceInfo {
-    /// Linux , Windows , Android ...
     #[serde(default)]
     pub os: String,
 
-    /// `browser` or `client`
     #[serde(default)]
     pub r#type: String,
 
-    /// device name from rustdesk client,
-    /// browser info(name + version) from browser
     #[serde(default)]
     pub name: String,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct WhitelistItem {
-    data: String, // ip / device uuid
+    data: String,
     info: DeviceInfo,
     exp: u64,
 }
@@ -151,7 +147,6 @@ impl OidcSession {
         if write_guard.warmed_api_server.as_deref() == Some(api_server) {
             return;
         }
-        // This URL is used to detect the appropriate TLS implementation for the server.
         let login_option_url = format!("{}/api/login-options", api_server);
         let _ = create_http_client_with_url(&login_option_url);
         write_guard.warmed_api_server = Some(api_server.to_owned());
@@ -325,18 +320,15 @@ impl OidcSession {
                 }
                 Ok(HbbHttpResponse::<_>::Error(err)) => {
                     if err.contains("No authed oidc is found") {
-                        // ignore, keep querying
                     } else {
                         Self::set_state_if_current(auth_attempt, WAITING_ACCOUNT_AUTH, err);
                         return;
                     }
                 }
                 Ok(_) => {
-                    // ignore
                 }
                 Err(err) => {
                     log::trace!("Failed query oidc {}", err);
-                    // ignore
                 }
             }
             Self::sleep(QUERY_INTERVAL_SECS);

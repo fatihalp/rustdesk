@@ -56,19 +56,15 @@ pub struct AomEncoder {
     yuvfmt: EncodeYuvFormat,
 }
 
-// https://webrtc.googlesource.com/src/+/refs/heads/main/modules/video_coding/codecs/av1/libaom_av1_encoder.cc
 mod webrtc {
     use super::*;
 
     const kUsageProfile: u32 = AOM_USAGE_REALTIME;
     const kBitDepth: u32 = 8;
-    const kLagInFrames: u32 = 0; // No look ahead.
+    const kLagInFrames: u32 = 0;
     pub(super) const kTimeBaseDen: i64 = 1000;
 
-    // Only positive speeds, range for real-time coding currently is: 6 - 8.
-    // Lower means slower/better quality, higher means fastest/lower quality.
     fn get_cpu_speed(width: u32, height: u32) -> u32 {
-        // aux_config_ = nullptr, kComplexityHigh
         if width * height <= 320 * 180 {
             8
         } else if width * height <= 640 * 360 {
@@ -100,7 +96,6 @@ mod webrtc {
         let mut c = unsafe { std::mem::MaybeUninit::zeroed().assume_init() };
         call_aom!(aom_codec_enc_config_default(i, &mut c, kUsageProfile));
 
-        // Overwrite default config with input encoder settings & RTC-relevant values.
         c.g_w = cfg.width;
         c.g_h = cfg.height;
         c.g_threads = codec_thread_num(64) as _;
@@ -124,12 +119,10 @@ mod webrtc {
         c.rc_buf_sz = 1000;
         c.g_usage = kUsageProfile;
         c.g_error_resilient = 0;
-        // Low-latency settings.
-        c.rc_end_usage = aom_rc_mode::AOM_CBR; // Constant Bit Rate (CBR) mode
-        c.g_pass = aom_enc_pass::AOM_RC_ONE_PASS; // One-pass rate control
-        c.g_lag_in_frames = kLagInFrames; // No look ahead when lag equals 0.
+        c.rc_end_usage = aom_rc_mode::AOM_CBR;
+        c.g_pass = aom_enc_pass::AOM_RC_ONE_PASS;
+        c.g_lag_in_frames = kLagInFrames;
 
-        // https://aomedia.googlesource.com/aom/+/refs/tags/v3.6.0/av1/common/enums.h#82
         c.g_profile = if i444 { 1 } else { 0 };
 
         Ok(c)
@@ -154,7 +147,6 @@ mod webrtc {
         call_ctl!(ctx, AV1E_SET_COEFF_COST_UPD_FREQ, 3);
         call_ctl!(ctx, AV1E_SET_MODE_COST_UPD_FREQ, 3);
         call_ctl!(ctx, AV1E_SET_MV_COST_UPD_FREQ, 3);
-        // kScreensharing
         call_ctl!(ctx, AV1E_SET_TUNE_CONTENT, AOM_CONTENT_SCREEN);
         call_ctl!(ctx, AV1E_SET_ENABLE_PALETTE, 1);
         let tile_set = if cfg.g_threads == 4 && cfg.g_w == 640 && (cfg.g_h == 360 || cfg.g_h == 480)
@@ -212,7 +204,6 @@ impl EncoderApi for AomEncoder {
                 let c = webrtc::enc_cfg(i, config, i444)?;
 
                 let mut ctx = Default::default();
-                // Flag options: AOM_CODEC_USE_PSNR and AOM_CODEC_USE_HIGHBITDEPTH
                 let flags: aom_codec_flags_t = 0;
                 call_aom!(aom_codec_enc_init_ver(
                     &mut ctx,
@@ -315,8 +306,8 @@ impl AomEncoder {
             &mut self.ctx,
             &image,
             pts as _,
-            duration as _, // Duration
-            0,             // Flags
+            duration as _,
+            0,
         ));
 
         Ok(EncodeFrames {
@@ -432,7 +423,6 @@ impl<'a> Iterator for EncodeFrames<'a> {
                         pts: f.pts,
                     });
                 } else {
-                    // Ignore the packet.
                 }
             }
         }
@@ -477,7 +467,6 @@ impl AomDecoder {
         })
     }
 
-    /// Notify the decoder to return any pending frame
     pub fn flush<'a>(&'a mut self) -> Result<DecodeFrames<'a>> {
         call_aom!(aom_codec_decode(
             &mut self.ctx,

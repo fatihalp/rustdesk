@@ -1,7 +1,6 @@
 <?php
 
 return [
-    // Base URL the client calls (it appends /api/heartbeat, /api/sysinfo).
     'api_url' => rtrim((string) env('PANEL_API_URL', env('APP_URL')), '/'),
 
     'relay' => [

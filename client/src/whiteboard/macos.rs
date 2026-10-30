@@ -26,7 +26,6 @@ struct WindowState {
     window: Arc<Window>,
     logical_size: LogicalSize<f64>,
     outer_position: PhysicalPosition<i32>,
-    // A simple workaround to the (logical) cursor position.
     display_origin: (f64, f64),
 }
 
@@ -50,10 +49,8 @@ fn set_window_properties(window: &Arc<Window>) -> ResultType<()> {
             }
             let _: () = msg_send![ns_window, setOpaque: false];
             let _: () = msg_send![ns_window, setLevel: MAXIMUM_WINDOW_LEVEL];
-            // NSWindowCollectionBehaviorCanJoinAllSpaces | NSWindowCollectionBehaviorIgnoresCycle
             let _: () = msg_send![ns_window, setCollectionBehavior: 5];
             let current_style_mask: u64 = msg_send![ns_window, styleMask];
-            // NSWindowStyleMaskNonactivatingPanel
             let new_style_mask = current_style_mask | (1 << 7);
             let _: () = msg_send![ns_window, setStyleMask: new_style_mask];
             let _: () = msg_send![ns_window, setIgnoresMouseEvents: true];
@@ -68,13 +65,8 @@ fn create_windows(event_loop: &EventLoop<(String, CustomEvent)>) -> ResultType<V
         .into_iter()
         .map(|display| (display.name(), display.origin()))
         .collect();
-    // We can't use `crate::server::display_service::try_get_displays()` here.
-    // Because the `display` returned by `crate::server::display_service::try_get_displays()`:
-    // 1. `display.origin()` is the logic position.
-    // 2. `display.width()` and `display.height()` are the physical size.
     for monitor in event_loop.available_monitors() {
         let Some(origin) = map_display_origins.get(&monitor.native_id().to_string()) else {
-            // unreachable!
             bail!(
                 "Failed to find display origin for monitor: {}",
                 monitor.native_id()
@@ -82,7 +74,7 @@ fn create_windows(event_loop: &EventLoop<(String, CustomEvent)>) -> ResultType<V
         };
 
         let window_builder = WindowBuilder::new()
-            .with_title("RustDesk whiteboard")
+            .with_title("SupportDesk whiteboard")
             .with_transparent(true)
             .with_decorations(false)
             .with_position(monitor.position())

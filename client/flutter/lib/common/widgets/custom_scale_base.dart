@@ -9,18 +9,13 @@ import 'package:flutter_hbb/models/platform_model.dart';
 import 'package:flutter_hbb/utils/scale.dart';
 import 'package:flutter_hbb/common.dart';
 
-/// Base class providing shared custom scale control logic for both mobile and desktop widgets.
-/// Implementations must provide [ffi] and [onScaleChanged] getters.
 abstract class CustomScaleControls<T extends StatefulWidget> extends State<T> {
-  /// FFI instance for session interaction
   FFI get ffi;
 
-  /// Callback invoked when scale value changes
   ValueChanged<int>? get onScaleChanged;
 
   late int _scaleValue;
   late final Debouncer<int> _debouncerScale;
-  // Normalized slider position in [0, 1]. We map it nonlinearly to percent.
   double _scalePos = 0.0;
 
   int get scaleValue => _scaleValue;
@@ -29,30 +24,27 @@ abstract class CustomScaleControls<T extends StatefulWidget> extends State<T> {
   int mapPosToPercent(double p) => _mapPosToPercent(p);
 
   static const int minPercent = kScaleCustomMinPercent;
-  static const int pivotPercent = kScaleCustomPivotPercent; // 100% should be at 1/3 of track
+  static const int pivotPercent = kScaleCustomPivotPercent;
   static const int maxPercent = kScaleCustomMaxPercent;
-  static const double pivotPos = kScaleCustomPivotPos; // first 1/3 → up to 100%
-  static const double detentEpsilon = kScaleCustomDetentEpsilon; // snap range around pivot (~0.6%)
+  static const double pivotPos = kScaleCustomPivotPos;
+  static const double detentEpsilon = kScaleCustomDetentEpsilon;
 
-  // Clamp helper for local use
   int _clampScale(int v) => clampCustomScalePercent(v);
 
-  // Map normalized position [0,1] → percent [5,1000] with 100 at 1/3 width.
   int _mapPosToPercent(double p) {
     if (p <= 0.0) return minPercent;
     if (p >= 1.0) return maxPercent;
     if (p <= pivotPos) {
-      final q = p / pivotPos; // 0..1
+      final q = p / pivotPos;
       final v = minPercent + q * (pivotPercent - minPercent);
       return _clampScale(v.round());
     } else {
-      final q = (p - pivotPos) / (1.0 - pivotPos); // 0..1
+      final q = (p - pivotPos) / (1.0 - pivotPos);
       final v = pivotPercent + q * (maxPercent - pivotPercent);
       return _clampScale(v.round());
     }
   }
 
-  // Map percent [5,1000] → normalized position [0,1]
   double _mapPercentToPos(int percent) {
     final p = _clampScale(percent);
     if (p <= pivotPercent) {
@@ -64,7 +56,6 @@ abstract class CustomScaleControls<T extends StatefulWidget> extends State<T> {
     }
   }
 
-  // Snap normalized position to the pivot when close to it
   double _snapNormalizedPos(double p) {
     if ((p - pivotPos).abs() <= detentEpsilon) return pivotPos;
     if (p < 0.0) return 0.0;

@@ -310,7 +310,6 @@ class _FileManagerPageState extends State<FileManagerPage> {
         return false;
       },
       child: Scaffold(
-        // backgroundColor: MyTheme.grayBg,
         appBar: AppBar(
           leading: Row(children: [
             IconButton(
@@ -354,7 +353,7 @@ class _FileManagerPageState extends State<FileManagerPage> {
                             Icon(Icons.storage_outlined,
                                 color: Theme.of(context).iconTheme.color),
                             SizedBox(width: 5),
-                            Text(translate('RustDesk storage')),
+                            Text(translate('SupportDesk storage')),
                           ],
                         ),
                       ),
@@ -644,8 +643,6 @@ class _FileManagerPageState extends State<FileManagerPage> {
         return Offstage();
       }
 
-      // Find the first job that is in progress (the one actually transferring data)
-      // Rust backend processes jobs sequentially, so the first inProgress job is the active one
       final activeJob = jobTable
               .firstWhereOrNull((job) => job.state == JobState.inProgress) ??
           jobTable.last;
@@ -678,7 +675,6 @@ class _FileManagerPageState extends State<FileManagerPage> {
         case JobState.none:
           break;
         case JobState.paused:
-          // TODO: Handle this case.
           break;
       }
       return Offstage();
@@ -691,7 +687,6 @@ class _FileManagerPageState extends State<FileManagerPage> {
 
     if (localSelectedItems.items.isNotEmpty &&
         remoteSelectedItems.items.isNotEmpty) {
-      // assert unreachable
       debugPrint("Wrong SelectedItems state, reset");
       localSelectedItems.clear();
       remoteSelectedItems.clear();
@@ -854,7 +849,6 @@ class _FileManagerViewState extends State<FileManagerView> {
                   if (entries[index].isDirectory || entries[index].isDrive) {
                     controller.openDirectory(entries[index].path);
                   } else {
-                    // Perform file-related tasks.
                   }
                 },
                 onLongPress: entries[index].isDrive
@@ -897,7 +891,6 @@ class _FileManagerViewState extends State<FileManagerView> {
                   () => controller.goToHomeDirectory(), (list) {
                 var path = "";
                 if (home.startsWith(list[0])) {
-                  // absolute path
                   for (var item in list) {
                     path = PathUtil.join(path, item, isWindows);
                   }
@@ -935,8 +928,6 @@ class _FileManagerViewState extends State<FileManagerView> {
                         .toList();
                   },
                   onSelected: (sortBy) {
-                    // If selecting the same sort option, flip the order
-                    // If selecting a different sort option, use ascending order
                     if (controller.sortBy.value == sortBy) {
                       ascending.value = !controller.sortAscending;
                     } else {
@@ -1008,7 +999,6 @@ class BottomSheetBody extends StatelessWidget {
 
   @override
   BottomSheet build(BuildContext context) {
-    // ignore: no_leading_underscores_for_local_identifiers
     final _actions = actions ?? [];
     return BottomSheet(
       builder: (BuildContext context) {
@@ -1033,7 +1023,7 @@ class BottomSheetBody extends StatelessWidget {
                         children: [
                           Text(title, style: TextStyle(fontSize: 18)),
                           Text(text,
-                              style: TextStyle(fontSize: 14)) // TODO color
+                              style: TextStyle(fontSize: 14))
                         ],
                       )
                     ],
@@ -1050,7 +1040,6 @@ class BottomSheetBody extends StatelessWidget {
             ));
       },
       onClosing: () {},
-      // backgroundColor: MyTheme.grayBg,
       enableDrag: false,
     );
   }

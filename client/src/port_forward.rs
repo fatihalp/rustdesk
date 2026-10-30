@@ -36,8 +36,6 @@ fn run_rdp(port: u16, name: &str) {
             .output()
             .ok();
     }
-    // Keep using /v instead of a generated .rdp file: mstsc then preserves the
-    // user's Default.rdp settings and avoids unsigned-file warnings or policies.
     match std::process::Command::new("mstsc")
         .arg(format!("/v:localhost:{}", port))
         .spawn()
@@ -52,7 +50,6 @@ fn run_rdp(port: u16, name: &str) {
     }
 }
 
-// Show the peer identity with its hostname, using the ID when no alias exists.
 fn rdp_display_name(lc: &Arc<RwLock<LoginConfigHandler>>, id: &str) -> String {
     let lc = lc.read().unwrap();
     let alias = lc
@@ -89,17 +86,11 @@ pub async fn listen(
         run_rdp(addr.port(), &rdp_display_name(&lc, &id));
     }
     let mut ui_receiver = ui_receiver;
-    // One tunnel per mapping; the listener drops it on its way out, and that
-    // ends the tunnel.
     let tunnel = Tunnel::new();
     loop {
         tokio::select! {
             Ok((forward, addr)) = listener.accept() => {
                 log::info!("new connection from {:?}", addr);
-                // A multiplexed window takes the connection on the mapping's
-                // tunnel, or probes for one on its first accept. Everything
-                // else, the setting off or a peer without the feature, is the
-                // raw pipe below, as it always was.
                 let claim = if lc.read().unwrap().port_forward_mux { tunnel.claim() } else { Claim::Legacy };
                 match claim {
                     Claim::Muxed(handle) => {
@@ -266,11 +257,6 @@ async fn connect_and_login(
 }
 
 
-/// A mapping's login is built from the window's shared handler:
-/// `create_login_msg` reads `port_forward` and `port_forward_multiplex`,
-/// `handle_login_from_ui` reads `hash`. Mappings log in concurrently, so each
-/// fills them and sends under the window's turn lock, or one login carried
-/// another mapping's target or answered another's challenge.
 async fn login_with_hash(
     interface: &impl Interface,
     password: &str,
@@ -291,11 +277,6 @@ async fn login_with_hash(
 
 type UiLogin = (String, String, String, bool);
 
-/// This connection's `Hash`. The window's password prompt is broadcast to
-/// every mapping and can reach this one first, so a password typed while
-/// the `Hash` was on its way is kept and answers it now, rather than being
-/// dropped in the hope that the mapping which prompted has already stored
-/// it in the shared handler.
 async fn hash_arrived(
     interface: &impl Interface,
     password: &str,
@@ -316,8 +297,6 @@ async fn hash_arrived(
     }
 }
 
-/// The window's password prompt is broadcast to every mapping; this one
-/// answers it with its own challenge.
 async fn login_from_ui(
     interface: &impl Interface,
     hash: &Hash,
@@ -343,13 +322,6 @@ async fn login_from_ui(
         .await;
 }
 
-/// The first accept of a multiplexed mapping. It logs in asking for the
-/// tunnel, and the peer's answer fixes this listener's mode until it closes:
-/// a peer with the feature gets a tunnel every later accept joins, one
-/// without gets today's raw pipe for this connection and `Legacy` for the
-/// rest. Re-adding the mapping is how a user picks up an upgraded peer;
-/// nothing switches modes underneath live connections. Returns `true` when
-/// the listener should stop.
 async fn establish_tunnel(
     tunnel: &Tunnel,
     id: &str,
@@ -397,12 +369,6 @@ async fn establish_tunnel(
     false
 }
 
-/// `connect_and_login` for a mapping that wants the tunnel: the pre-read
-/// stops at one window rather than growing without bound, and a local EOF
-/// no longer ends the login, since the tunnel may still be wanted. It
-/// reports what the peer answered rather than a raw stream, because the
-/// caller's next step depends on it. The login itself is the raw pipe's,
-/// told to ask for the tunnel.
 async fn connect_and_login_mux(
     id: &str,
     password: &str,
@@ -499,9 +465,6 @@ async fn connect_and_login_mux(
                     _ => {}
                 }
             },
-            // Stop pulling once the pre-read buffer is a window deep; the
-            // rest waits in the kernel until the channel opens. A local EOF
-            // no longer aborts the login: the tunnel may still be wanted.
             res = forward.next(), if !local_eof && buffer.len() < CHANNEL_WINDOW as usize => {
                 if let Some(Ok(bytes)) = res {
                     buffer.extend(bytes);
@@ -519,7 +482,6 @@ async fn connect_and_login_mux(
     }))
 }
 
-/// Today's raw pipe, for peers without multiplexing.
 fn run_legacy(
     outcome: LoginOutcome,
     forward: Framed<TcpStream, BytesCodec>,
@@ -551,14 +513,12 @@ fn peer_supports_mux(pi: &PeerInfo) -> bool {
     pi.features.as_ref().map(|f| f.port_forward_mux).unwrap_or(false)
 }
 
-/// `into_inner()` would drop bytes the codec pulled but never yielded.
 fn take_socket(forward: Framed<TcpStream, BytesCodec>, mut prebuf: Vec<u8>) -> (TcpStream, Vec<u8>) {
     let parts = forward.into_parts();
     prebuf.extend_from_slice(&parts.read_buf);
     (parts.io, prebuf)
 }
 
-/// The controlling side's `enable-port-forward-mux`: on unless set to `N`.
 pub fn mux_enabled() -> bool {
     use hbb_common::config::{option2bool, LocalConfig};
     use base::config::keys;
@@ -603,8 +563,6 @@ mod login_tests {
     };
     use sha2::{Digest, Sha256};
 
-    /// A window's interface over its shared handler. `handle_hash` can pause
-    /// before building the login, where the real one looks passwords up.
     #[derive(Clone)]
     struct Ui {
         lc: Arc<RwLock<LoginConfigHandler>>,
@@ -659,7 +617,6 @@ mod login_tests {
         }
     }
 
-    /// (our end, the peer's end) of one connection.
     async fn loopback() -> (Stream, Stream) {
         let l = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
         let addr = l.local_addr().unwrap();
@@ -691,7 +648,6 @@ mod login_tests {
         }
     }
 
-    /// What the peer expects for password `pw` under `hash(challenge)`.
     fn digest(challenge: &str) -> Vec<u8> {
         let mut h = Sha256::new();
         h.update("pw");
@@ -734,7 +690,6 @@ mod login_tests {
             let ui = window();
             let (mut a, mut a_peer) = loopback().await;
             let (mut b, mut b_peer) = loopback().await;
-            // A's hash arrived last, so it is the one the handler holds.
             assert!(login_with_hash(&ui, "pw", hash("a"), "a", 1, false, &mut Default::default(), &mut a).await);
             login_at(&mut a_peer).await;
             let typed = (String::new(), String::new(), "pw".to_owned(), false);

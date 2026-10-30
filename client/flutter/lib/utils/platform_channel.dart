@@ -5,7 +5,6 @@ import 'package:flutter_hbb/common.dart';
 
 enum SystemWindowTheme { light, dark }
 
-/// The platform channel for RustDesk.
 class RdPlatformChannel {
   RdPlatformChannel._();
 
@@ -14,11 +13,9 @@ class RdPlatformChannel {
   static RdPlatformChannel get instance => _windowUtil;
 
   final MethodChannel _hostMethodChannel =
-      MethodChannel("org.rustdesk.rustdesk/host");
+      MethodChannel("org.supportdesk.supportdesk/host");
 
-  /// Bump the position of the mouse cursor, if applicable
   Future<bool> bumpMouse({required int dx, required int dy}) async {
-    // No debug output; this call is too chatty.
 
     bool? result = await _hostMethodChannel
       .invokeMethod("bumpMouse", {"dx": dx, "dy": dy});
@@ -26,7 +23,6 @@ class RdPlatformChannel {
     return result ?? false;
   }
 
-  /// Change the theme of the system window
   Future<void> changeSystemWindowTheme(SystemWindowTheme theme) {
     assert(isMacOS);
     if (kDebugMode) {
@@ -37,7 +33,6 @@ class RdPlatformChannel {
         .invokeMethod("setWindowTheme", {"themeName": theme.name});
   }
 
-  /// Terminate .app manually.
   Future<void> terminate() {
     assert(isMacOS);
     return _hostMethodChannel.invokeMethod("terminate");

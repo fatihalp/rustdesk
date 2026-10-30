@@ -37,7 +37,7 @@ fn record(i: usize) {
         let mut capture_mag = CapturerMag::new(display.origin(), display.width(), display.height())
             .expect("Couldn't begin capture.");
         let wnd_cls = "";
-        let wnd_name = "RustDeskPrivacyWindow";
+        let wnd_name = "SupportDeskPrivacyWindow";
         if false == capture_mag.exclude(wnd_cls, wnd_name).unwrap() {
             println!("No window found for cls {} name {}", wnd_cls, wnd_name);
         } else {
@@ -60,7 +60,6 @@ fn record(i: usize) {
                 bitflipped.extend_from_slice(&[frame[i + 2], frame[i + 1], frame[i], 255]);
             }
         }
-        // Save the image.
         let name = format!("capture_mag_{}_1.png", i);
         repng::encode(
             File::create(name.clone()).unwrap(),
@@ -76,7 +75,7 @@ fn record(i: usize) {
         let mut capture_mag = CapturerMag::new(display.origin(), display.width(), display.height())
             .expect("Couldn't begin capture.");
         let wnd_cls = "";
-        let wnd_title = "RustDeskPrivacyWindow";
+        let wnd_title = "SupportDeskPrivacyWindow";
         if false == capture_mag.exclude(wnd_cls, wnd_title).unwrap() {
             println!("No window found for cls {} title {}", wnd_cls, wnd_title);
         } else {

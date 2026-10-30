@@ -42,10 +42,6 @@ ShortcutPlatformCapabilities capabilities({
 
 void main() {
   test('kDefaultShortcutBindings matches fixture', () {
-    // The fixture is the cross-language source of truth for default
-    // bindings. Rust has its own parity test against the same file
-    // (`default_bindings_match_fixture_json` in src/keyboard/shortcuts.rs),
-    // so a drift on either side breaks CI.
     final fixturePath = 'test/fixtures/default_keyboard_shortcuts.json';
     final fixture =
         jsonDecode(File(fixturePath).readAsStringSync()) as List<dynamic>;
@@ -224,8 +220,6 @@ void main() {
         includeToolbarShortcut: false,
         includeCloseTabShortcut: false,
         includeSwitchSidesShortcut: false,
-        // Recording / Reset Canvas are intentionally still included here —
-        // they have non-desktop platforms (mobile Android / mobile both).
         includeRecordingShortcut: true,
         includeResetCanvasShortcut: true,
         includePinToolbarShortcut: false,
@@ -234,7 +228,6 @@ void main() {
       ),
     );
     final ids = idSet(groups);
-    // Desktop-only actions are stripped.
     expect(ids, isNot(contains(kShortcutActionToggleFullscreen)));
     expect(ids, isNot(contains(kShortcutActionToggleRelativeMouseMode)));
     expect(ids, isNot(contains(kShortcutActionScreenshot)));
@@ -246,7 +239,6 @@ void main() {
     expect(ids, isNot(contains(kShortcutActionViewModeAdaptive)));
     expect(ids, isNot(contains(kShortcutActionSwitchTabNext)));
     expect(ids, isNot(contains(kShortcutActionSwitchTabPrev)));
-    // Cross-platform actions survive.
     expect(ids, contains(kShortcutActionSendCtrlAltDel));
     expect(ids, contains(kShortcutActionInsertLock));
     expect(ids, contains(kShortcutActionRestartRemote));
@@ -264,7 +256,6 @@ void main() {
     );
     final ids = idSet(groups);
     expect(ids, isNot(contains(kShortcutActionToggleRecording)));
-    // Other Session Control entries unaffected.
     expect(ids, contains(kShortcutActionSendCtrlAltDel));
     expect(ids, contains(kShortcutActionInsertLock));
   });
@@ -286,10 +277,6 @@ void main() {
   });
 
   test('filterKeyboardShortcutActionGroupsForPlatform drops empty groups', () {
-    // With every capability flag off, groups whose items are all behind
-    // those flags get dropped. Display / Keyboard parent groups still carry
-    // cross-platform direct items so they survive even when the gated
-    // subgroups thin out.
     final groups = filterKeyboardShortcutActionGroupsForPlatform(
       capabilities(
         includeFullscreenShortcut: false,
@@ -307,13 +294,9 @@ void main() {
       ),
     );
     final titles = groups.map((g) => g.titleKey).toList();
-    // "Other" has nothing but platform-gated entries → dropped entirely.
     expect(titles, isNot(contains('Other')));
-    // Parent groups with cross-platform direct items survive.
     expect(titles, contains('Display'));
     expect(titles, contains('Keyboard'));
-    // The "View Mode" subgroup under Display is gated by includeViewModeShortcut,
-    // so it must be absent from Display's surviving children.
     final displayChildren =
         groups.firstWhere((g) => g.titleKey == 'Display').children;
     final subgroupTitles = displayChildren
@@ -321,9 +304,7 @@ void main() {
         .map((s) => s.titleKey)
         .toList();
     expect(subgroupTitles, isNot(contains('View Mode')));
-    // No surviving group is empty either way.
     expect(groups.every((g) => g.children.isNotEmpty), isTrue);
-    // No surviving subgroup is empty.
     for (final group in groups) {
       for (final child in group.children) {
         if (child is KeyboardShortcutActionSubgroup) {
@@ -335,10 +316,6 @@ void main() {
   });
 
   test('physicalKeyName covers the supported-keys fixture', () {
-    // `shortcut_key_usb_hid.json` pins every key name to the USB HID usage
-    // it is recorded and matched from. Rust has a mirror test against the
-    // same file (`usb_hid_keys_match_fixture` in src/keyboard/shortcuts.rs),
-    // and the set of names must equal `supported_shortcut_keys.json`.
     final supported = (jsonDecode(
                 File('test/fixtures/supported_shortcut_keys.json')
                     .readAsStringSync()) as List<dynamic>)
@@ -357,7 +334,6 @@ void main() {
     }
     expect(pairs.map((p) => p[0] as String).toSet(), equals(supported));
 
-    // Modifier-only / unsupported keys must return null.
     expect(physicalKeyName(PhysicalKeyboardKey.shiftLeft), isNull);
     expect(physicalKeyName(PhysicalKeyboardKey.escape), isNull);
     expect(physicalKeyName(PhysicalKeyboardKey.f13), isNull);
@@ -370,7 +346,6 @@ void main() {
         shouldSeedDefaultShortcutBindings(
             <String, dynamic>{'enabled': false, 'pass_through': true}),
         isTrue);
-    // The user cleared every binding: re-enabling must not bring defaults back.
     expect(
         shouldSeedDefaultShortcutBindings(
             <String, dynamic>{'enabled': false, 'bindings': <dynamic>[]}),
@@ -464,9 +439,6 @@ void main() {
   });
 
   test('non-US layouts record and match the physical key', () {
-    // AZERTY: the key labelled "A" sits where US QWERTY has Q. The native
-    // matcher only sees the physical position (USB HID usage), so the
-    // binding must name that position too.
     const azertyA = KeyDownEvent(
       physicalKey: PhysicalKeyboardKey.keyQ,
       logicalKey: LogicalKeyboardKey.keyA,
@@ -475,7 +447,6 @@ void main() {
     );
     expect(shortcutKeyNameForEvent(azertyA), 'q');
 
-    // QWERTZ: the key labelled "Z" sits where US QWERTY has Y.
     const qwertzZ = KeyDownEvent(
       physicalKey: PhysicalKeyboardKey.keyY,
       logicalKey: LogicalKeyboardKey.keyZ,
@@ -487,8 +458,6 @@ void main() {
 
   test('kShortcutActionsRunOnKeyUp matches the fixture and names real actions',
       () {
-    // Rust has a mirror test against the same file
-    // (`key_up_actions_match_fixture` in src/keyboard/shortcuts.rs).
     final fixture = (jsonDecode(
                 File('test/fixtures/key_up_shortcut_actions.json')
                     .readAsStringSync()) as List<dynamic>)

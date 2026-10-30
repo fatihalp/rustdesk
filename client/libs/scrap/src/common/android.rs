@@ -7,13 +7,13 @@ use std::sync::Mutex;
 use std::{io, time::Duration};
 
 lazy_static! {
-   pub(crate)  static ref SCREEN_SIZE: Mutex<(u16, u16, u16)> = Mutex::new((0, 0, 0)); // (width, height, scale)
+   pub(crate)  static ref SCREEN_SIZE: Mutex<(u16, u16, u16)> = Mutex::new((0, 0, 0));
 }
 
 pub struct Capturer {
     display: Display,
     rgba: Vec<u8>,
-    saved_raw_data: Vec<u8>, // for faster compare and copy
+    saved_raw_data: Vec<u8>,
 }
 
 impl Capturer {
@@ -155,9 +155,6 @@ impl Display {
         *size = get_size().unwrap_or_default();
     }
 
-    // Big android screen size will be shrinked, to improve performance when screen-capturing and encoding
-    // e.g 2280x1080 size will be set to 1140x540, and `scale` is 2
-    // need to multiply by `4` (2*2) when compute the bitrate
     pub fn fix_quality() -> u16 {
         let scale = SCREEN_SIZE.lock().unwrap().2;
         if scale <= 0 {

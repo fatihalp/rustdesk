@@ -10,24 +10,21 @@ pub struct Capturer {
     buffer: *const u8,
 
     size: usize,
-    saved_raw_data: Vec<u8>, // for faster compare and copy
+    saved_raw_data: Vec<u8>,
 }
 
 impl Capturer {
     pub fn new(display: Display) -> io::Result<Capturer> {
-        // Calculate dimensions.
 
         let pixel_width = display.pixfmt().bytes_per_pixel();
         let rect = display.rect();
         let size = (rect.w as usize) * (rect.h as usize) * pixel_width;
 
-        // Create a shared memory segment.
 
         let shmid = unsafe {
             libc::shmget(
                 libc::IPC_PRIVATE,
                 size,
-                // Everyone can do anything.
                 libc::IPC_CREAT | 0o777,
             )
         };
@@ -36,7 +33,6 @@ impl Capturer {
             return Err(io::Error::last_os_error());
         }
 
-        // Attach the segment to a readable address.
 
         let buffer = unsafe { libc::shmat(shmid, ptr::null(), libc::SHM_RDONLY) } as *mut u8;
 
@@ -44,7 +40,6 @@ impl Capturer {
             return Err(io::Error::last_os_error());
         }
 
-        // Attach the segment to XCB.
 
         let server = display.server().raw();
         let xcbid = unsafe { xcb_generate_id(server) };
@@ -53,7 +48,7 @@ impl Capturer {
                 server,
                 xcbid,
                 shmid as u32,
-                0, // False, i.e. not read-only.
+                0,
             );
         }
 
@@ -104,11 +99,8 @@ impl Capturer {
 impl Drop for Capturer {
     fn drop(&mut self) {
         unsafe {
-            // Detach segment from XCB.
             xcb_shm_detach(self.display.server().raw(), self.xcbid);
-            // Detach segment from our space.
             libc::shmdt(self.buffer as *mut _);
-            // Destroy the shared memory segment.
             libc::shmctl(self.shmid, libc::IPC_RMID, ptr::null_mut());
         }
     }

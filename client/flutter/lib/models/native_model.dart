@@ -25,13 +25,9 @@ typedef F3 = Pointer<Uint8> Function(Pointer<Utf8>, int);
 typedef F3Dart = Pointer<Uint8> Function(Pointer<Utf8>, Int32);
 typedef HandleEvent = Future<void> Function(Map<String, dynamic> evt);
 
-/// The Linux bundle keeps the core library at lib/librustdesk.so next to the
-/// executable. Prefer that copy, mirroring flutter/linux/main.cc: the plain
-/// name relies on the loader search path, which repackaged installs may not
-/// cover. https://github.com/rustdesk/rustdesk/discussions/14407
 DynamicLibrary _openLinuxCoreLib() {
   final bundled =
-      '${File(Platform.resolvedExecutable).parent.path}/lib/librustdesk.so';
+      '${File(Platform.resolvedExecutable).parent.path}/lib/libsupportdesk.so';
   try {
     if (File(bundled).existsSync()) {
       return DynamicLibrary.open(bundled);
@@ -39,17 +35,14 @@ DynamicLibrary _openLinuxCoreLib() {
   } catch (e) {
     debugPrint("Failed to load '$bundled': $e");
   }
-  return DynamicLibrary.open('librustdesk.so');
+  return DynamicLibrary.open('libsupportdesk.so');
 }
 
-/// FFI wrapper around the native Rust core.
-/// Hides the platform differences.
 class PlatformFFI {
   String _dir = '';
-  // _homeDir is only needed for Android and IOS.
   String _homeDir = '';
   final _eventHandlers = <String, Map<String, HandleEvent>>{};
-  late RustdeskImpl _ffiBind;
+  late SupportdeskImpl _ffiBind;
   late String _appType;
   StreamEventHandler? _eventCallback;
 
@@ -58,9 +51,9 @@ class PlatformFFI {
   static final PlatformFFI instance = PlatformFFI._();
   final _toAndroidChannel = const MethodChannel('mChannel');
 
-  RustdeskImpl get ffiBind => _ffiBind;
+  SupportdeskImpl get ffiBind => _ffiBind;
   @visibleForTesting
-  void setBindingForTesting(RustdeskImpl binding) => _ffiBind = binding;
+  void setBindingForTesting(SupportdeskImpl binding) => _ffiBind = binding;
 
   F3? _session_get_rgba;
 
@@ -134,56 +127,41 @@ class PlatformFFI {
       _ffiBind.sessionRegisterGpuTexture(
           sessionId: sessionId, display: display, ptr: ptr);
 
-  /// Init the FFI class, loads the native Rust core library.
   Future<void> init(String appType) async {
     _appType = appType;
     final dylib = isAndroid
-        ? DynamicLibrary.open('librustdesk.so')
+        ? DynamicLibrary.open('libsupportdesk.so')
         : isLinux
             ? _openLinuxCoreLib()
             : isWindows
-                ? DynamicLibrary.open('librustdesk.dll')
+                ? DynamicLibrary.open('libsupportdesk.dll')
                 :
-                // Use executable itself as the dynamic library for MacOS.
-                // Multiple dylib instances will cause some global instances to be invalid.
-                // eg. `lazy_static` objects in rust side, will be created more than once, which is not expected.
-                //
-                // isMacOS? DynamicLibrary.open("liblibrustdesk.dylib") :
                 DynamicLibrary.process();
     debugPrint('initializing FFI $_appType');
     try {
       _session_get_rgba = dylib.lookupFunction<F3Dart, F3>("session_get_rgba");
       try {
-        // SYSTEM user failed
         _dir = (await getApplicationDocumentsDirectory()).path;
       } catch (e) {
         debugPrint('Failed to get documents directory: $e');
       }
-      _ffiBind = RustdeskImpl(dylib);
+      _ffiBind = SupportdeskImpl(dylib);
 
       if (isLinux) {
         if (isMain) {
-          // Start a dbus service for uri links, no need to await
           _ffiBind.mainStartDbusServer();
         }
       } else if (isMacOS && isMain) {
-        // Start ipc service for uri links.
         _ffiBind.mainStartIpcUrlServer();
       }
-      _startListenEvent(_ffiBind); // global event
+      _startListenEvent(_ffiBind);
       try {
         if (isAndroid) {
-          // Android file transfer uses app-specific storage. User-selected
-          // files enter and leave this workspace through the system picker.
           _homeDir = (await getExternalStorageDirectory())?.path ??
               (await getApplicationSupportDirectory()).path;
         } else if (isIOS) {
-          // The previous code was `_homeDir = (await getDownloadsDirectory())?.path ?? '';`,
-          // which provided the `downloads` path in the sandbox.
-          // It is unclear why we now use the `data` directory in the sandbox instead.
           _homeDir = _ffiBind.mainGetDataDirIos(appDir: _dir);
         } else {
-          // no need to set home dir
         }
       } catch (e) {
         debugPrintStack(label: 'initialize failed: $e');
@@ -206,7 +184,6 @@ class PlatformFFI {
         id = linuxInfo.machineId ?? linuxInfo.id;
       } else if (isWindows) {
         try {
-          // request windows build number to fix overflow on win7
           windowsBuildNumber = getWindowsTargetBuildNumber();
           WindowsDeviceInfo winInfo = await deviceInfo.windowsInfo;
           name = winInfo.computerName;
@@ -260,16 +237,14 @@ class PlatformFFI {
     return false;
   }
 
-  /// Start listening to the Rust core's events and frames.
-  void _startListenEvent(RustdeskImpl rustdeskImpl) {
+  void _startListenEvent(SupportdeskImpl supportdeskImpl) {
     final appType =
         _appType == kAppTypeDesktopRemote ? '$_appType,$kWindowId' : _appType;
-    var sink = rustdeskImpl.startGlobalEventStream(appType: appType);
+    var sink = supportdeskImpl.startGlobalEventStream(appType: appType);
     sink.listen((message) {
       () async {
         try {
           Map<String, dynamic> event = json.decode(message);
-          // _tryHandle here may be more flexible than _eventCallback
           if (!await tryHandle(event)) {
             if (_eventCallback != null) {
               await _eventCallback!(event);
@@ -288,11 +263,9 @@ class PlatformFFI {
 
   void setRgbaCallback(void Function(int, Uint8List) fun) async {}
 
-  // web only
   void setCursorDataCallback(
       void Function(String, int, int, int, int, Uint8List) fun) async {}
 
-  // web only, decoded WebCodecs frames arriving as ready-made images
   void setVideoFrameCallback(
       Future<void> Function(int, ui.Image, bool Function()) fun) {}
 

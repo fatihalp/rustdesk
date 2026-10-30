@@ -48,23 +48,11 @@ pub struct ProgressPercent {
     pub is_failed: bool,
 }
 
-// to-do: This trait may be removed, because unix file copy paste does not need it.
-/// Ability to handle Clipboard File from remote rustdesk client
-///
-/// # Note
-/// There actually should be 2 parts to implement a useable clipboard file service,
-/// but this only contains the RPC server part.
-/// The local listener and transport part is too platform specific to wrap up in typeclasses.
 pub trait CliprdrServiceContext: Send + Sync {
-    /// set to be stopped
     fn set_is_stopped(&mut self) -> Result<(), CliprdrError>;
-    /// clear the content on clipboard
     fn empty_clipboard(&mut self, conn_id: i32) -> Result<bool, CliprdrError>;
-    /// run as a server for clipboard RPC
     fn server_clip_file(&mut self, conn_id: i32, msg: ClipboardFile) -> Result<(), CliprdrError>;
-    /// get the progress of the paste task.
     fn get_progress_percent(&self) -> Option<ProgressPercent>;
-    /// cancel the paste task.
     fn cancel(&mut self);
 }
 
@@ -272,7 +260,6 @@ fn send_data_to_channel(conn_id: i32, data: ClipboardFile) -> Result<(), Cliprdr
 #[inline]
 #[cfg(target_os = "windows")]
 pub fn send_data_exclude(conn_id: i32, data: ClipboardFile) {
-    // Need more tests to see if it's necessary to handle the error.
     for msg_channel in VEC_MSG_CHANNEL.read().unwrap().iter() {
         if msg_channel.conn_id != conn_id {
             allow_err!(msg_channel.sender.send(data.clone()));
@@ -283,7 +270,6 @@ pub fn send_data_exclude(conn_id: i32, data: ClipboardFile) {
 #[inline]
 #[cfg(feature = "unix-file-copy-paste")]
 fn send_data_to_all(data: ClipboardFile) {
-    // Need more tests to see if it's necessary to handle the error.
     for msg_channel in VEC_MSG_CHANNEL.read().unwrap().iter() {
         allow_err!(msg_channel.sender.send(data.clone()));
     }

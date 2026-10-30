@@ -48,7 +48,6 @@ class _AddressBookState extends State<AddressBook> {
         } else {
           return Column(
             children: [
-              // NOT use Offstage to wrap LinearProgressIndicator
               if (gFFI.abModel.currentAbLoading.value &&
                   gFFI.abModel.currentAbEmpty)
                 const LinearProgressIndicator(),
@@ -60,7 +59,7 @@ class _AddressBookState extends State<AddressBook> {
               buildErrorBanner(context,
                   loading: gFFI.abModel.currentAbLoading,
                   err: gFFI.abModel.currentAbPushError,
-                  retry: null, // remove retry
+                  retry: null,
                   close: () => gFFI.abModel.currentAbPushError.value = ''),
               Expanded(
                 child: Obx(() => stateGlobal.isPortrait.isTrue
@@ -191,8 +190,6 @@ class _AddressBookState extends State<AddressBook> {
     if (!names.contains(gFFI.abModel.currentName.value)) {
       return Offstage();
     }
-    // order: personal, divider, character order
-    // https://pub.dev/packages/dropdown_button2#3-dropdownbutton2-with-items-of-different-heights-like-dividers
     final personalAddressBookName = gFFI.abModel.personalAddressBookName();
     bool contains = names.remove(personalAddressBookName);
     names.sort((a, b) => a.toLowerCase().compareTo(b.toLowerCase()));
@@ -427,7 +424,7 @@ class _AddressBookState extends State<AddressBook> {
       if (canWrite) getEntry(translate("Add Tag"), abAddTag),
       getEntry(translate("Unselect all tags"), gFFI.abModel.unsetSelectedTags),
       if (gFFI.abModel.legacyMode.value)
-        sortMenuItem(), // It's already sorted after pulling down
+        sortMenuItem(),
       if (canWrite) syncMenuItem(),
       filterMenuItem(),
       if (!gFFI.abModel.legacyMode.value && canWrite)
@@ -481,7 +478,6 @@ class _AddressBookState extends State<AddressBook> {
         });
         String id = idController.id;
         if (id.isEmpty) {
-          // pass
         } else {
           if (gFFI.abModel.idContainByCurrent(id)) {
             setState(() {
@@ -507,7 +503,6 @@ class _AddressBookState extends State<AddressBook> {
             });
             return;
           }
-          // final currentPeers
         }
         close();
       }
@@ -663,7 +658,6 @@ class _AddressBookState extends State<AddressBook> {
                   style: TextStyle(fontSize: 12),
                 )
               ]).marginSymmetric(vertical: 10),
-            // NOT use Offstage to wrap LinearProgressIndicator
             if (isInProgress) const LinearProgressIndicator(),
           ],
         ),
@@ -690,7 +684,6 @@ class _AddressBookState extends State<AddressBook> {
         });
         field = controller.text.trim();
         if (field.isEmpty) {
-          // pass
         } else {
           final tags = field.trim().split(RegExp(r"[\s,;\n]+"));
           field = tags.join(',');
@@ -703,7 +696,6 @@ class _AddressBookState extends State<AddressBook> {
             }
           }
           gFFI.abModel.addTags(tags);
-          // final currentPeers
         }
         close();
       }
@@ -734,7 +726,6 @@ class _AddressBookState extends State<AddressBook> {
             const SizedBox(
               height: 4.0,
             ),
-            // NOT use Offstage to wrap LinearProgressIndicator
             if (isInProgress) const LinearProgressIndicator(),
           ],
         ),

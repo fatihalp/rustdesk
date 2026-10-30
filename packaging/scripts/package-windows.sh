@@ -1,5 +1,4 @@
 #!/usr/bin/env bash
-# Brands the base Windows client, Authenticode-signs it and zips it. Output: work/out/<name>.zip
 set -euo pipefail
 : "${WINDOWS_CERT_PFX:?}" "${WINDOWS_CERT_PASSWORD:?}"
 cd work
@@ -9,7 +8,7 @@ file_name="$(printf '%s' "$name" | tr -cd 'A-Za-z0-9 ._-')"
 
 mkdir -p out/pkg
 unzip -q client-base-windows.zip -d out/pkg
-exe_src="$(find out/pkg -maxdepth 2 -iname 'rustdesk.exe' -print -quit)"
+exe_src="$(find out/pkg -maxdepth 2 -iname 'supportdesk.exe' -print -quit)"
 dir="$(dirname "$exe_src")"
 exe="$dir/$file_name.exe"
 mv "$exe_src" "$exe"

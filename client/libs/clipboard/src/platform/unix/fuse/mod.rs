@@ -16,13 +16,11 @@ use std::{
 lazy_static::lazy_static! {
     static ref FUSE_MOUNT_POINT_CLIENT: Arc<String> = {
         let mnt_path = fuse_mount_point("cliprdr-client");
-        // No need to run `canonicalize()` here.
         Arc::new(mnt_path)
     };
 
     static ref FUSE_MOUNT_POINT_SERVER: Arc<String> = {
         let mnt_path = fuse_mount_point("cliprdr-server");
-        // No need to run `canonicalize()` here.
         Arc::new(mnt_path)
     };
 
@@ -125,13 +123,11 @@ pub fn init_fuse_context(is_client: bool) -> Result<(), CliprdrError> {
 
     prepare_fuse_mount_point(&mount_point)?;
     let mnt_opts = [
-        MountOption::FSName("rustdesk-cliprdr-fs".to_string()),
+        MountOption::FSName("supportdesk-cliprdr-fs".to_string()),
         MountOption::NoAtime,
         MountOption::RO,
     ];
     log::info!("mounting clipboard FUSE to {}", mount_point.display());
-    // to-do: ignore the error if the mount point is already mounted
-    // Because the sciter version uses separate processes as the controlling side.
     let session = fuser::spawn_mount2(
         FuseServer::client(server.clone()),
         mount_point.clone(),
@@ -177,7 +173,6 @@ pub fn handle_file_content_response(
     is_client: bool,
     clip: ClipboardFile,
 ) -> Result<(), CliprdrError> {
-    // we don't know its corresponding request, no resend can be performed
     let ctx = if is_client {
         FUSE_CONTEXT_CLIENT.lock()
     } else {
@@ -209,13 +204,10 @@ struct FuseContext {
     server: Arc<Mutex<FuseServer>>,
     tx: Sender<ClipboardFile>,
     mount_point: PathBuf,
-    // stores fuse background session handle
     session: Mutex<Option<fuser::BackgroundSession>>,
-    // Indicates the connection ID of that set the clipboard content
     conn_id: i32,
 }
 
-// this function must be called after the main IPC is up
 fn prepare_fuse_mount_point(mount_point: &PathBuf) -> Result<(), CliprdrError> {
     use std::{
         fs::{self, Permissions},
@@ -503,12 +495,12 @@ mod tests {
     #[test]
     fn classifies_mount_point_state_from_metadata_and_mountinfo() {
         let mount_point = std::env::temp_dir().join(format!(
-            "rustdesk-fuse-mount-state-test-{}-{}",
+            "supportdesk-fuse-mount-state-test-{}-{}",
             std::process::id(),
             line!()
         ));
         let mountinfo = format!(
-            "123 1 0:45 / {} rw,nosuid,nodev - fuse.rustdesk rustdesk rw\n",
+            "123 1 0:45 / {} rw,nosuid,nodev - fuse.supportdesk supportdesk rw\n",
             mount_point.display()
         );
 
@@ -533,7 +525,7 @@ mod tests {
     #[cfg(target_family = "unix")]
     fn rejects_symlink_mount_point() {
         let base = std::env::temp_dir().join(format!(
-            "rustdesk-fuse-symlink-test-{}-{}",
+            "supportdesk-fuse-symlink-test-{}-{}",
             std::process::id(),
             line!()
         ));

@@ -43,7 +43,7 @@ pub(in crate::platform::windows) fn path() -> ResultType<PathBuf> {
         }
     }
     Ok(temporary.join(format!(
-        "rustdesk-install-{}",
+        "supportdesk-install-{}",
         uuid::Uuid::new_v4().simple()
     )))
 }
@@ -51,9 +51,6 @@ pub(in crate::platform::windows) fn path() -> ResultType<PathBuf> {
 pub(super) fn create(path: &Path) -> ResultType<()> {
     let wide_path = wide_string(path_for_cmd_environment(path)?);
     let mut descriptor = PSECURITY_DESCRIPTOR::default();
-    // OWNER RIGHTS removes the ordinary creator's implicit WRITE_DAC permission.
-    // The owner can inspect the ACL, but only Administrators/SYSTEM can modify contents.
-    // https://learn.microsoft.com/windows-server/identity/ad-ds/manage/understand-special-identities-groups#owner-rights
     unsafe {
         ConvertStringSecurityDescriptorToSecurityDescriptorW(
             w!("D:P(A;OICI;FA;;;SY)(A;OICI;FA;;;BA)(A;OICI;RC;;;OW)"),
@@ -104,10 +101,8 @@ mod tests {
     fn protected_directory_enforces_creator_permissions() {
         let elevated =
             super::super::super::is_elevated(None).expect("creator elevation should be available");
-        // The user-owned parent allows cleanup through DELETE_CHILD. AccessCheck
-        // below checks the child's DACL, not that separate parent permission.
         let directory = std::env::temp_dir().join(format!(
-            "rustdesk_installer_acl_{}",
+            "supportdesk_installer_acl_{}",
             uuid::Uuid::new_v4().simple()
         ));
         create(&directory).expect("production directory creation should succeed");

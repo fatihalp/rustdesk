@@ -24,7 +24,7 @@ extern "C" fn breakdown_signal_handler(sig: i32) {
                 stack.push(name.to_string());
             }
         });
-        true // keep going to the next frame
+        true
     });
     let mut info = String::default();
     if stack.iter().any(|s| {
@@ -55,7 +55,7 @@ extern "C" fn breakdown_signal_handler(sig: i32) {
     if !info.is_empty() {
         #[cfg(target_os = "linux")]
         linux::system_message(
-            "RustDesk",
+            "SupportDesk",
             &format!("Got signal {} and exit.{}", sig, info),
             true,
         )

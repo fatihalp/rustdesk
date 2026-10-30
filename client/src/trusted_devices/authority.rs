@@ -63,7 +63,6 @@ pub(super) fn authorize<T>(
     scope: &[u8; TOKEN_BYTES],
     apply: impl FnOnce(&mut super::Grants, u32) -> ResultType<(T, bool)>,
 ) -> ResultType<T> {
-    // Configuration errors take precedence even if the grant lock is unavailable.
     let storage = super::storage();
     let settings = super::config::snapshot()?;
     if !settings.enabled || settings.totp.is_empty() {

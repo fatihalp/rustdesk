@@ -242,7 +242,6 @@ def main():
             print("Found 0 users")
             return
         
-        # Check if we need user confirmation for multiple users
         if len(users) > 1:
             print(f"Found {len(users)} users. Do you want to proceed with {args.command} operation on the users? (Y/N)")
             confirmation = input("Type 'Y' to confirm: ").strip()

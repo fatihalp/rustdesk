@@ -164,7 +164,6 @@ class _MyGroupState extends State<MyGroup> {
         }
         return true;
       }).toList();
-      // Count occurrences of each displayNameOrName to detect duplicates
       final displayNameCount = <String, int>{};
       for (final u in userItems) {
         final dn = u.displayNameOrName;

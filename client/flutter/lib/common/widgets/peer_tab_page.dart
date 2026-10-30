@@ -339,8 +339,6 @@ class _PeerTabPageState extends State<PeerTabPage>
           currentValue: model.isVisibleEnabled[tabIndex],
           setter: (show) async {
             model.setTabVisible(tabIndex, show);
-            // Do not hide the current menu (checkbox)
-            // cancelFunc();
           },
           enabled: (!isOptVisiableFixed).obs));
     }
@@ -434,7 +432,7 @@ class _PeerTabPageState extends State<PeerTabPage>
     final model = Provider.of<PeerTabModel>(context);
     return Offstage(
       offstage:
-          model.currentTab != PeerTabIndex.recent.index, // show based on recent
+          model.currentTab != PeerTabIndex.recent.index,
       child: _hoverAction(
         context: context,
         toolTip: translate('Add to Favorites'),
@@ -644,7 +642,6 @@ class _PeerTabPageState extends State<PeerTabPage>
       );
     }
 
-    // Always show search, refresh
     List<Widget> actions = [
       const PeerSearchBar(),
       if (model.currentTab == PeerTabIndex.ab.index)
@@ -767,7 +764,6 @@ class _PeerSearchBarState extends State<PeerSearchBar> {
                         ),
                       ).workaroundFreezeLinuxMint(),
                     ),
-                    // Icon(Icons.close),
                     IconButton(
                       alignment: Alignment.centerRight,
                       padding: const EdgeInsets.only(right: 2),

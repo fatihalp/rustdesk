@@ -12,12 +12,10 @@ extern "system" {
     pub fn GetLastError() -> DWORD;
 }
 
-/// The main struct for handling the event emitting
 #[derive(Default)]
 pub struct Enigo;
 static mut LAYOUT: HKL = std::ptr::null_mut();
 
-/// The dwExtraInfo value in keyboard and mouse structure that used in SendInput()
 pub const ENIGO_INPUT_EXTRA_VALUE: ULONG_PTR = 100;
 
 fn mouse_event(flags: u32, data: u32, dx: i32, dy: i32) -> DWORD {
@@ -39,9 +37,6 @@ fn mouse_event(flags: u32, data: u32, dx: i32, dy: i32) -> DWORD {
     unsafe { SendInput(1, &mut input as LPINPUT, size_of::<INPUT>() as c_int) }
 }
 
-// `v` comes from the remote peer unchecked, so scale in i64 to avoid overflow, and clamp to
-// the 0..=65535 range MOUSEEVENTF_ABSOLUTE takes.
-// `extent` is 0 when the virtual screen metrics are unavailable.
 fn to_absolute(v: i32, origin: i32, extent: i32) -> Option<i32> {
     if extent <= 0 {
         return None;
@@ -53,7 +48,6 @@ fn to_absolute(v: i32, origin: i32, extent: i32) -> Option<i32> {
 fn keybd_event(mut flags: u32, vk: u16, scan: u16) -> DWORD {
     let mut scan = scan;
     unsafe {
-        // https://github.com/rustdesk/rustdesk/issues/366
         if scan == 0 {
             if LAYOUT.is_null() {
                 let current_window_thread_id =
@@ -246,13 +240,6 @@ impl KeyboardControllable for Enigo {
         let mut buffer = [0; 2];
 
         for c in sequence.chars() {
-            // Windows uses uft-16 encoding. We need to check
-            // for variable length characters. As such some
-            // characters can be 32 bit long and those are
-            // encoded in so-called high and low surrogates
-            // each 16 bit wide that needs to be send after
-            // another to the SendInput function without
-            // being interrupted by "keyup"
             let result = c.encode_utf16(&mut buffer);
             if result.len() == 1 {
                 self.unicode_key_click(result[0]);
@@ -260,8 +247,6 @@ impl KeyboardControllable for Enigo {
                 for utf16_surrogate in result {
                     self.unicode_key_down(utf16_surrogate.clone());
                 }
-                // do i need to produce a keyup?
-                // self.unicode_key_up(0);
             }
         }
     }
@@ -275,8 +260,6 @@ impl KeyboardControllable for Enigo {
     fn key_down(&mut self, key: Key) -> crate::ResultType {
         match &key {
             Key::Layout(c) => {
-                // to-do: dup code
-                // https://github.com/rustdesk/rustdesk/blob/1bc0dd791ed8344997024dc46626bd2ca7df73d2/src/server/input_service.rs#L1348
                 let code = self.get_layoutdependent_keycode(*c);
                 if code as u16 != 0xFFFF {
                     let vk = code & 0x00FF;
@@ -349,29 +332,12 @@ impl KeyboardControllable for Enigo {
 }
 
 impl Enigo {
-    /// Gets the (width, height) of the main display in screen coordinates
-    /// (pixels).
-    ///
-    /// # Example
-    ///
-    /// ```no_run
-    /// use enigo::*;
-    /// let mut size = Enigo::main_display_size();
-    /// ```
     pub fn main_display_size() -> (usize, usize) {
         let w = unsafe { GetSystemMetrics(SM_CXSCREEN) as usize };
         let h = unsafe { GetSystemMetrics(SM_CYSCREEN) as usize };
         (w, h)
     }
 
-    /// Gets the location of mouse in screen coordinates (pixels).
-    ///
-    /// # Example
-    ///
-    /// ```no_run
-    /// use enigo::*;
-    /// let mut location = Enigo::mouse_location();
-    /// ```
     pub fn mouse_location() -> (i32, i32) {
         let mut point = POINT { x: 0, y: 0 };
         let result = unsafe { GetCursorPos(&mut point) };
@@ -396,12 +362,7 @@ impl Enigo {
     }
 
     fn key_to_keycode(&self, key: Key) -> u16 {
-        // do not use the codes from crate winapi they're
-        // wrongly typed with i32 instead of i16 use the
-        // ones provided by win/keycodes.rs that are prefixed
-        // with an 'E' infront of the original name
         #[allow(deprecated)]
-        // I mean duh, we still need to support deprecated keys until they're removed
         match key {
             Key::Alt => EVK_MENU,
             Key::Backspace => EVK_BACK,
@@ -483,7 +444,6 @@ impl Enigo {
             Key::Raw(raw_keycode) => raw_keycode,
             Key::Super | Key::Command | Key::Windows | Key::Meta => EVK_LWIN,
             Key::Layout(..) => {
-                // unreachable
                 0
             }
         }
@@ -493,9 +453,6 @@ impl Enigo {
         unsafe {
             LAYOUT = std::ptr::null_mut();
         }
-        // NOTE VkKeyScanW uses the current keyboard LAYOUT
-        // to specify a LAYOUT use VkKeyScanExW and GetKeyboardLayout
-        // or load one with LoadKeyboardLayoutW
         let current_window_thread_id =
             unsafe { GetWindowThreadProcessId(GetForegroundWindow(), std::ptr::null_mut()) };
         unsafe { LAYOUT = GetKeyboardLayout(current_window_thread_id) };

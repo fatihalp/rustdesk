@@ -15,12 +15,8 @@ fn build_c_impl() {
         build.define("WIN32", "");
         build.flag("-Z7");
         build.flag("-GR-");
-        // build.flag("-std:c++11");
     } else {
         build.flag("-fPIC");
-        // build.flag("-std=c++11");
-        // build.flag("-include");
-        // build.flag(&confdefs_path.to_string_lossy());
     }
 
     #[cfg(target_os = "windows")]

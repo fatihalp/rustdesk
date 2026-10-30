@@ -151,7 +151,6 @@ pub fn get_license() -> String {
     if let Ok(lic) = crate::platform::windows::get_license_from_exe_name() {
         #[cfg(feature = "flutter")]
         return format!("Key: {}\nHost: {}\nAPI: {}", lic.key, lic.host, lic.api);
-        // default license format is html formed (sciter)
         #[cfg(not(feature = "flutter"))]
         return format!(
             "<br /> Key: {} <br /> Host: {} API: {}",
@@ -206,7 +205,6 @@ pub fn use_texture_render() -> bool {
         if !cfg!(feature = "flutter") {
             return false;
         }
-        // https://learn.microsoft.com/en-us/windows/win32/sysinfo/targeting-your-application-at-windows-8-1
         #[cfg(debug_assertions)]
         let default_texture = true;
         #[cfg(not(debug_assertions))]
@@ -258,8 +256,6 @@ pub fn set_local_option(key: String, value: String) {
     LocalConfig::set_option(key.clone(), value);
 }
 
-/// Resolve relative avatar path (e.g. "/avatar/xxx") to absolute URL
-/// by prepending the API server address.
 pub fn resolve_avatar_url(avatar: String) -> String {
     let avatar = avatar.trim().to_owned();
     if avatar.starts_with('/') {
@@ -377,8 +373,6 @@ pub fn get_sound_inputs() -> Vec<String> {
         fn get_sound_inputs_() -> Vec<String> {
             let mut out = Vec::new();
             use cpal::traits::{DeviceTrait, HostTrait};
-            // Do not use `cpal::host_from_id(cpal::HostId::ScreenCaptureKit)` for feature = "screencapturekit"
-            // Because we explicitly handle the "System Sound" device.
             let host = cpal::default_host();
             if let Ok(devices) = host.devices() {
                 for device in devices {
@@ -395,7 +389,6 @@ pub fn get_sound_inputs() -> Vec<String> {
 
         let inputs = Arc::new(Mutex::new(Vec::new()));
         let cloned = inputs.clone();
-        // can not call below in UI thread, because conflict with sciter sound com initialization
         std::thread::spawn(move || *cloned.lock().unwrap() = get_sound_inputs_())
             .join()
             .ok();
@@ -574,7 +567,6 @@ pub fn get_proxy_status() -> bool {
     #[cfg(not(any(target_os = "android", target_os = "ios")))]
     return ipc::get_proxy_status();
 
-    // Currently, only the desktop version has proxy settings.
     #[cfg(any(target_os = "android", target_os = "ios"))]
     return false;
 }
@@ -660,8 +652,6 @@ pub fn is_permanent_password_set() -> bool {
     #[cfg(not(any(target_os = "android", target_os = "ios")))]
     {
         let daemon_is_set = ipc::is_permanent_password_set();
-        // `daemon_is_set` is authoritative for the return value. Local storage is only used to
-        // decide whether we should attempt a sync to clear stale user-side state.
         let local_storage_is_empty = if daemon_is_set {
             true
         } else {
@@ -907,7 +897,6 @@ pub fn change_id(id: String) {
 
 #[inline]
 pub fn http_request(url: String, method: String, body: Option<String>, header: String) {
-    // Respond to concurrent requests for resources
     let current_request = ASYNC_HTTP_STATUS.clone();
     current_request
         .lock()
@@ -963,8 +952,6 @@ pub fn get_langs() -> String {
     json!(x).to_string()
 }
 
-// Preserve relative paths for existing configurations and only remove accidental
-// surrounding whitespace. Config values are not shell-expanded (for example, `~`).
 fn trim_video_save_directory(value: &str) -> Option<&str> {
     let value = value.trim();
     if !value.is_empty() {
@@ -974,8 +961,6 @@ fn trim_video_save_directory(value: &str) -> Option<&str> {
     }
 }
 
-// A Windows service typically runs with System32 as its working directory, so
-// require an absolute path to avoid resolving recordings there unexpectedly.
 #[cfg(any(windows, test))]
 fn validate_windows_service_video_save_directory(value: &str) -> Option<&str> {
     let value = trim_video_save_directory(value)?;
@@ -989,7 +974,6 @@ fn validate_windows_service_video_save_directory(value: &str) -> Option<&str> {
 #[inline]
 pub fn video_save_directory(root: bool) -> String {
     let appname = crate::get_app_name();
-    // ui process can show it correctly Once vidoe process created it.
     let try_create = |path: &std::path::Path| {
         if !path.exists() {
             std::fs::create_dir_all(path).ok();
@@ -1002,7 +986,6 @@ pub fn video_save_directory(root: bool) -> String {
     };
 
     if root {
-        // Currently, only installed windows run as root
         #[cfg(windows)]
         {
             let dir = Config::get_option(OPTION_WINDOWS_SERVICE_VIDEO_SAVE_DIRECTORY);
@@ -1020,7 +1003,6 @@ pub fn video_save_directory(root: bool) -> String {
             return dir.to_string_lossy().to_string();
         }
     }
-    // Get directory from config file otherwise --server will use the old value from global var.
     #[cfg(any(target_os = "linux", target_os = "macos"))]
     let dir = LocalConfig::get_option_from_file(OPTION_VIDEO_SAVE_DIRECTORY);
     #[cfg(not(any(target_os = "linux", target_os = "macos")))]
@@ -1059,7 +1041,6 @@ pub fn video_save_directory(root: bool) -> String {
         }
     }
 
-    // same order as above
     #[cfg(not(any(target_os = "android", target_os = "ios")))]
     if let Some(home) = crate::platform::get_active_user_home() {
         let name = if cfg!(target_os = "macos") {
@@ -1090,7 +1071,6 @@ pub fn video_save_directory(root: bool) -> String {
             if !dir.is_empty() {
                 return dir;
             }
-            // basically exist
             return parent.to_string_lossy().to_string();
         }
     }
@@ -1203,7 +1183,6 @@ pub fn deploy_device(token: String, new_id: Option<String>) -> DeployResult {
 
 #[inline]
 pub fn has_hwcodec() -> bool {
-    // Has real hardware codec using gpu
     (cfg!(feature = "hwcodec") && cfg!(not(target_os = "ios"))) || cfg!(feature = "mediacodec")
 }
 
@@ -1221,7 +1200,6 @@ pub fn supported_hwdecodings() -> (bool, bool) {
     let (mut h264, mut h265) = (decoding.ability_h264 > 0, decoding.ability_h265 > 0);
     #[cfg(feature = "vram")]
     {
-        // supported_decodings check runtime luid
         let vram = scrap::vram::VRamDecoder::possible_available_without_check();
         if vram.0 {
             h264 = true;
@@ -1294,7 +1272,7 @@ pub fn new_remote(id: String, remote_type: String, force_relay: bool) {
     let mut lock = CHILDREN.lock().unwrap();
     let mut args = vec![format!("--{}", remote_type), id.clone()];
     if force_relay {
-        args.push("".to_string()); // password
+        args.push("".to_string());
         args.push("--relay".to_string());
     }
     let key = (id.clone(), remote_type.clone());
@@ -1322,14 +1300,12 @@ pub fn new_remote(id: String, remote_type: String, force_relay: bool) {
     }
 }
 
-// Make sure `SENDER` is inited here.
 #[inline]
 #[cfg(not(any(target_os = "android", target_os = "ios")))]
 pub fn start_option_status_sync() {
     let _sender = SENDER.lock().unwrap();
 }
 
-// not call directly
 #[cfg(not(any(target_os = "android", target_os = "ios")))]
 fn check_connect_status(reconnect: bool) -> mpsc::UnboundedSender<ipc::Data> {
     let (tx, rx) = mpsc::unbounded_channel::<ipc::Data>();
@@ -1378,7 +1354,6 @@ pub fn get_fingerprint() -> String {
 #[inline]
 pub fn get_login_device_info() -> LoginDeviceInfo {
     LoginDeviceInfo {
-        // std::env::consts::OS is better than whoami::platform() here.
         os: std::env::consts::OS.to_owned(),
         r#type: "client".to_owned(),
         name: crate::common::hostname(),
@@ -1390,8 +1365,6 @@ pub fn get_login_device_info_json() -> String {
     serde_json::to_string(&get_login_device_info()).unwrap_or("{}".to_string())
 }
 
-// notice: avoiding create ipc connection repeatedly,
-// because windows named pipe has serious memory leak issue.
 #[cfg(not(any(target_os = "android", target_os = "ios")))]
 #[tokio::main(flavor = "current_thread")]
 async fn check_connect_status_(reconnect: bool, rx: mpsc::UnboundedReceiver<ipc::Data>) {
@@ -1407,7 +1380,7 @@ async fn check_connect_status_(reconnect: bool, rx: mpsc::UnboundedReceiver<ipc:
 
     loop {
         if let Ok(mut c) = ipc::connect(1000, "").await {
-            let mut timer = crate::rustdesk_interval(time::interval(time::Duration::from_secs(1)));
+            let mut timer = crate::supportdesk_interval(time::interval(time::Duration::from_secs(1)));
             loop {
                 tokio::select! {
                     res = c.next() => {
@@ -1670,7 +1643,6 @@ async fn check_id(
     ""
 }
 
-// if it's relay id, return id processed, otherwise return original id
 pub fn handle_relay_id(id: &str) -> &str {
     if id.ends_with(r"\r") || id.ends_with(r"/r") {
         &id[0..id.len() - 2]

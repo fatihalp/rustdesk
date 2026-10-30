@@ -7,12 +7,9 @@ from hashlib import md5
 import brotli
 import datetime
 
-# 4GB maximum
 length_count = 4
-# encoding
 encoding = 'utf-8'
 
-# output: {path: (compressed_data, file_md5)}
 
 
 def normalize(path: str) -> str:
@@ -26,11 +23,9 @@ def generate_md5_table(folder: str, level, exclude: str = None) -> dict:
     res: dict = dict()
     skip = normalize(exclude) if exclude else None
     excluded = False
-    # os.curdir is the literal ".", so restoring it left us inside `folder`.
     curdir = os.getcwd()
     os.chdir(folder)
     for root, _, files in os.walk('.'):
-        # remove ./
         for f in files:
             md5_generator = md5()
             full_path = os.path.join(root, f)
@@ -58,23 +53,18 @@ def write_package_metadata(md5_table: dict, output_folder: str, exe: str):
 
 def write_blob(md5_table: dict, output_path: str, exe: str):
     with open(output_path, "wb") as f:
-        f.write("rustdesk".encode(encoding=encoding))
+        f.write("supportdesk".encode(encoding=encoding))
         for path in md5_table.keys():
             (compressed_data, md5_code) = md5_table[path]
             data_length = len(compressed_data)
             path = path.encode(encoding=encoding)
-            # path length & path
             f.write((len(path)).to_bytes(length=length_count, byteorder='big'))
             f.write(path)
-            # data length & compressed data
             f.write(data_length.to_bytes(
                 length=length_count, byteorder='big'))
             f.write(compressed_data)
-            # md5 code
             f.write(md5_code)
-        # end
-        f.write("rustdesk".encode(encoding=encoding))
-        # executable
+        f.write("supportdesk".encode(encoding=encoding))
         f.write(exe.encode(encoding='utf-8'))
     print(f"Metadata has been written to {output_path}")
 
@@ -95,8 +85,6 @@ def build_portable(output_folder: str, target: str):
     finally:
         os.chdir(current_dir)
 
-# Linux: python3 generate.py -f ../rustdesk-portable-packer/test -o . -e ./test/main.py
-# Windows: python3 .\generate.py -f ..\rustdesk\flutter\build\windows\runner\Debug\ -o . -e ..\rustdesk\flutter\build\windows\runner\Debug\rustdesk.exe
 
 
 if __name__ == '__main__':
@@ -106,7 +94,7 @@ if __name__ == '__main__':
     parser.add_option("-o", "--output", dest="output_folder",
                       help="the root of portable packer project, default is './'")
     parser.add_option("-e", "--executable", dest="executable",
-                      help="specify startup file in --folder, default is rustdesk.exe")
+                      help="specify startup file in --folder, default is supportdesk.exe")
     parser.add_option("-t", "--target", dest="target",
                       help="the target used by cargo")
     parser.add_option("-l", "--level", dest="level", type="int",
@@ -120,17 +108,13 @@ if __name__ == '__main__':
                       help="omit the executable from the blob, for a template whose "
                            "executable ships in the package instead")
     (options, args) = parser.parse_args()
-    folder = options.folder or './rustdesk'
+    folder = options.folder or './supportdesk'
     output_folder = os.path.abspath(options.output_folder or './')
 
     if not options.executable:
-        options.executable = 'rustdesk.exe'
+        options.executable = 'supportdesk.exe'
     if not options.executable.startswith(folder):
         options.executable = folder + '/' + options.executable
-    # Note: the simple check `options.executable.startswith(folder)` is incorrect.
-    # `python generate.py -f rustdesk -e rustdesk.exe` or `python generate.py -f rustdesk`
-    # will result the print "Executable path: ..exe".
-    # So we need to check if the executable is in the folder, and if so, concat again.
     if os.path.exists(os.path.join(folder, options.executable)):
         options.executable = os.path.join(folder, options.executable)
     folder_path = os.path.abspath(folder)

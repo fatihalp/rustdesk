@@ -1,5 +1,4 @@
 #!/usr/bin/env bash
-# Brands the base .app, then signs, notarizes and packs it into a dmg. Output: work/out/<name>.dmg
 set -euo pipefail
 : "${MACOS_CERT_P12:?}" "${MACOS_CERT_PASSWORD:?}" "${MACOS_SIGN_IDENTITY:?}" "${APPLE_ID:?}" "${APPLE_TEAM_ID:?}" "${APPLE_APP_PASSWORD:?}"
 cd work

@@ -8,22 +8,14 @@
 
 		<SummaryInformation Keywords="Installer" Description="$(var.Description)" Codepage="!(loc.SummaryCodepage)" />
 
-		<!--<PropertyRef Id="UpgradesFile" />-->
-
+		
 		<PropertyRef Id="AddRemovePropertiesFile" />
 
 		<Media Id="1" Cabinet="cab1.cab" EmbedCab="yes" CompressionLevel="high" />
-		<!--$Media2Start$-->
-		<!-- preprocess.py in template mode adds a second cabinet here, holding only
-		     the files that differ per customer, so a custom client can be produced by
-		     rebuilding that small cabinet instead of the whole package. The shipped
-		     msi is built without template mode and keeps a single cabinet. -->
-		<!--$Media2End$-->
-		<Icon Id="AppIcon" SourceFile="Resources\icon.ico" />
+								<Icon Id="AppIcon" SourceFile="Resources\icon.ico" />
 		<CustomAction Id="BlockSelfInstalledApp" Error="!(loc.AnotherAppDialogDescription)" />
 
-		<!-- User Interface -->
-		<WixVariable Id="WixUILicenseRtf" Value="License.rtf" />
+				<WixVariable Id="WixUILicenseRtf" Value="License.rtf" />
 
 		<ui:WixUI Id="UI_MyInstallDialog" InstallDirectory="INSTALLFOLDER_INNER" />
 		<UIRef Id="WixUI_ErrorProgressText" />
@@ -36,10 +28,7 @@
 			<Custom Action="BlockSelfInstalledApp" After="AppSearch" Condition="NOT Installed AND (APP_WINDOWS_INSTALLER=&quot;#0&quot; OR APP_WINDOWS_INSTALLER32=&quot;#0&quot;)" />
 			<InstallExecute After="RemoveExistingProducts" />
 
-			<!--Only do InstallValidate if is not Uninstall-->
-			<!--<InstallValidate Condition="NOT (Installed AND REMOVE AND NOT UPGRADINGPRODUCTCODE )" />-->
-			<!--Only do InstallValidate if is Install-->
-			<InstallValidate Condition="NOT Installed" />
+												<InstallValidate Condition="NOT Installed" />
 
 		</InstallExecuteSequence>
 
@@ -65,8 +54,5 @@
 			<ComponentRef Id="Product.Registry.PersistedPrinterProperties0" />
 		</Feature>
 
-		<!--https://wixtoolset.org/docs/tools/wixext/wixui/#customizing-a-dialog-set-->
-		<!--$CustomBitmapsStart$-->
-		<!--$CustomBitmapsEnd$-->
-	</Package>
+							</Package>
 </Wix>

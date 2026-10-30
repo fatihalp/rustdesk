@@ -185,9 +185,8 @@ internal class DocumentTree(
         private const val MILLIS_PER_SECOND = 1000L
         const val EXISTS_MESSAGE = "A file already exists at the destination. Rename the file or select another folder."
         fun temporaryName(name: String, purpose: String): String {
-            // Providers can append the MIME extension when renaming; preserve it for temporary files.
             val extension = name.substringAfterLast('.', "").let { if (it.isEmpty()) "" else ".$it" }
-            return ".rustdesk-${UUID.randomUUID()}.$purpose$extension"
+            return ".supportdesk-${UUID.randomUUID()}.$purpose$extension"
         }
 
         fun mime(name: String): String = MimeTypeMap.getSingleton()

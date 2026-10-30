@@ -1,4 +1,3 @@
-//! Keyboard shortcuts for triggering session actions locally.
 
 use std::sync::{Arc, RwLock};
 
@@ -11,10 +10,6 @@ lazy_static::lazy_static! {
     static ref CACHE: RwLock<Arc<Bindings>> = RwLock::new(Arc::new(Bindings::default()));
 }
 
-/// Registry of all valid action ids that may appear in `Binding.action`.
-/// Source-of-truth lives on the Flutter side (`flutter/lib/consts.dart`,
-/// `kShortcutAction*`); these mirror that vocabulary so Rust code can reach
-/// for them without re-stringifying.
 #[allow(dead_code)]
 pub mod action_id {
     pub const SEND_CTRL_ALT_DEL: &str    = "send_ctrl_alt_del";
@@ -94,10 +89,6 @@ pub struct Binding {
 pub struct Bindings {
     #[serde(default)]
     pub enabled: bool,
-    /// Persistent companion to `enabled`: when true, the matcher returns early
-    /// and every keystroke flows through to the remote (i.e. all bindings are
-    /// suspended). Stored alongside `enabled` and `bindings` so a single
-    /// reload refreshes both flags.
     #[serde(default)]
     pub pass_through: bool,
     #[serde(default)]
@@ -106,8 +97,6 @@ pub struct Bindings {
 
 pub fn default_bindings() -> Vec<Binding> {
     let prefix = || vec![Modifier::Primary, Modifier::Alt, Modifier::Shift];
-    // Defaults align with AnyDesk's M/S/I/C/Delete/Arrow/Digit conventions
-    // where applicable; "P" for screenshot also matches AnyDesk.
     vec![
         Binding { action: action_id::SEND_CTRL_ALT_DEL.into(),         mods: prefix(), key: "delete".into() },
         Binding { action: action_id::TOGGLE_FULLSCREEN.into(),         mods: prefix(), key: "enter".into() },
@@ -121,17 +110,6 @@ pub fn default_bindings() -> Vec<Binding> {
     ]
 }
 
-/// Match a normalized (key, modifiers) pair against the given bindings.
-/// Returns the matched action ID, or None when the matcher is off
-/// (`enabled == false`), suspended (`pass_through == true`), or no binding
-/// fires for this combo.
-///
-/// Defense-in-depth: bindings with an empty modifier list are skipped here
-/// even though the recording dialog refuses to save them. A hand-edited
-/// config (or a future writer-side bug) that lets an empty-mods binding
-/// through would otherwise turn that key's every press into a swallowed
-/// shortcut, breaking normal typing in the remote session — a much worse
-/// failure than the binding simply not firing.
 pub fn match_normalized<'a>(key: &str, mods: &[Modifier], b: &'a Bindings) -> Option<&'a str> {
     if !b.enabled || b.pass_through {
         return None;
@@ -148,8 +126,6 @@ pub fn match_normalized<'a>(key: &str, mods: &[Modifier], b: &'a Bindings) -> Op
 }
 
 pub fn normalize_modifiers(alt: bool, ctrl: bool, shift: bool, command: bool) -> Vec<Modifier> {
-    // iOS shares Apple's keyboard semantics with macOS — recording dialog
-    // already treats iOS as `_isMac`, so the matcher must too.
     let mut v = Vec::new();
     if cfg!(any(target_os = "macos", target_os = "ios")) {
         if command { v.push(Modifier::Primary); }
@@ -162,8 +138,6 @@ pub fn normalize_modifiers(alt: bool, ctrl: bool, shift: bool, command: bool) ->
     v
 }
 
-/// Map an rdev::Event to a string key name, matching the storage schema.
-/// Returns None for events we don't intercept (modifier-only presses, releases, etc.).
 pub fn event_to_key_name(event: &rdev::Event) -> Option<String> {
     use rdev::{EventType, Key};
     let key = match event.event_type {
@@ -180,10 +154,6 @@ pub fn event_to_key_name(event: &rdev::Event) -> Option<String> {
         Key::PageUp => "page_up".into(),
         Key::PageDown => "page_down".into(),
         Key::Insert => "insert".into(),
-        // Numpad Enter (`KpReturn`) shares the "enter" name with the main
-        // Return key — matches the Web matcher (`NumpadEnter` -> "enter") and
-        // matches user expectation that the two physical Enters are
-        // interchangeable for shortcuts.
         Key::Return | Key::KpReturn => "enter".into(),
         Key::LeftArrow => "arrow_left".into(),
         Key::RightArrow => "arrow_right".into(),
@@ -241,11 +211,6 @@ pub fn event_to_key_name(event: &rdev::Event) -> Option<String> {
     })
 }
 
-/// Read keyboard-shortcut bindings from `LocalConfig` and refresh the cache.
-///
-/// Empty or invalid JSON falls back to `Bindings::default()` (disabled, no
-/// bindings). Call this once at startup and again whenever the config is
-/// written.
 pub fn reload_from_config() {
     let raw = hbb_common::config::LocalConfig::get_option(LOCAL_CONFIG_KEY);
     #[cfg(target_os = "linux")]
@@ -267,8 +232,6 @@ fn reload_from_raw(raw: &str, platform: &str, is_wayland: bool) {
             }
         }
     };
-    // Match the controller capabilities in ShortcutModel, preserving storage
-    // for a later return to another platform or display server.
     parsed.bindings.retain(|b| action_available_on_platform(&b.action, platform, is_wayland));
     match CACHE.write() {
         Ok(mut w) => {
@@ -297,8 +260,6 @@ fn action_available_on_platform(action: &str, platform: &str, is_wayland: bool) 
     }
 }
 
-/// Snapshot of the currently cached bindings. Cheap (one atomic increment) —
-/// safe to call on every keystroke.
 pub fn current() -> Arc<Bindings> {
     match CACHE.read() {
         Ok(b) => Arc::clone(&b),
@@ -309,29 +270,16 @@ pub fn current() -> Arc<Bindings> {
     }
 }
 
-/// Match an `rdev::Event` against the cached bindings. Returns the matched
-/// action id, or `None` if no binding fires.
-///
-/// A bound chord belongs to RustDesk: it is consumed even when the action is
-/// unavailable in the current session (e.g. screenshot on a peer that does not
-/// support it), and the Flutter side then does nothing. It is never forwarded
-/// to the remote, so what a chord does depends on the binding alone, not on
-/// session state the user cannot see.
 pub fn match_event(event: &rdev::Event) -> Option<String> {
     let bindings = current();
     if !bindings.enabled || bindings.pass_through {
         return None;
     }
-    // Note: `match_normalized` re-checks both flags below — this short-circuit
-    // is just to avoid the `event_to_key_name` + `get_modifiers_state` work
-    // in the common bypass case.
     let key_name = event_to_key_name(event)?;
     let (alt, ctrl, shift, command) =
         crate::keyboard::client::get_modifiers_state(false, false, false, false);
     let mods = normalize_modifiers(alt, ctrl, shift, command);
     let action = match_normalized(&key_name, &mods, &bindings)?;
-    // AltGraph is text input, not the ordinary Alt recorded in a shortcut.
-    // Keep the shared modifier snapshot unchanged for remote key encoding.
     #[cfg(target_os = "windows")]
     if unsafe { super::IS_0X021D_DOWN }
         && super::MODIFIERS_STATE.lock().unwrap().get(&rdev::Key::AltGr) == Some(&true)
@@ -355,21 +303,8 @@ pub fn match_event(event: &rdev::Event) -> Option<String> {
 
 #[cfg(feature = "flutter")]
 lazy_static::lazy_static! {
-    /// Physical keys whose press fired a shortcut and whose release has not
-    /// arrived yet. Every event of such a key belongs to RustDesk until its
-    /// release, whatever the modifiers do meanwhile: auto repeats and the
-    /// release are consumed and never reach the remote.
-    ///
-    /// Ownership is physical, so it is shared by every session: a shortcut
-    /// can switch focus or close its own session before the key is released,
-    /// and the session that receives the release is not the one that fired.
-    /// It is never dropped with a session. A key whose release is missed
-    /// heals itself: its next press is consumed as a repeat and that release
-    /// removes it.
     static ref FIRED_KEYS: std::sync::Mutex<std::collections::HashSet<rdev::Key>> =
         Default::default();
-    /// Actions waiting for the release of the key that fired them, with the
-    /// session that fired them. See `runs_on_release`.
     static ref RELEASE_ACTIONS: std::sync::Mutex<
         std::collections::HashMap<rdev::Key, (hbb_common::SessionID, String)>,
     > = Default::default();
@@ -378,13 +313,6 @@ lazy_static::lazy_static! {
     > = Default::default();
 }
 
-/// Actions that move keyboard focus to another session or a dialog. They run when the
-/// key that fired them is released, not when it is pressed, so the matcher
-/// that consumed the press also sees its repeats and its release. The next
-/// session may route its keys through the other matcher (Flutter's legacy
-/// path on Linux), which never saw the press. Mirrors
-/// `kShortcutActionsRunOnKeyUp` in `shortcut_constants.dart`; both are
-/// checked against `flutter/test/fixtures/key_up_shortcut_actions.json`.
 const RELEASE_ACTION_IDS: &[&str] = &[
     action_id::CLOSE_TAB,
     action_id::SWITCH_TAB_NEXT,
@@ -395,14 +323,9 @@ const RELEASE_ACTION_IDS: &[&str] = &[
 ];
 
 pub fn runs_on_release(action_id: &str) -> bool {
-    // A clipboard consent dialog can consume the trigger release. Web keeps
-    // this action on key-down for browser clipboard user activation.
     action_id == action_id::SEND_CLIPBOARD_KEYSTROKES || RELEASE_ACTION_IDS.contains(&action_id)
 }
 
-/// Forget the modifiers a session released on its remote and the actions it
-/// still owes on key release. Fired keys are physical and stay owned until
-/// their release, whichever session gets it.
 #[cfg(feature = "flutter")]
 pub fn clear_session_state(session_id: &hbb_common::SessionID) {
     RELEASE_ACTIONS.lock().unwrap().retain(|_, (sid, _)| sid != session_id);
@@ -421,7 +344,6 @@ pub fn clear_session_state(session_id: &hbb_common::SessionID) {
     }
 }
 
-/// Clear local state on focus loss when the shortcut already released the remote key.
 #[cfg(feature = "flutter")]
 pub(super) fn release_modifier_on_leave(key: rdev::Key) -> bool {
     let sid = crate::flutter::get_cur_session_id();
@@ -444,8 +366,6 @@ pub fn enter_view_only(session_id: &hbb_common::SessionID) {
     if super::IS_RDEV_ENABLED.load(std::sync::atomic::Ordering::SeqCst) {
         return;
     }
-    // The Flutter input source stops routing key events here, so the release
-    // of a fired key can no longer reach this matcher.
     FIRED_KEYS.lock().unwrap().clear();
     RELEASE_ACTIONS.lock().unwrap().clear();
     clear_session_state(session_id);
@@ -462,20 +382,6 @@ pub fn transfer_released_modifiers(from: &hbb_common::SessionID, to: &hbb_common
     }
 }
 
-/// Match `event` against the cached bindings; if it matched, push a
-/// `shortcut_triggered` Flutter session event and return `true` so the caller
-/// can `return` early. Returns `false` when no shortcut fired (caller should
-/// continue with normal key handling).
-///
-/// `session_id`:
-/// * `Some(&id)` — Flutter FFI path: dispatch to the exact session whose key
-///   event we're processing. No dependence on the global focus tracker.
-/// * `None` — rdev grab loop: the loop is process-wide and has no way to know
-///   which Flutter session id the keystroke was meant for, so route to the
-///   globally-current session via `flutter::get_cur_session_id()`.
-///
-/// `peer` and `send` must belong to the same session as `session_id`, so the
-/// remote key releases go to the session the chord was typed into.
 #[cfg(feature = "flutter")]
 pub fn try_dispatch(
     session_id: Option<&hbb_common::SessionID>,
@@ -507,8 +413,6 @@ pub fn try_dispatch(
         match event.event_type {
             EventType::KeyPress(k) if fired.contains(&k) => return true,
             EventType::KeyRelease(k) if fired.remove(&k) => {
-                // X11 Source 1 can report auto-repeat as release/press pairs.
-                // Held shortcuts may fire again until the backend normalizes them.
                 drop(fired);
                 let pending = RELEASE_ACTIONS.lock().unwrap().remove(&k);
                 if let Some((sid, action_id)) = pending {
@@ -519,8 +423,6 @@ pub fn try_dispatch(
             _ => {}
         }
     }
-    // A forwarded press keeps ownership through repeats. Adding modifiers
-    // while it is held must not consume the key-up owed to the remote.
     let action_id = match event.event_type {
         EventType::KeyPress(key) if super::TO_RELEASE.lock().unwrap().contains_key(&key) => None,
         _ => match_event(event),
@@ -596,8 +498,6 @@ fn restore_remote_modifiers(
     }
 }
 
-// Actions that move focus, stop input or change its mode must release ordinary
-// keys too: their physical key-up may no longer balance the original key-down.
 #[cfg(feature = "flutter")]
 fn release_remote_non_modifiers(
     keyboard_mode: &str,
@@ -618,12 +518,6 @@ fn release_remote_non_modifiers(
     }
 }
 
-/// Release the remote modifiers before an action, preserving unrelated held keys.
-///
-/// Unlike `keyboard::release_remote_keys` this keeps the local modifier state:
-/// the user is still physically holding the modifiers, and the next key of
-/// the chord (or an auto repeat) must still see them. It also sends through
-/// `send` instead of the globally current session.
 #[cfg(feature = "flutter")]
 fn release_remote_keys(
     session_id: &hbb_common::SessionID,
@@ -649,7 +543,6 @@ fn release_remote_keys(
     };
     let swap_ctrl_cmd = crate::flutter::sessions::get_session_by_session_id(session_id)
         .is_some_and(|session| session.get_toggle_option("allow_swap_key".into()));
-    // A consumed Alt/Meta-only chord must not activate Windows menus or Start.
     let neutralize_menu = peer == "windows"
         && !to_release.is_empty()
         && to_release.iter().all(|(key, _)| matches!(key, Key::Alt | Key::AltGr)
@@ -676,7 +569,6 @@ fn release_remote_keys(
     RELEASED_MODIFIERS.lock().unwrap().insert(
         *session_id, held.iter().cloned().collect()
     );
-    // Focus-loss cleanup must still reset modifiers released outside the grab.
     TO_RELEASE.lock().unwrap().extend(held);
 }
 
@@ -690,9 +582,7 @@ fn send_windows_menu_ctrl(
     const LEFT_CTRL_SCAN_CODE: u32 = 0x1d;
     const LEFT_META_SCAN_CODE: u32 = 0xe05b;
     let mut event = KeyEvent::new();
-    // Keep Ctrl in Map mode: Legacy sync could release Alt/Meta before Ctrl.
     event.mode = KeyboardMode::Map.into();
-    // The session sender swaps this packet too; the mask must arrive as Ctrl.
     event.set_chr(if swap_ctrl_cmd {
         LEFT_META_SCAN_CODE
     } else {
@@ -709,11 +599,6 @@ fn mods_bits(m: &[Modifier]) -> u8 {
             Modifier::Primary => 1,
             Modifier::Alt     => 2,
             Modifier::Shift   => 4,
-            // macOS users can bind shortcuts that use Control independently
-            // of Command. On Win/Linux this variant should never appear in a
-            // saved binding (`normalize_modifiers` collapses Ctrl into
-            // Primary), but we still give it a distinct bit so a hand-edited
-            // config can't accidentally collide with another modifier.
             Modifier::Ctrl    => 8,
         };
     }
@@ -761,11 +646,6 @@ mod tests {
         event
     }
 
-    /// Cross-language parity for default bindings. The fixture file is the
-    /// shared source of truth — Dart has a mirror test against the same file
-    /// (`kDefaultShortcutBindings matches fixture` in
-    /// `flutter/test/keyboard_shortcuts_test.dart`). Any drift on either
-    /// side breaks one of the two tests.
     #[test]
     fn default_bindings_match_fixture_json() {
         let fixture: serde_json::Value = serde_json::from_str(include_str!(
@@ -814,7 +694,6 @@ mod tests {
     #[test]
     fn match_returns_none_when_modifiers_partial() {
         let bindings = Bindings { enabled: true, pass_through: false, bindings: default_bindings() };
-        // missing Shift
         let result = match_normalized("p", &[Modifier::Primary, Modifier::Alt], &bindings);
         assert_eq!(result, None);
     }
@@ -828,8 +707,6 @@ mod tests {
 
     #[test]
     fn match_handles_duplicate_modifiers_in_input() {
-        // A user-edited config could contain duplicate modifiers; the matcher must
-        // treat the modifier list as a set, not a multiset.
         let bindings = Bindings {
             enabled: true,
             pass_through: false,
@@ -839,12 +716,10 @@ mod tests {
                 key: "a".into(),
             }],
         };
-        // Caller passes Primary twice — must not match a binding with Primary+Alt.
         assert_eq!(
             match_normalized("a", &[Modifier::Primary, Modifier::Primary], &bindings),
             None,
         );
-        // Caller passes Primary+Alt with one duplicate — should still match.
         assert_eq!(
             match_normalized("a", &[Modifier::Primary, Modifier::Alt, Modifier::Alt], &bindings),
             Some("x"),
@@ -853,10 +728,8 @@ mod tests {
 
     #[test]
     fn modifier_normalization_primary_resolves_per_os() {
-        // On Win/Linux: pressing Ctrl satisfies Primary
-        let mods = normalize_modifiers(/*alt=*/true, /*ctrl=*/true, /*shift=*/true, /*command=*/false);
+        let mods = normalize_modifiers( true, true, true, false);
         if cfg!(any(target_os = "macos", target_os = "ios")) {
-            // On Apple platforms Ctrl is NOT primary
             assert!(!mods.contains(&Modifier::Primary));
             assert!(mods.contains(&Modifier::Ctrl));
         } else {
@@ -868,22 +741,16 @@ mod tests {
 
     #[test]
     fn modifier_normalization_command_is_primary_on_apple() {
-        let mods = normalize_modifiers(true, false, true, /*command=*/true);
+        let mods = normalize_modifiers(true, false, true, true);
         if cfg!(any(target_os = "macos", target_os = "ios")) {
             assert!(mods.contains(&Modifier::Primary));
         } else {
-            // On Win/Linux Command/Meta is NOT primary
             assert!(!mods.contains(&Modifier::Primary));
         }
     }
 
     #[test]
     fn match_refuses_zero_modifier_bindings() {
-        // Defense-in-depth: a hand-edited config with empty `mods` must NOT
-        // turn every plain "P" press into a screenshot shortcut, which would
-        // swallow all typing in the remote session. The recording dialog
-        // already refuses to save such bindings, but the matcher must hold
-        // the line independently.
         let bindings = Bindings {
             enabled: true,
             pass_through: false,
@@ -894,20 +761,12 @@ mod tests {
             }],
         };
         assert_eq!(match_normalized("p", &[], &bindings), None);
-        // Even with extra modifiers held by the user, a zero-mod binding
-        // still doesn't match (no shape of held modifiers can equal the
-        // empty saved set after the empty-check skips the entry).
         assert_eq!(
             match_normalized("p", &[Modifier::Primary], &bindings),
             None,
         );
     }
 
-    /// The native Flutter path turns a key into a name through its USB HID
-    /// usage (`rdev::usb_hid_key_from_code` -> `event_to_key_name`); the Dart
-    /// recorder does the same through `physicalKeyName`. Both are checked
-    /// against the same fixture, so a binding recorded on any keyboard layout
-    /// matches the key that was pressed.
     #[test]
     fn usb_hid_keys_match_fixture() {
         let pairs: Vec<(String, u32)> = serde_json::from_str(include_str!(
@@ -924,19 +783,16 @@ mod tests {
         }
     }
 
-    /// Serializes the tests that write the global `CACHE`.
     static CACHE_TEST_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
 
     #[test]
     fn reload_handles_missing_and_invalid_json() {
         let _guard = CACHE_TEST_LOCK.lock().unwrap_or_else(|e| e.into_inner());
-        // empty (no value set) → defaults
         reload_from_raw("", "windows", false);
         let b = current();
         assert!(!b.enabled);
         assert!(b.bindings.is_empty());
 
-        // invalid JSON → defaults (no panic)
         reload_from_raw("not json", "windows", false);
         let b = current();
         assert!(!b.enabled);
@@ -999,10 +855,6 @@ mod tests {
         e
     }
 
-    /// Holding the chord modifiers and pressing two bound keys must fire both
-    /// actions once each: releasing the modifiers on the remote must not clear
-    /// them locally, and overlapping fired keys each own their repeats and
-    /// release.
     #[cfg(feature = "flutter")]
     #[test]
     fn dispatch_consumes_overlapping_fired_keys() {
@@ -1010,8 +862,6 @@ mod tests {
 
         let _guard = CACHE_TEST_LOCK.lock().unwrap_or_else(|e| e.into_inner());
         let chord = enable_defaults_and_hold_chord();
-        // Records the action of every press that dispatched: a press whose key
-        // was not already fired before the call.
         let fired = std::cell::RefCell::new(Vec::new());
         let dispatch = |e: &rdev::Event| {
             let before = fired_keys();
@@ -1045,7 +895,6 @@ mod tests {
         release_chord(chord);
     }
 
-    /// A fired key stays owned until its release even after the modifiers go.
     #[cfg(feature = "flutter")]
     #[test]
     fn dispatch_consumes_fired_key_after_modifiers_release() {
@@ -1064,9 +913,6 @@ mod tests {
         assert!(!dispatch(&make_release(Key::KeyP)));
     }
 
-    /// Close tab is itself a shortcut: the session that fired the key is gone
-    /// before the key is released, and the session that receives the rest of
-    /// the key's events still owns them.
     #[cfg(feature = "flutter")]
     #[test]
     fn dispatch_keeps_fired_key_after_session_close() {
@@ -1241,7 +1087,6 @@ mod tests {
         let release_events = if release_consumed { vec![] } else {
             super::super::event_to_key_events("windows".into(), &release, KeyboardMode::Map, Some(0))
         };
-        // Cleanup precedes assertions so a failing regression cannot poison other tests.
         super::super::event_to_key_events("windows".into(), &release, KeyboardMode::Map, Some(0));
         release_chord(chord);
         reset_fired_keys();
@@ -1267,9 +1112,9 @@ mod tests {
             .flat_map(|mode| [Key::Alt, Key::AltGr].map(|alt| (mode, alt)))
         {
             #[cfg(any(target_os = "android", target_os = "ios"))]
-            if mode == "legacy" { continue; } // Mobile does not encode Legacy events.
+            if mode == "legacy" { continue; }
             #[cfg(target_os = "macos")]
-            if mode == "translate" && alt == Key::AltGr { continue; } // Right Option is filtered.
+            if mode == "translate" && alt == Key::AltGr { continue; }
             reload_from_raw(r#"{"enabled":true,"bindings":[{"action":"toggle_mute","mods":["alt"],"key":"m"}]}"#, "windows", false);
             reset_fired_keys();
             clear_session_state(&SID_A);
@@ -1465,8 +1310,6 @@ mod tests {
         release_chord(chord);
     }
 
-    /// The Dart matcher keeps the same list (`kShortcutActionsRunOnKeyUp`);
-    /// the fixture is the shared source of truth.
     #[test]
     fn key_up_actions_match_fixture() {
         use std::collections::BTreeSet;
@@ -1488,9 +1331,6 @@ mod tests {
         assert!(!runs_on_release(action_id::SCREENSHOT));
     }
 
-    /// Close tab and tab switching move focus away before the key is
-    /// released; they run on the release so the same matcher sees the whole
-    /// press.
     #[cfg(feature = "flutter")]
     #[test]
     fn focus_changing_actions_run_on_release() {

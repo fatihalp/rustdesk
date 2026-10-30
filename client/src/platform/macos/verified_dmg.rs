@@ -7,7 +7,7 @@ use std::{
     process::Command,
 };
 
-const UPDATE_DMG_MOUNT_TEMPLATE: &str = "/tmp/.rustdeskmount-XXXXXX";
+const UPDATE_DMG_MOUNT_TEMPLATE: &str = "/tmp/.supportdeskmount-XXXXXX";
 
 #[derive(Debug)]
 pub(super) struct VerifiedDmg {
@@ -30,7 +30,6 @@ impl Drop for VerifiedDmg {
     }
 }
 
-// Retain the named copy until the privileged installer has verified its root-owned copy.
 pub(super) fn copy_and_verify_dmg_file(
     file: &str,
     expected_sha256: &str,
@@ -121,7 +120,6 @@ impl Drop for DmgGuard {
 
 pub(super) fn attach_dmg(dmg_path: &str) -> ResultType<DmgGuard> {
     let mount_point = create_dmg_mount_point()?;
-    // Update images are input only, so never mount them writable.
     let output = match Command::new("/usr/bin/hdiutil")
         .args([
             "attach",

@@ -18,7 +18,6 @@ import '../../models/model.dart';
 import '../../models/platform_model.dart';
 import 'home_page.dart';
 
-/// Connection page for connecting to a remote peer.
 class ConnectionPage extends StatefulWidget implements PageShape {
   ConnectionPage({Key? key, required this.appBarActions}) : super(key: key);
 
@@ -35,9 +34,7 @@ class ConnectionPage extends StatefulWidget implements PageShape {
   State<ConnectionPage> createState() => _ConnectionPageState();
 }
 
-/// State for the connection page.
 class _ConnectionPageState extends State<ConnectionPage> {
-  /// Controller for the id input bar.
   final _idController = IDTextEditingController();
   final RxBool _idEmpty = true.obs;
 
@@ -48,7 +45,6 @@ class _ConnectionPageState extends State<ConnectionPage> {
 
   StreamSubscription? _uniLinksSubscription;
 
-  // https://github.com/flutter/flutter/issues/157244
   Iterable<Peer> _autocompleteOpts = [];
 
   _ConnectionPageState() {
@@ -96,8 +92,6 @@ class _ConnectionPageState extends State<ConnectionPage> {
     ).marginOnly(top: 2, left: 10, right: 10);
   }
 
-  /// Callback for the connect button.
-  /// Connects to the selected peer.
   void onConnect() {
     var id = _idController.id;
     connect(context, id);
@@ -111,28 +105,17 @@ class _ConnectionPageState extends State<ConnectionPage> {
       }
 
       final textLength = _idEditingController.value.text.length;
-      // Select all to facilitate removing text, just following the behavior of address input of chrome.
       _idEditingController.selection =
           TextSelection(baseOffset: 0, extentOffset: textLength);
     }
   }
 
-  /// UI for software update.
-  /// If _updateUrl] is not empty, shows a button to update the software.
   Widget _buildUpdateUI(String updateUrl) {
     return updateUrl.isEmpty
         ? const SizedBox(height: 0)
         : InkWell(
             onTap: () async {
               final url = 'https://rustdesk.com/download';
-              // https://pub.dev/packages/url_launcher#configuration
-              // https://developer.android.com/training/package-visibility/use-cases#open-urls-custom-tabs
-              //
-              // `await launchUrl(Uri.parse(url))` can also run if skip
-              // 1. The following check
-              // 2. `<action android:name="android.support.customtabs.action.CustomTabsService" />` in AndroidManifest.xml
-              //
-              // But it is better to add the check.
               await launchUrl(Uri.parse(url));
             },
             child: Container(
@@ -145,8 +128,6 @@ class _ConnectionPageState extends State<ConnectionPage> {
                         color: Colors.white, fontWeight: FontWeight.bold))));
   }
 
-  /// UI for the remote ID TextField.
-  /// Search for a peer and connect to it if the id exists.
   Widget _buildRemoteIDTextField() {
     final w = SizedBox(
       height: 84,
@@ -226,7 +207,6 @@ class _ConnectionPageState extends State<ConnectionPage> {
                         autocorrect: false,
                         enableSuggestions: false,
                         keyboardType: TextInputType.visiblePassword,
-                        // keyboardType: TextInputType.number,
                         onChanged: (String text) {
                           _idController.id = text;
                         },
@@ -238,7 +218,6 @@ class _ConnectionPageState extends State<ConnectionPage> {
                         ),
                         decoration: InputDecoration(
                           labelText: translate('Remote ID'),
-                          // hintText: 'Enter your remote ID',
                           border: InputBorder.none,
                           helperStyle: const TextStyle(
                             fontWeight: FontWeight.bold,

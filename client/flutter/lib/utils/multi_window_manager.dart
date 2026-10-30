@@ -9,8 +9,6 @@ import 'package:flutter_hbb/common.dart';
 import 'package:flutter_hbb/main.dart';
 import 'package:flutter_hbb/models/input_model.dart';
 
-/// must keep the order
-// ignore: constant_identifier_names
 enum WindowType {
   Main,
   RemoteDesktop,
@@ -49,13 +47,10 @@ class MultiWindowCallResult {
   MultiWindowCallResult(this.windowId, this.result);
 }
 
-/// Window Manager
-/// mainly use it in `Main Window`
-/// use it in sub window is not recommended
-class RustDeskMultiWindowManager {
-  RustDeskMultiWindowManager._();
+class SupportDeskMultiWindowManager {
+  SupportDeskMultiWindowManager._();
 
-  static final instance = RustDeskMultiWindowManager._();
+  static final instance = SupportDeskMultiWindowManager._();
 
   final Set<int> _inactiveWindows = {};
   final Set<int> _activeWindows = {};
@@ -95,8 +90,6 @@ class RustDeskMultiWindowManager {
     }
   }
 
-  // This function must be called in the main window thread.
-  // Because the _remoteDesktopWindows is managed in that thread.
   openMonitorSession(int windowId, String peerId, int display, int displayCount,
       Rect? screenRect, int windowType) async {
     final isCamera = windowType == WindowType.ViewCamera.index;
@@ -251,7 +244,6 @@ class RustDeskMultiWindowManager {
     }
     final msg = jsonEncode(params);
 
-    // separate window for file transfer is not supported
     bool openInTabs = type != WindowType.RemoteDesktop ||
         mainGetLocalBoolOptionSync(kOptionOpenNewConnInTabs);
 
@@ -354,9 +346,6 @@ class RustDeskMultiWindowManager {
     bool? forceRelay,
     String? connToken,
   }) async {
-    // Iterate through terminal windows in reverse order to prioritize
-    // the most recently added or used windows, as they are more likely
-    // to have an active session.
     for (final windowId in _terminalWindows.reversed) {
       if (await DesktopMultiWindow.invokeMethod(
           windowId, kWindowEventActiveSession, remoteId)) {
@@ -364,9 +353,6 @@ class RustDeskMultiWindowManager {
       }
     }
 
-    // Terminal windows should always create new windows, not reuse
-    // This avoids the MissingPluginException when trying to invoke
-    // new_terminal on an inactive window
     var params = {
       "type": WindowType.Terminal.index,
       "id": remoteId,
@@ -377,7 +363,6 @@ class RustDeskMultiWindowManager {
     };
     final msg = jsonEncode(params);
 
-    // Always create a new window for terminal
     final windowId = await newSessionWindow(
         WindowType.Terminal, remoteId, msg, _terminalWindows, false);
     return MultiWindowCallResult(windowId, null);
@@ -455,7 +440,6 @@ class RustDeskMultiWindowManager {
 
   Future<void> _closeWindows(WindowType type) async {
     if (type == WindowType.Main) {
-      // skip main window, use window manager instead
       return;
     }
 
@@ -522,12 +506,6 @@ class RustDeskMultiWindowManager {
     await _notifyActiveWindow();
   }
 
-  /// Remove active window which has [`windowId`]
-  ///
-  /// [Availability]
-  /// This function should only be called from main window.
-  /// For other windows, please post a unregister(hide) event to main window handler:
-  /// `rustDeskWinManager.call(WindowType.Main, kWindowEventHide, {"id": windowId!});`
   Future<void> unregisterActiveWindow(int windowId) async {
     _activeWindows.remove(windowId);
     if (windowId != kMainWindowId) {
@@ -544,8 +522,6 @@ class RustDeskMultiWindowManager {
     _windowActiveCallbacks.remove(callback);
   }
 
-  // This function is called from the main window.
-  // It will query the active remote windows to get their coords.
   Future<List<String>> getOtherRemoteWindowCoords(int wId) async {
     List<String> coords = [];
     for (final windowId in _remoteDesktopWindows) {
@@ -562,12 +538,8 @@ class RustDeskMultiWindowManager {
     return coords;
   }
 
-  // This function is called from one remote window.
-  // Only the main window knows `_remoteDesktopWindows` and `_activeWindows`.
-  // So we need to call the main window to get the other remote windows' coords.
   Future<List<RemoteWindowCoords>> getOtherRemoteWindowCoordsFromMain() async {
     List<RemoteWindowCoords> coords = [];
-    // Call the main window to get the coords of other remote windows.
     String res = await DesktopMultiWindow.invokeMethod(
         kMainWindowId, kWindowEventRemoteWindowCoords, kWindowId.toString());
     List<dynamic> list = jsonDecode(res);
@@ -578,4 +550,4 @@ class RustDeskMultiWindowManager {
   }
 }
 
-final rustDeskWinManager = RustDeskMultiWindowManager.instance;
+final supportDeskWinManager = SupportDeskMultiWindowManager.instance;

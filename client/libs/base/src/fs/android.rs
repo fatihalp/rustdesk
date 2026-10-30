@@ -4,7 +4,7 @@ use serde_derive::Deserialize;
 use serde_json::{json, Value};
 use std::{path::Path, sync::OnceLock};
 
-pub const ROOT: &str = "/@rustdesk/";
+pub const ROOT: &str = "/@supportdesk/";
 type Request = Box<dyn Fn(&str) -> ResultType<String> + Send + Sync>;
 static BACKEND: OnceLock<Request> = OnceLock::new();
 
@@ -230,7 +230,6 @@ pub fn take_file(value: &Value) -> ResultType<std::fs::File> {
         .and_then(|fd| i32::try_from(fd).ok())
         .filter(|fd| *fd >= 0)
         .ok_or(anyhow!("Invalid document descriptor"))?;
-    // Android hands off a duplicate; Java retains the provider's close/error channel.
     Ok(unsafe { std::fs::File::from_raw_fd(fd) })
 }
 
@@ -249,7 +248,6 @@ pub(super) async fn open(
         let file = take_file(&token["fd"])?;
         let descriptor = super::android_descriptor::DocumentDescriptor::new(&token)?;
         let metadata = file.metadata()?;
-        // Stream inode timestamps do not identify the source document's version.
         let digest = metadata
             .is_file()
             .then(|| (metadata.mtime().max(0) as u64, metadata.len()));

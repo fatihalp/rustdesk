@@ -142,9 +142,6 @@ String _toolbarRawFraction({
   return '0.5';
 }
 
-// Returns the alignment for the wrapper Align that positions the entire
-// toolbar against the given edge at the given fraction along that edge.
-// Alignment uses [-1, 1] coordinates (0 = center).
 Alignment _alignmentForEdge(_ToolbarEdge edge, double fraction) {
   final f = fraction * 2 - 1;
   switch (edge) {
@@ -159,8 +156,6 @@ Alignment _alignmentForEdge(_ToolbarEdge edge, double fraction) {
   }
 }
 
-// The drag handle hangs off the side of the toolbar facing away from the
-// docked edge, so the icons themselves sit flush against that edge.
 BorderRadius _collapseHandleBorderRadius(_ToolbarEdge edge) {
   const r = Radius.circular(5);
   switch (edge) {
@@ -246,7 +241,6 @@ class ToolbarState {
   RxBool collapse = false.obs;
   RxBool hide = false.obs;
 
-  // Track initialization state to prevent flickering
   final RxBool initialized = false.obs;
   bool _isInitializing = false;
 
@@ -269,14 +263,11 @@ class ToolbarState {
 
   bool get pin => _pin.value;
 
-  /// Initialize all toolbar states from session options.
-  /// This should be called once when the toolbar is first created.
   Future<void> init(SessionID sessionId) async {
     if (initialized.value || _isInitializing) return;
     _isInitializing = true;
 
     try {
-      // Load both states in parallel for better performance
       final results = await Future.wait([
         bind.sessionGetToggleOption(
             sessionId: sessionId, arg: kOptionCollapseToolbar),
@@ -298,7 +289,6 @@ class ToolbarState {
     collapse.value = !collapse.value;
   }
 
-  // Switch hide state for entire toolbar visibility
   switchHide(SessionID sessionId) async {
     bind.sessionToggleOption(sessionId: sessionId, value: kOptionHideToolbar);
     hide.value = !hide.value;
@@ -306,14 +296,12 @@ class ToolbarState {
 
   switchPin() async {
     _pin.value = !_pin.value;
-    // Save everytime changed, as this func will not be called frequently
     await _savePin();
   }
 
   setPin(bool v) async {
     if (_pin.value != v) {
       _pin.value = v;
-      // Save everytime changed, as this func will not be called frequently
       await _savePin();
     }
   }
@@ -332,7 +320,6 @@ class _ToolbarTheme {
 
   static const Color redColor = Colors.redAccent;
   static const Color hoverRedColor = Colors.red;
-  // kMinInteractiveDimension
   static const double height = 20.0;
   static const double dividerHeight = 12.0;
 
@@ -465,18 +452,10 @@ class _RemoteToolbarState extends State<RemoteToolbar> {
   final _fraction = 0.5.obs;
   final _edge = _ToolbarEdge.top.obs;
   final _dragging = false.obs;
-  // Live drag preview: where the toolbar would dock if the user dropped now.
   final _previewEdge = Rxn<_ToolbarEdge>();
   final _previewFraction = Rxn<double>();
-  // Measured size of the live toolbar, so the preview ghost matches reality
-  // (collapsed handle vs expanded toolbar). Updated after every layout pass.
   final _toolbarSize = Rxn<Size>();
   final _toolbarKey = GlobalKey(debugLabel: 'remote_toolbar_root');
-  // When false (default), the toolbar stays on the top edge and the drag
-  // handle just slides it horizontally — preserving long-standing UX while
-  // still fixing the bug where dragging only moved the handle. When true,
-  // the user has opted into multi-edge docking with nearest-edge snap.
-  // Kept in sync after settings-triggered rebuilds.
   final _multiEdgeEnabled = false.obs;
   final _dockingOptionsInitialized = false.obs;
   bool _pendingDockingOptionSync = false;
@@ -487,8 +466,6 @@ class _RemoteToolbarState extends State<RemoteToolbar> {
 
   void _setFullscreen(bool v) {
     stateGlobal.setFullscreen(v);
-    // stateGlobal.fullscreen is RxBool now, no need to call setState.
-    // setState(() {});
   }
 
   RxBool get collapse => widget.state.collapse;
@@ -511,9 +488,6 @@ class _RemoteToolbarState extends State<RemoteToolbar> {
     }
     final dragEpoch = _dragEpoch;
 
-    // Use the canonical helper so the option's documented default semantics
-    // apply (allow-* prefix => default false). Keeping it raw-string would
-    // diverge from how _OptionCheckBox displays the same key.
     final multiEdgeEnabled =
         mainGetLocalBoolOptionSync(kOptionAllowMultiEdgeToolbarDock);
     final cached = _cachedToolbarDockingOptions(widget.ffi.sessionId);
@@ -532,7 +506,6 @@ class _RemoteToolbarState extends State<RemoteToolbar> {
 
     final savedFraction = await bind.sessionGetOption(
         sessionId: widget.ffi.sessionId, arg: kOptionRemoteMenubarFraction);
-    // Backward compat: legacy horizontal-only position.
     final legacyFraction = await bind.sessionGetOption(
         sessionId: widget.ffi.sessionId, arg: _legacyRemoteMenubarDragX);
     if (!mounted || syncSerial != _dockingOptionSyncSerial) return;
@@ -548,9 +521,6 @@ class _RemoteToolbarState extends State<RemoteToolbar> {
       if (!mounted || syncSerial != _dockingOptionSyncSerial) return;
       nextEdge = _parseToolbarEdge(edgeStr);
     } else {
-      // The setting changed from top-only to multi-edge while this toolbar is
-      // already visible. Keep its current position instead of jumping to the
-      // last saved multi-edge dock.
       nextEdge = cached.edge;
       savedFractionForNextEdge = cached.fraction.toString();
       keepCurrentPosition = true;
@@ -562,8 +532,6 @@ class _RemoteToolbarState extends State<RemoteToolbar> {
       savedFraction: savedFractionForNextEdge,
       legacyFraction: legacyFraction,
     );
-    // Clamp to the saved drag-bound contract so a corrupted or out-of-range
-    // saved value can't bypass it until the user drags again.
     final dragLeft = double.tryParse(
             bind.mainGetLocalOption(key: kOptionRemoteMenubarDragLeft)) ??
         0.0;
@@ -641,7 +609,6 @@ class _RemoteToolbarState extends State<RemoteToolbar> {
 
     WidgetsBinding.instance.addPostFrameCallback((_) async {
       await _syncDockingOptions(force: cached == null || shouldResetToTop);
-      // Initialize toolbar states (collapse, hide) from session options
       widget.state.init(widget.ffi.sessionId);
     });
 
@@ -685,20 +652,16 @@ class _RemoteToolbarState extends State<RemoteToolbar> {
   @override
   Widget build(BuildContext context) {
     return Obx(() {
-      // Wait for initialization to complete to prevent flickering
       if (!widget.state.initialized.value ||
           !_dockingOptionsInitialized.value) {
         return const SizedBox.shrink();
       }
-      // If toolbar is hidden, return empty widget
       if (hide.value) {
         return const SizedBox.shrink();
       }
       final edge = _edge.value;
       final isHorizontal = _isHorizontalEdge(edge);
 
-      // Measure the live toolbar after every layout so the preview ghost can
-      // match its actual footprint (collapsed handle vs expanded toolbar).
       WidgetsBinding.instance.addPostFrameCallback((_) {
         if (_dragging.isTrue) return;
         final ro = _toolbarKey.currentContext?.findRenderObject();
@@ -718,9 +681,6 @@ class _RemoteToolbarState extends State<RemoteToolbar> {
         ),
       );
 
-      // Always return the Stack — even when not dragging — so the toolbar's
-      // position in the Element tree stays stable. Wrapping/unwrapping it
-      // mid-drag was killing the Draggable's gesture state.
       return Stack(
         fit: StackFit.expand,
         children: [
@@ -743,10 +703,6 @@ class _RemoteToolbarState extends State<RemoteToolbar> {
   Widget _buildDragPreview(BuildContext context, _ToolbarEdge edge,
       double fraction, Size? measured) {
     final color = Theme.of(context).colorScheme.primary;
-    // Use the measured live toolbar size so collapsed vs expanded looks
-    // right. The current orientation may differ from the preview orientation
-    // (e.g. dragging a top-docked toolbar toward the left edge), so swap the
-    // long/short axes when previewing a different orientation.
     final previewSize = _toolbarSizeForEdge(edge, measured);
     return Align(
       alignment: _alignmentForEdge(edge, fraction),
@@ -842,7 +798,6 @@ class _RemoteToolbarState extends State<RemoteToolbar> {
       state: widget.state,
       setFullscreen: _setFullscreen,
     ));
-    // Do not show keyboard for camera connection type.
     if (widget.ffi.connType == ConnType.defaultConn) {
       toolbarItems.add(_KeyboardMenu(id: widget.id, ffi: widget.ffi));
     }
@@ -853,9 +808,6 @@ class _RemoteToolbarState extends State<RemoteToolbar> {
     if (!isWeb) toolbarItems.add(_RecordMenu());
     toolbarItems.add(_CloseMenu(id: widget.id, ffi: widget.ffi));
     final toolbarBorderRadius = BorderRadius.all(Radius.circular(4.0));
-    // innerAxis: how the toolbar icons themselves flow.
-    // outerAxis: how the toolbar block and the handle stack against each other
-    // (perpendicular to the dock edge, so the handle hangs off the interior face).
     final innerAxis = isHorizontal ? Axis.horizontal : Axis.vertical;
     final outerAxis = isHorizontal ? Axis.vertical : Axis.horizontal;
     final spacer = isHorizontal
@@ -890,9 +842,6 @@ class _RemoteToolbarState extends State<RemoteToolbar> {
       ),
     );
     final handle = _buildDraggableCollapse(context, edge, isHorizontal);
-    // The handle hangs off the interior face of the toolbar (away from the
-    // docked edge), centered along that face by the Flex's default cross-axis
-    // alignment, so the icons themselves sit flush against the docked edge.
     final children = (edge == _ToolbarEdge.top || edge == _ToolbarEdge.left)
         ? [toolbarMaterial, handle]
         : [handle, toolbarMaterial];
@@ -1281,7 +1230,6 @@ class _MonitorMenu extends StatelessWidget {
 
   onPressed(int i, PeerInfo pi, bool isMulti) {
     if (!isMulti) {
-      // If show monitors in toolbar(`buildMultiMonitorMenu()`), then the menu will dismiss automatically.
       _menuDismissCallback(ffi);
     }
     RxInt display = CurrentDisplayState.find(id);
@@ -1381,7 +1329,6 @@ class ScreenAdjustor {
     try {
       return await WindowController.fromWindowId(windowId).isMaximized();
     } catch (_) {
-      // The delayed resolution callback may run after the window is disposed.
       return null;
     }
   }
@@ -1404,9 +1351,6 @@ class ScreenAdjustor {
         });
   }
 
-  // Linux screen and work-area coordinates can use different units or become
-  // unreliable across Wayland/X11 state changes, so normalize reported frames
-  // and cache usable work-area measurements before sizing the window.
 
   Future<void> _updateLinuxWorkAreaCache({
     required window_size.Screen screen,
@@ -1499,8 +1443,6 @@ class ScreenAdjustor {
       {bool forMenu = false}) async {
     final screen = _screen;
     if (screen != null) {
-      // Windows window frames use physical pixels while Flutter view sizes are
-      // logical. macOS and Linux window frames use the same units as Flutter.
       double scale = isWindows ? screen.scaleFactor : 1.0;
       final Rect wndRect;
       try {
@@ -1509,15 +1451,11 @@ class ScreenAdjustor {
         debugPrint("Failed to get frame of window $windowId, it may be hidden");
         return null;
       }
-      // On Windows, wndRect is GetWindowRect while mediaSize is GetClientRect.
-      // https://stackoverflow.com/a/7561083
       double magicWidth =
           wndRect.right - wndRect.left - mediaSize.width * scale;
       double magicHeight =
           wndRect.bottom - wndRect.top - mediaSize.height * scale;
       final canvasModel = ffi.canvasModel;
-      // canvasModel.scale is the rendered scale and already applies kIgnoreDpi.
-      // Use it instead of the remote source resolution.
       final isWayland = isLinux && bind.mainCurrentIsWayland();
       final isX11 = isLinux && !isWayland;
       await _updateLinuxWorkAreaCache(
@@ -1528,19 +1466,12 @@ class ScreenAdjustor {
         forMenu: forMenu,
       );
       if (isWindows && forMenu && isFullscreen) {
-        // desktop_multi_window's hidden title bar keeps 8 physical pixels on
-        // each horizontal edge and at the bottom, plus up to 1px at the top.
-        // Fullscreen removes these in WM_NCCALCSIZE, so predict the restored
-        // frame's worst-case padding when deciding whether to show the menu.
         magicWidth = 16.0;
         magicHeight = 9.0;
       }
       double horizontalEdges;
       double verticalEdges;
       if (forMenu && (isLinux || ((isMacOS || isWindows) && isFullscreen))) {
-        // Linux Adjust Window unmaximizes; macOS and Windows exit fullscreen
-        // before resizing. Predict the restored normal-window edges when
-        // deciding whether to show the menu item.
         final resizePadding = isLinux && !kUseCompatibleUiMode
             ? kDragToResizeAreaPaddingSize
             : 0.0;
@@ -1583,18 +1514,12 @@ class ScreenAdjustor {
               : availableSize.height,
         );
       }
-      // A window frame cannot be smaller than its client area. Tolerate small
-      // floating-point differences; larger negative values mean the native
-      // frame and Flutter view metrics are not synchronized.
       if (magicWidth < -0.1 || magicHeight < -0.1) {
         return null;
       }
-      // Reject implausibly small targets to avoid hiding the window.
       if (width < 300 || height < 300) {
         return null;
       }
-      // The remote size may change after the menu is built. Reject targets
-      // that exceed the available area.
       final exceedsScreen =
           width > availableSize.width || height > availableSize.height;
       if (exceedsScreen) {
@@ -1618,9 +1543,6 @@ class ScreenAdjustor {
   }
 
   doAdjustWindow([BuildContext? context]) async {
-    // A resolution change is adjusted after a delay, when the menu context may
-    // already be disposed. Each desktop_multi_window window has its own engine,
-    // so that engine's first view is the current window.
     final views = WidgetsBinding.instance.platformDispatcher.views;
     if (context == null && views.isEmpty) {
       return;
@@ -1632,7 +1554,6 @@ class ScreenAdjustor {
       final wasFullscreen = isFullscreen;
       cbExitFullscreen();
       if (wasFullscreen) {
-        // Wait for the native fullscreen exit to update the window frame.
         await Future.delayed(Duration(milliseconds: 700));
         await updateScreen();
       }
@@ -1642,15 +1563,12 @@ class ScreenAdjustor {
           return;
         }
         if (isMaximized == true) {
-          // setFrame may be ignored while the native window is maximized.
           try {
             await wc.unmaximize();
           } catch (_) {
             return;
           }
           stateGlobal.setMaximized(false);
-          // Wait for the window manager and Flutter view metrics to reflect
-          // the restored window before calculating and setting its frame.
           await Future.delayed(Duration(milliseconds: 300));
           await updateScreen();
         }
@@ -1686,7 +1604,6 @@ class ScreenAdjustor {
     if (isWeb) {
       return false;
     }
-    // Capture the view before awaiting because the menu context may be disposed.
     final views = WidgetsBinding.instance.platformDispatcher.views;
     if (context == null && views.isEmpty) {
       return false;
@@ -1743,7 +1660,6 @@ class _DisplayMenuState extends State<_DisplayMenu> {
   @override
   void initState() {
     super.initState();
-    // Initialize custom percent from stored option once
     WidgetsBinding.instance.addPostFrameCallback((_) async {
       try {
         final v = await getSessionCustomScalePercent(widget.ffi.sessionId);
@@ -1780,7 +1696,6 @@ class _DisplayMenuState extends State<_DisplayMenu> {
         Divider(),
         toggles(),
       ];
-      // privacy mode
       final privacyModeState = PrivacyModeState.find(id);
       if (ffi.connType == ConnType.defaultConn &&
           (pi.features.privacyMode || privacyModeState.isNotEmpty) &&
@@ -1835,29 +1750,23 @@ class _DisplayMenuState extends State<_DisplayMenu> {
               final isCustom = e.value == kRemoteViewStyleCustom;
               final child =
                   isCustom ? Text(translate('Scale custom')) : e.child;
-              // Whether the current selection is already custom
               final bool isGroupCustomSelected =
                   e.groupValue == kRemoteViewStyleCustom;
-              // Keep menu open when switching INTO custom so the slider is visible immediately
               final bool keepOpenForThisItem =
                   isCustom && !isGroupCustomSelected;
               return RdoMenuButton<String>(
                   value: e.value,
                   groupValue: e.groupValue,
                   onChanged: (value) {
-                    // Perform the original change
                     e.onChanged?.call(value);
-                    // Only force a rebuild when we keep the menu open to reveal the slider
                     if (keepOpenForThisItem) {
                       setState(() {});
                     }
                   },
                   child: child,
                   ffi: ffi,
-                  // When entering custom, keep submenu open to show the slider controls
                   closeOnActivate: !keepOpenForThisItem);
             }).toList(),
-            // Only show a divider when custom is NOT selected
             if (!isCustomSelected) Divider(),
             _customControlsIfCustomSelected(
                 onChanged: (v) => customPercent.value = v),
@@ -2089,8 +1998,6 @@ class _CustomScaleMenuControlsState
           value: scalePos,
           min: 0.0,
           max: 1.0,
-          // Use a wide range of divisions (calculated as (CustomScaleControls.maxPercent - CustomScaleControls.minPercent)) to provide ~1% precision increments.
-          // This allows users to set precise scale values. Lower values would require more fine-tuning via the +/- buttons, which is undesirable for big ranges.
           divisions:
               (CustomScaleControls.maxPercent - CustomScaleControls.minPercent)
                   .round(),
@@ -2131,8 +2038,6 @@ class _CustomScaleMenuControlsState
   }
 }
 
-// Lightweight rectangular thumb that paints the current percentage.
-// Stateless and uses only SliderTheme colors; avoids allocations beyond a TextPainter per frame.
 class _RectValueThumbShape extends SliderComponentShape {
   final double min;
   final double max;
@@ -2140,8 +2045,6 @@ class _RectValueThumbShape extends SliderComponentShape {
   final double height;
   final double radius;
   final String unit;
-  // Optional mapper to compute display value from normalized position [0,1]
-  // If null, falls back to linear interpolation between min and max.
   final int Function(double normalized)? displayValueForNormalized;
 
   const _RectValueThumbShape({
@@ -2176,7 +2079,6 @@ class _RectValueThumbShape extends SliderComponentShape {
   }) {
     final Canvas canvas = context.canvas;
 
-    // Resolve color based on enabled/disabled animation, with safe fallbacks.
     final ColorTween colorTween = ColorTween(
       begin: sliderTheme.disabledThumbColor,
       end: sliderTheme.thumbColor,
@@ -2192,7 +2094,6 @@ class _RectValueThumbShape extends SliderComponentShape {
     final Paint paint = Paint()..color = fillColor;
     canvas.drawRRect(rrect, paint);
 
-    // Compute displayed value from normalized slider value.
     final int displayValue = displayValueForNormalized != null
         ? displayValueForNormalized!(value)
         : (min + value * (max - min)).round();
@@ -2359,7 +2260,6 @@ class _ResolutionsMenuState extends State<_ResolutionsMenu> {
     }
   }
 
-  // This widget has been unmounted, so the State no longer has a context
   _onChanged(String? value) async {
     if (pi.currentDisplay == kAllDisplayValue) {
       return;
@@ -2411,8 +2311,6 @@ class _ResolutionsMenuState extends State<_ResolutionsMenu> {
           return;
         }
         if ((await widget.screenAdjustor.isWindowMaximized()) == false) {
-          // This delayed callback can outlive the menu State, so its context
-          // is unsafe.
           widget.screenAdjustor.doAdjustWindow();
         }
       }
@@ -2632,11 +2530,7 @@ class _KeyboardMenu extends StatelessWidget {
         await ffi.inputModel.updateKeyboardMode();
       }
 
-      // If use flutter to grab keys, we can only use one mode.
-      // Map mode and Legacy mode, at least one of them is supported.
       String? modeOnly;
-      // Keep both map and legacy mode on web at the moment.
-      // TODO: Remove legacy mode after web supports translate mode on web.
       if (isInputSourceFlutter && isDesktop) {
         if (bind.sessionIsKeyboardModeSupported(
             sessionId: ffi.sessionId, mode: kKeyMapMode)) {
@@ -2720,7 +2614,6 @@ class _KeyboardMenu extends StatelessWidget {
             ? (v) async {
                 if (v != null) {
                   await stateGlobal.setInputSource(ffi.sessionId, v);
-                  // Release native input; see the macOS trade-offs in RemotePage.
                   if (isMacOS) ffi.inputModel.enterOrLeave(false);
                   await ffi.ffiModel.checkDesktopKeyboardMode();
                   await ffi.inputModel.updateKeyboardMode();
@@ -2769,7 +2662,6 @@ class _KeyboardMenu extends StatelessWidget {
                   value;
               ffiModel.setShowMyCursor(showMyCursor);
 
-              // Also set view only if showMyCursor is enabled and viewOnly is not enabled.
               if (showMyCursor && !ffiModel.viewOnly) {
                 await bind.sessionToggleOption(
                     sessionId: ffi.sessionId, value: kOptionToggleViewOnly);
@@ -2831,7 +2723,6 @@ class _ChatMenu extends StatefulWidget {
 }
 
 class _ChatMenuState extends State<_ChatMenu> {
-  // Using in StatelessWidget got `Looking up a deactivated widget's ancestor is unsafe`.
   final chatButtonKey = GlobalKey();
 
   @override
@@ -3134,7 +3025,7 @@ class _IconSubmenuButton extends StatefulWidget {
 class _IconSubmenuButtonState extends State<_IconSubmenuButton> {
   bool hover = false;
 
-  @override // discard @protected
+  @override
   void setState(VoidCallback fn) {
     super.setState(fn);
   }
@@ -3272,7 +3163,6 @@ class RdoMenuButton<T> extends StatelessWidget {
   final ValueChanged<T?>? onChanged;
   final Widget? child;
   final FFI? ffi;
-  // When true, submenu will be dismissed on activate; when false, it stays open.
   final bool closeOnActivate;
   const RdoMenuButton({
     Key? key,
@@ -3315,9 +3205,6 @@ class _DraggableShowHide extends StatefulWidget {
   final VoidCallback markDragEpoch;
   final VoidCallback syncDockingOptionsAfterDragIfNeeded;
   final bool isHorizontal;
-  // Whether multi-edge docking is enabled for this session (toggled in
-  // Settings -> Other). When false, the drag handle slides the toolbar
-  // horizontally on the top edge and never switches edges.
   final bool multiEdgeEnabled;
   final RxBool dragging;
   final ToolbarState toolbarState;
@@ -3383,8 +3270,6 @@ class _DraggableShowHideState extends State<_DraggableShowHide> {
     }
   }
 
-  // Bias applied to the currently-previewed edge so a drag hovering between
-  // two edges doesn't flicker. Only relevant when multi-edge is enabled.
   static const double _switchHysteresisPx = 50.0;
 
   _ToolbarEdge _nearestToolbarEdge(Offset cursor, Size mediaSize) {
@@ -3523,10 +3408,6 @@ class _DraggableShowHideState extends State<_DraggableShowHide> {
     return Listener(
       onPointerDown: (event) => _lastPointerDown = event.position,
       child: Draggable(
-        // When multi-edge docking is off the toolbar stays on the top edge,
-        // so lock the feedback to horizontal motion — otherwise the handle
-        // floats away from the top while dragging and the toolbar looks
-        // unmoored. When multi-edge is on we need 2D drag for snap-to-edge.
         axis: widget.multiEdgeEnabled ? null : Axis.horizontal,
         child: Icon(
           widget.isHorizontal ? Icons.drag_indicator : Icons.drag_handle,
@@ -3541,8 +3422,6 @@ class _DraggableShowHideState extends State<_DraggableShowHide> {
             _ensureDragGrabOffset(pointerDown);
           }
           widget.dragging.value = true;
-          // Seed the preview at the current docked edge/fraction so something
-          // shows the instant the drag begins, before the first onDragUpdate.
           widget.previewEdge.value = widget.edge.value;
           widget.previewFraction.value = widget.fraction.value;
         },

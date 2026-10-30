@@ -12,7 +12,6 @@ bool bump_mouse(int dx, int dy)
     return bump_mouse_x11(dx, dy);
   }
   else {
-    // Don't know how to support this.
     return false;
   }
 }

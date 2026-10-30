@@ -31,7 +31,6 @@ const CAMERA_NOT_SUPPORTED: &str = "This platform doesn't support camera yet";
 
 pub struct Cameras;
 
-// pre-condition
 pub fn primary_camera_exists() -> bool {
     Cameras::exists(PRIMARY_CAMERA_IDX)
 }
@@ -43,19 +42,11 @@ impl Cameras {
             Ok(cameras) => {
                 let mut camera_displays = SYNC_CAMERA_DISPLAYS.lock().unwrap();
                 camera_displays.clear();
-                // FIXME: nokhwa returns duplicate info for one physical camera on linux for now.
-                // issue: https://github.com/l1npengtul/nokhwa/issues/171
-                // Use only one camera as a temporary hack.
                 cfg_if::cfg_if! {
                     if #[cfg(target_os = "linux")] {
                         let Some(info) = cameras.first() else {
                             bail!("No camera found")
                         };
-                        // Use index (0) camera as main camera, fallback to the first camera if index (0) is not available.
-                        // But maybe we also need to check index (1) or the lowest index camera.
-                        //
-                        // https://askubuntu.com/questions/234362/how-to-fix-this-problem-where-sometimes-dev-video0-becomes-automatically-dev
-                        // https://github.com/rustdesk/rustdesk/pull/12010#issue-3125329069
                         let mut camera_index = info.index().clone();
                         if !matches!(camera_index, CameraIndex::Index(0)) {
                             if cameras.iter().any(|cam| matches!(cam.index(), CameraIndex::Index(0))) {
@@ -185,7 +176,7 @@ impl Cameras {
 pub struct CameraCapturer {
     camera: Camera,
     data: Vec<u8>,
-    last_data: Vec<u8>, // for faster compare and copy
+    last_data: Vec<u8>,
 }
 
 #[cfg(not(any(target_os = "windows", target_os = "linux")))]
@@ -213,7 +204,6 @@ impl CameraCapturer {
 impl TraitCapturer for CameraCapturer {
     #[cfg(any(target_os = "windows", target_os = "linux"))]
     fn frame<'a>(&'a mut self, _timeout: std::time::Duration) -> std::io::Result<Frame<'a>> {
-        // TODO: move this check outside `frame`.
         if !self.camera.is_stream_open() {
             if let Err(e) = self.camera.open_stream() {
                 return Err(io::Error::new(
@@ -228,7 +218,6 @@ impl TraitCapturer for CameraCapturer {
                     Ok(decoded) => {
                         self.data = decoded.as_raw().to_vec();
                         crate::would_block_if_equal(&mut self.last_data, &self.data)?;
-                        // FIXME: macos's PixelBuffer cannot be directly created from bytes slice.
                         cfg_if::cfg_if! {
                             if #[cfg(any(target_os = "linux", target_os = "windows"))] {
                                 Ok(Frame::PixelBuffer(PixelBuffer::new(

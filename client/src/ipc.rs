@@ -3,15 +3,9 @@ mod ipc_auth;
 #[cfg(any(target_os = "linux", target_os = "macos"))]
 #[path = "ipc/fs.rs"]
 mod ipc_fs;
-// The DRM/KMS capture producer, the `_drm` channel and its SCM_RIGHTS framing live in their own
-// module, declared the same way as the other pieces of this file, so the opt-in feature adds a
-// bounded, self-contained surface here instead of ~1800 lines in the middle of the shared IPC.
 #[cfg(all(target_os = "linux", feature = "drm"))]
 #[path = "ipc/drm.rs"]
 mod ipc_drm;
-// Re-exported so the paths callers already use (`crate::ipc::start_drm`, `crate::ipc::connect_drm`,
-// `crate::ipc::DrmDisplayInfo`) keep working, and so the `Data` variants can name the two
-// payload types.
 #[cfg(all(target_os = "linux", feature = "drm"))]
 pub use ipc_drm::{start_drm, DmabufDesc, DrmDisplayInfo};
 #[cfg(all(target_os = "linux", feature = "drm"))]
@@ -74,7 +68,6 @@ use ipc_fs::{
     check_pid, ensure_secure_ipc_parent_dir, scrub_secure_ipc_parent_dir,
     should_scrub_parent_entries_after_check_pid, write_pid,
 };
-// Gated with the module that uses it, so a `drm`-less build does not carry an unused import.
 #[cfg(all(target_os = "linux", feature = "drm"))]
 use ipc_fs::remove_ipc_entry_via_secure_parent_fd;
 use parity_tokio_ipc::{
@@ -90,7 +83,6 @@ use std::{
     sync::atomic::{AtomicBool, Ordering},
 };
 
-// IPC actions here.
 pub const IPC_ACTION_CLOSE: &str = "close";
 #[cfg(target_os = "windows")]
 const PORTABLE_SERVICE_IPC_HANDSHAKE_TIMEOUT_MS: u64 = 3_000;
@@ -108,7 +100,6 @@ thread_local! {
 }
 
 #[must_use = "bind this guard to a local variable to keep the IPC scope active"]
-/// Thread-local guard for routing root main IPC to the active user on Linux/macOS.
 #[cfg(any(target_os = "linux", target_os = "macos"))]
 pub(crate) struct UserMainIpcScope {
     previous: bool,
@@ -222,8 +213,6 @@ pub enum FS {
         path: String,
         new_name: String,
     },
-    // CM-side file reading operations (Windows only)
-    // These enable Connection Manager to read files and stream them back to Connection
     ReadFile {
         path: String,
         id: i32,
@@ -261,7 +250,6 @@ pub struct ClipboardNonFile {
     pub next_raw: bool,
     pub width: i32,
     pub height: i32,
-    // message.proto: ClipboardFormat
     pub format: i32,
     pub special_name: String,
 }
@@ -424,56 +412,32 @@ pub enum Data {
     #[cfg(windows)]
     ControlledSessionCount(usize),
     CmErr(String),
-    // CM-side file reading responses (Windows only)
-    // These are sent from CM back to Connection when CM handles file reading
-    /// Response to ReadFile: contains initial file list or error
     ReadJobInitResult {
         id: i32,
         file_num: i32,
         include_hidden: bool,
         conn_id: i32,
-        /// Serialized protobuf bytes of FileDirectory, or error string
         result: Result<Vec<u8>, String>,
     },
-    /// File data block read by CM.
-    ///
-    /// The actual data is sent separately via `send_raw()` after this message to avoid
-    /// JSON encoding overhead for large binary data. This mirrors the `WriteBlock` pattern.
-    ///
-    /// **Protocol:**
-    /// - Sender: `send(FileBlockFromCM{...})` then `send_raw(data)`
-    /// - Receiver: `next()` returns `FileBlockFromCM`, then `next_raw()` returns data bytes
-    ///
-    /// **Note on empty data (e.g., empty files):**
-    /// Empty data is supported. The IPC connection uses `BytesCodec` with `raw=false` (default),
-    /// which prefixes each frame with a length header. So `send_raw(Bytes::new())` sends a
-    /// 1-byte frame (length=0), and `next_raw()` correctly returns an empty `BytesMut`.
-    /// See `libs/hbb_common/src/bytes_codec.rs` test `test_codec2` for verification.
     FileBlockFromCM {
         id: i32,
         file_num: i32,
-        /// Data is sent separately via `send_raw()` to avoid JSON encoding overhead.
-        /// This field is skipped during serialization; sender must call `send_raw()` after sending.
-        /// Receiver must call `next_raw()` and populate this field manually.
         #[serde(skip)]
         data: bytes::Bytes,
         compressed: bool,
         conn_id: i32,
     },
-    /// File read completed successfully
     FileReadDone {
         id: i32,
         file_num: i32,
         conn_id: i32,
     },
-    /// File read failed with error
     FileReadError {
         id: i32,
         file_num: i32,
         err: String,
         conn_id: i32,
     },
-    /// Digest info from CM for overwrite detection
     FileDigestFromCM {
         id: i32,
         file_num: i32,
@@ -482,18 +446,15 @@ pub enum Data {
         is_resume: bool,
         conn_id: i32,
     },
-    /// Response to ReadAllFiles: recursive directory listing
     AllFilesResult {
         id: i32,
         conn_id: i32,
         path: String,
-        /// Serialized protobuf bytes of FileDirectory, or error string
         result: Result<Vec<u8>, String>,
     },
     CheckHwcodec,
     #[cfg(feature = "flutter")]
     VideoConnCount(Option<usize>),
-    // Although the key is not necessary, it is used to avoid hardcoding the key.
     WaylandScreencastRestoreToken((String, String)),
     HwCodecConfig(Option<String>),
     TrustedDeviceManagement(Box<authority::Request>),
@@ -519,66 +480,27 @@ pub enum Data {
     ControlPermissionsRemoteModify(Option<bool>),
     #[cfg(target_os = "windows")]
     FileTransferEnabledState(Option<bool>),
-    /// CM -> server: the connection manager's WINDOW went away, which is not the same event
-    /// as the operator disconnecting a peer. Linux only, and deliberately: there a session
-    /// logout closes every window, and the close arrives at the CM indistinguishable from a
-    /// person clicking it - measured on KDE, the CM gets no signal and logind still reports the
-    /// session active. So the ambiguous case ends the session WITHOUT the no-retry reason and
-    /// the peer is allowed to reconnect (landing on the greeter after a logout), while the
-    /// explicit Disconnect button keeps sending `Close` and kicking for good.
     #[cfg(target_os = "linux")]
     CmWindowClosed,
-    // --- DRM/KMS capture (opt-in `drm` feature) over the `_drm` service-scoped channel ---
-    // All of the following are `cfg(all(linux, drm))`, so the drm-off IPC wire is byte-identical
-    // to upstream. `_drm` protocol: the client sends `DrmHello`, the service `DrmDisplayList`, the
-    // client replies `DrmStart{display}`, then the service streams `DrmFrame` + send_raw(BGRA) and
-    // `DrmCursor` + send_raw(RGBA). A frame/cursor header is ALWAYS immediately followed by exactly
-    // one `send_raw()` payload (the same header-then-raw pairing as `FileBlockFromCM`). This keeps
-    // the header extensible. The zero-copy `DrmFrameDmabuf(DmabufDesc)` sibling below carries only a
-    // small JSON metadata descriptor; the scanout dma-buf fd rides an SCM_RIGHTS ancillary message on
-    // the same `DrmConn` send (see `DrmConn::send_msg`), so it has NO trailing `send_raw()` body.
-    /// Client -> service, first on `_drm`: whether the service may wake sleeping displays before
-    /// it answers. The cache warm at every `--server` start says no: no peer is waiting for it.
     #[cfg(all(target_os = "linux", feature = "drm"))]
     DrmHello { wake: bool },
-    /// Client -> service: begin streaming the chosen display.
     #[cfg(all(target_os = "linux", feature = "drm"))]
-    // `need_cpu` is set by an unprivileged consumer that could not open a render-node convert context
-    // (drmtap_open_render failed, e.g. no /dev/dri/renderD* access). The service then streams the
-    // CPU-converted `DrmFrame` path for this connection instead of a dma-buf fd the consumer cannot
-    // detile, so a render-node-less seat still captures instead of losing the stream.
     DrmStart { display: i32, need_cpu: bool },
-    /// Service -> client: the enumerated DRM displays (sent once, before frames).
     #[cfg(all(target_os = "linux", feature = "drm"))]
     DrmDisplayList(Vec<DrmDisplayInfo>),
-    /// Service -> client: the connector topology changed mid-stream (a monitor hotplug/unplug/modeset,
-    /// observed by the service's udev DRM-uevent listener). Carries the freshly-enumerated list so the
-    /// consumer can swap its sticky positive availability cache off the hot path, WITHOUT re-probing
-    /// `_drm` (which would trip the enumeration restart loop). Interleaved with frames on the same
-    /// stream; carries no `send_raw()` body and no fd.
     #[cfg(all(target_os = "linux", feature = "drm"))]
     DrmDisplaysChanged(Vec<DrmDisplayInfo>),
-    /// Service -> client: a frame header; the packed BGRA pixels follow via `send_raw()`.
-    /// CPU-fallback path (no render node, or no transferable dma-buf): pixels cross the wire.
     #[cfg(all(target_os = "linux", feature = "drm"))]
     DrmFrame {
         width: u32,
         height: u32,
-        /// See `DmabufDesc::plane_rotation`; absent from a producer older than this field.
         #[serde(default)]
         plane_rotation: Option<u32>,
-        /// See `DmabufDesc::cursor_pos`: the cursor plane position read right after this frame,
-        /// or `None` when the cursor is hidden, the read failed or the producer predates the field.
         #[serde(default)]
         cursor_pos: Option<(i32, i32)>,
     },
-    /// Service -> client: a zero-copy dma-buf frame descriptor. The scanout fd is NOT a field; when
-    /// `desc.has_fd` it rides an SCM_RIGHTS ancillary message on the same `DrmConn::send_msg`, and
-    /// there is NO trailing `send_raw()` body. The unprivileged `--server` imports the fd and does
-    /// the EGL detile/convert itself (see `DmabufDesc`).
     #[cfg(all(target_os = "linux", feature = "drm"))]
     DrmFrameDmabuf(DmabufDesc),
-    /// Service -> client: a hardware-cursor header; the RGBA pixels follow via `send_raw()`.
     #[cfg(all(target_os = "linux", feature = "drm"))]
     DrmCursor {
         id: u64,
@@ -586,24 +508,11 @@ pub enum Data {
         height: u32,
         hotx: i32,
         hoty: i32,
-        /// Whether the hotspot came from the driver, or was inferred from the bitmap.
-        ///
-        /// Absent means the producer predates the field, and the default must then be TRUE, not
-        /// `bool::default()`. These messages are JSON over a unix socket between two processes
-        /// that are upgraded separately: an old root service can be streaming to a freshly
-        /// started `--server`, and its `{"hotx": 12, "hoty": 11}` carries no provenance. Read as
-        /// `false`, the new consumer would throw that hotspot away and re-infer one from the
-        /// upright bitmap, moving the cursor on a rotated display for the length of the upgrade.
-        /// Defaulting to true means "no provenance available, so behave as the old protocol did"
-        /// -- use the point the producer sent. It is not a claim that the value was measured; a
-        /// new producer that wants re-inference says `hot_measured: false` explicitly, which
-        /// serializes, so new-to-new is unaffected.
         #[serde(default = "legacy_hot_measured")]
         hot_measured: bool,
     },
 }
 
-/// The default for a `hot_measured` that is not on the wire at all; see the field's docs.
 #[cfg(all(target_os = "linux", feature = "drm"))]
 fn legacy_hot_measured() -> bool {
     true
@@ -626,10 +535,6 @@ pub async fn start(postfix: &str) -> ResultType<()> {
                     }
                     #[cfg(windows)]
                     if postfix.is_empty() {
-                        // Windows main IPC (`postfix == ""`) is authorized here.
-                        // Other security-sensitive channels use dedicated authorization paths:
-                        // - `_portable_service`: portable-service listener + handshake policy
-                        // - service-scoped postfixes: service-specific listener/authorization
                         if !authorize_windows_main_ipc_connection(&stream, &postfix) {
                             continue;
                         }
@@ -642,17 +547,6 @@ pub async fn start(postfix: &str) -> ResultType<()> {
                                     break;
                                 }
                                 Ok(Some(data)) => {
-                                    // On Linux/macOS, the protected `_service` channel is used only for
-                                    // syncing config between root service and the active user process.
-                                    //
-                                    // NOTE: `is_service_ipc_postfix()` also includes `_uinput_*`, but those
-                                    // channels are handled by the dedicated uinput listener/protocol in
-                                    // `src/server/uinput.rs` and therefore do not share this Data enum
-                                    // allowlist. The SyncConfig allowlist here is intentionally scoped to the
-                                    // `_service` channel only.
-                                    //
-                                    // Keep this explicit branch to avoid policy drift between `_service` and
-                                    // uinput IPC paths while still minimizing exposed message surface here.
                                     #[cfg(any(target_os = "linux", target_os = "macos"))]
                                     if postfix == crate::POSTFIX_SERVICE {
                                         if matches!(&data, Data::SyncConfig(_)) {
@@ -664,8 +558,6 @@ pub async fn start(postfix: &str) -> ResultType<()> {
                                                 std::mem::discriminant(&data),
                                                 stream.peer_uid()
                                             );
-                                            // Close the connection to avoid keeping a protected channel
-                                            // alive while repeatedly receiving invalid traffic.
                                             break;
                                         }
                                         continue;
@@ -673,10 +565,6 @@ pub async fn start(postfix: &str) -> ResultType<()> {
                                     handle(data, &mut stream).await;
                                 }
                                 Ok(None) => {
-                                    // `Ok(None)` means a complete frame arrived but did not
-                                    // deserialize into `Data`. Peer close/reset is returned as
-                                    // `Err` by `ConnectionTmpl::next()`. Keep the historical
-                                    // ignore behavior except on the protected `_service` channel.
                                     #[cfg(any(target_os = "linux", target_os = "macos"))]
                                     {
                                         if postfix == crate::POSTFIX_SERVICE {
@@ -732,8 +620,6 @@ pub async fn new_listener(postfix: &str) -> ResultType<Incoming> {
             log::error!("Failed to set ipc{} security: {}", postfix, err);
             #[cfg(windows)]
             if postfix == "_portable_service" {
-                // Fail closed for `_portable_service` when SDDL construction fails.
-                // This endpoint is security-critical and must not start with default ACLs.
                 return Err(err.into());
             }
         }
@@ -747,11 +633,6 @@ pub async fn new_listener(postfix: &str) -> ResultType<Incoming> {
             }
             #[cfg(any(target_os = "linux", target_os = "macos"))]
             {
-                // NOTE: On Linux/macOS, some IPC sockets are intentionally world-connectable
-                // (0666) so the active (non-root) user process can connect. Authorization is
-                // enforced at accept-time for these channels, and the protected `_service`
-                // channel is further restricted by an explicit message allowlist (SyncConfig
-                // only).
                 let socket_mode = if config::is_service_ipc_postfix(postfix) {
                     0o0666
                 } else {
@@ -814,9 +695,6 @@ impl CheckIfRestart {
 }
 impl Drop for CheckIfRestart {
     fn drop(&mut self) {
-        // If https proxy is used, we need to restart rendezvous mediator.
-        // No need to check if https proxy is used, because this option does not change frequently
-        // and restarting mediator is safe even https proxy is not used.
         let allow_insecure_tls_fallback_changed = self.allow_insecure_tls_fallback
             != Config::get_option(keys::OPTION_ALLOW_INSECURE_TLS_FALLBACK);
         if allow_insecure_tls_fallback_changed
@@ -873,19 +751,15 @@ async fn handle(data: Data, stream: &mut Connection) {
                 }
                 #[cfg(any(target_os = "macos", target_os = "linux"))]
                 if crate::is_main() {
-                    // below part is for main windows can be reopen during rustdesk installation and installing service from UI
-                    // this make new ipc server (domain socket) can be created.
                     std::fs::remove_file(&Config::ipc_path("")).ok();
                     #[cfg(target_os = "linux")]
                     {
                         hbb_common::sleep((crate::platform::SERVICE_INTERVAL * 2) as f32 / 1000.0)
                             .await;
-                        // https://github.com/rustdesk/rustdesk/discussions/9254
                         crate::run_me::<&str>(vec!["--no-server"]).ok();
                     }
                     #[cfg(target_os = "macos")]
                     {
-                        // our launchagent interval is 1 second
                         hbb_common::sleep(1.5).await;
                         std::process::Command::new("open")
                             .arg("-n")
@@ -893,12 +767,10 @@ async fn handle(data: Data, stream: &mut Connection) {
                             .spawn()
                             .ok();
                     }
-                    // leave above open a little time
                     hbb_common::sleep(0.3).await;
-                    // in case below exit failed
                     crate::platform::quit_gui();
                 }
-                std::process::exit(-1); // to make sure --server luauchagent process can restart because SuccessfulExit used
+                std::process::exit(-1);
             }
         }
         Data::OnlineStatus(_) => {
@@ -1009,7 +881,6 @@ async fn handle(data: Data, stream: &mut Connection) {
             Some(value) => {
                 let mut updated = true;
                 if name == "id" {
-                    // An empty id would wipe the local id and unconfirm the key (cf. #15626).
                     if value.is_empty() {
                         log::warn!("Ignoring empty id write over IPC");
                         updated = false;
@@ -1038,9 +909,6 @@ async fn handle(data: Data, stream: &mut Connection) {
                                 }
                             };
                     }
-                    // Explicitly ACK/NACK permanent-password writes. This allows UIs/FFI to
-                    // distinguish "accepted by daemon" vs "IPC send succeeded" without
-                    // reading back any secret.
                     let ack = if updated { "Y" } else { "N" }.to_owned();
                     allow_err!(stream.send(&Data::Config((name.clone(), Some(ack)))).await);
                 } else if name == "salt" {
@@ -1242,7 +1110,6 @@ async fn handle(data: Data, stream: &mut Connection) {
                     allow_err!(stream.send(&Data::HwCodecConfig(v)).await);
                 }
                 Some(v) => {
-                    // --server and portable
                     scrap::hwcodec::HwCodecConfig::set(v);
                 }
             }
@@ -1269,9 +1136,6 @@ async fn handle(data: Data, stream: &mut Connection) {
                 }
             } else if value == "clear" {
                 set_local_option(key.clone(), "".to_owned());
-                // The session slot is held while a portal request waits for the user, and this ipc
-                // listener runs on one thread: wait for the slot off it, then close what the
-                // request brings back.
                 #[cfg(target_os = "linux")]
                 allow_err!(
                     hbb_common::tokio::task::spawn_blocking(
@@ -1310,8 +1174,6 @@ async fn handle(data: Data, stream: &mut Connection) {
                 }
             }
             None => {
-                // `None` is usually used to get values.
-                // This branch is left blank for unification and further use.
             }
         },
         #[cfg(target_os = "windows")]
@@ -1330,7 +1192,6 @@ async fn handle(data: Data, stream: &mut Connection) {
                 );
             }
             _ => {
-                // Port forward session count is only a get value.
             }
         },
         Data::ControlPermissionsRemoteModify(_) => {
@@ -1428,8 +1289,6 @@ pub(crate) async fn portable_service_ipc_handshake_as_server<T, F>(
 ) -> ResultType<()>
 where
     T: AsyncRead + AsyncWrite + std::marker::Unpin,
-    // Token validators must use `constant_time_ipc_token_eq` or an equivalent
-    // fixed-length comparison; this handshake is part of the privilege boundary.
     F: FnMut(&str) -> bool,
 {
     let authorized = match stream
@@ -1472,8 +1331,6 @@ fn select_server_uid_for_user_main_ipc(
     match server_uids.as_slice() {
         [] => {
             if let Some(uid) = active_uid {
-                // If no `--server` processes are found but the active user is identifiable,
-                // try the active user anyway because the main process may also listen on "" IPC.
                 return Ok(uid);
             } else {
                 bail!("No --server process found for user main IPC")
@@ -1514,9 +1371,6 @@ fn running_server_uids_for_current_exe() -> ResultType<Vec<u32>> {
             continue;
         }
         let Some(uid) = process.user_id().map(|uid| **uid as u32) else {
-            // Root CLI management commands need a stable matching `--server` target.
-            // If this key process races during enumeration, failing the command is clearer
-            // than silently skipping it; `--server` is not expected to exit frequently.
             bail!("Failed to read --server process uid");
         };
         server_uids.push(uid);
@@ -1605,21 +1459,18 @@ pub async fn start_pa() {
                                 rate: crate::platform::PA_SAMPLE_RATE,
                             };
                             log::info!("pa monitor: {:?}", device);
-                            // systemctl --user status pulseaudio.service
                             let mut buf: Vec<u8> = vec![0; AUDIO_DATA_SIZE_U8];
                             match psimple::Simple::new(
-                                None,                             // Use the default server
-                                &crate::get_app_name(),           // Our application’s name
-                                pulse::stream::Direction::Record, // We want a record stream
-                                Some(&device),                    // Use the default device
-                                "record",                         // Description of our stream
-                                &spec,                            // Our sample format
-                                None,                             // Use default channel map
-                                None, // Use default buffering attributes
+                                None,
+                                &crate::get_app_name(),
+                                pulse::stream::Direction::Record,
+                                Some(&device),
+                                "record",
+                                &spec,
+                                None,
+                                None,
                             ) {
                                 Ok(s) => loop {
-                                    // A dead pulse handle fails every read at once, so ignoring the
-                                    // error left nothing pacing this loop and it burned a core.
                                     if let Err(err) = s.read(&mut buf) {
                                         log::error!("Failed to read audio data:{}", err);
                                         break;
@@ -1799,10 +1650,8 @@ pub fn is_permanent_password_set() -> bool {
             return v == "Y";
         }
         Ok(None) => {
-            // No response/value (timeout).
         }
         Err(_) => {
-            // Connection error.
         }
     }
     log::warn!("Failed to query permanent password state from daemon");
@@ -1840,7 +1689,6 @@ pub async fn set_permanent_password_with_ack(v: String) -> ResultType<bool> {
 }
 
 async fn set_permanent_password_with_ack_async(v: String) -> ResultType<bool> {
-    // The daemon ACK/NACK is expected quickly since it applies the config in-process.
     let ms_timeout = 1_000;
     let mut c = connect(ms_timeout, "").await?;
     c.send_config("permanent-password", v).await?;
@@ -1851,8 +1699,6 @@ async fn set_permanent_password_with_ack_async(v: String) -> ResultType<bool> {
             if ok {
                 #[cfg(target_os = "windows")]
                 sync_security_config_from_server(&mut c).await?;
-                // Ensure the hashed permanent password storage is written to the user config file.
-                // This sync must not affect the daemon ACK outcome.
                 #[cfg(not(target_os = "windows"))]
                 if let Err(err) = sync_permanent_password_storage_from_daemon_async().await {
                     log::warn!("Failed to sync permanent password storage from daemon: {err}");
@@ -1878,7 +1724,6 @@ pub fn set_unlock_pin(v: String, translate: bool) -> ResultType<()> {
                     "Requires at least {".to_string() + &format!("{min_len}") + "} characters",
                 )
             } else {
-                // Sometimes, translated can't show normally in command line
                 format!("Requires at least {} characters", min_len)
             };
             bail!(err);
@@ -1935,7 +1780,6 @@ async fn sync_security_config_from_server(
     use hbb_common::anyhow::Context;
 
     const TIMEOUT_MS: u64 = 1000;
-    // MSI removal can reactivate this user copy without running our uninstall hooks.
     async {
         connection.send(&Data::SyncConfig(None)).await?;
         match connection.next_timeout(TIMEOUT_MS).await? {
@@ -1955,13 +1799,8 @@ async fn sync_security_config_from_server(
 }
 
 pub fn get_id() -> String {
-    // An empty id may come from a process that took over the main IPC with a
-    // config scope that has no id yet (e.g. a user GUI that became the server
-    // while the installed service was restarting). Treat it as no answer,
-    // otherwise the empty id is adopted below and wipes the local one.
     if let Ok(Some(v)) = get_config("id") {
         if !v.is_empty() {
-            // update salt also, so that next time reinstallation not causing first-time auto-login failure
             if let Ok(Some(v2)) = get_config("salt") {
                 Config::set_salt(&v2);
             }
@@ -2037,7 +1876,6 @@ pub async fn set_options(value: HashMap<String, String>) -> ResultType<()> {
     }
     if let Ok(mut c) = connection {
         c.send(&Data::Options(Some(value.clone()))).await?;
-        // do not put below before connect, because we need to check should_exit
         match c.next_timeout(1000).await {
             #[cfg(target_os = "windows")]
             Ok(Some(Data::Options(None))) if affected => {
@@ -2164,7 +2002,6 @@ pub async fn send_url_scheme(url: String) -> ResultType<()> {
     Ok(())
 }
 
-// Emit `close` events to ipc.
 pub fn close_all_instances() -> ResultType<bool> {
     match crate::ipc::send_url_scheme(IPC_ACTION_CLOSE.to_owned()) {
         Ok(_) => Ok(true),
@@ -2392,7 +2229,6 @@ async fn handle_wayland_screencast_restore_token(
 pub async fn set_install_option(k: String, v: String) -> ResultType<()> {
     if let Ok(mut c) = connect(1000, "").await {
         c.send(&&Data::InstallOption(Some((k, v)))).await?;
-        // do not put below before connect, because we need to check should_exit
         c.next_timeout(1000).await.ok();
     }
     Ok(())

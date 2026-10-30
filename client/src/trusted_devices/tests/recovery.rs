@@ -46,13 +46,11 @@ pub(super) async fn service_sync_preserves_grants_and_revocations() {
         .unwrap();
     let current = Config2::get_for_sync().unwrap();
 
-    // Explicit service sync replaces the older copy, including removals and enrollment.
     previous.sync_trusted_devices().unwrap();
     config::sync_config(settings.clone(), current.clone()).unwrap();
     assert!(!is_trusted(&removed).await);
     assert!(is_trusted(&retained).await);
     assert!(is_trusted(&added).await);
-    // Installation imports this file, including the original grant deadlines.
     let imported: Config2 = hbb_common::config::load_path(Config2::file());
     assert_eq!(
         imported, current,

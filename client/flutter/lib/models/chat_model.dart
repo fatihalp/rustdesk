@@ -96,7 +96,7 @@ class ChatModel with ChangeNotifier {
 
   late final Map<MessageKey, MessageBody> _messages = {};
 
-  MessageKey _currentKey = MessageKey('', -2); // -2 is invalid value
+  MessageKey _currentKey = MessageKey('', -2);
   late bool _isShowCMSidePage = false;
 
   Map<MessageKey, MessageBody> get messages => _messages;
@@ -130,7 +130,6 @@ class ChatModel with ChangeNotifier {
         bool isShiftPressed = event.isKeyPressed(LogicalKeyboardKey.shiftLeft);
         bool isEnterPressed = event.isKeyPressed(LogicalKeyboardKey.enter);
 
-        // don't send empty messages
         if (isEnterPressed && isEnterPressed && textController.text.isEmpty) {
           return KeyEventResult.handled;
         }
@@ -157,7 +156,6 @@ class ChatModel with ChangeNotifier {
     if (chatIconOverlayEntry != null) {
       chatIconOverlayEntry!.remove();
     }
-    // mobile check navigationBar
     final bar = navigationBarKey.currentWidget;
     if (bar != null) {
       if ((bar as BottomNavigationBar).currentIndex == 1) {
@@ -212,7 +210,7 @@ class ChatModel with ChangeNotifier {
       gFFI.invokeMethod("enable_soft_keyboard", true);
     }
     if (isMobile &&
-        !gFFI.chatModel.currentKey.isOut && // not in remote page
+        !gFFI.chatModel.currentKey.isOut &&
         gFFI.chatModel.latestReceivedKey != null) {
       gFFI.chatModel.changeCurrentKey(gFFI.chatModel.latestReceivedKey!);
       gFFI.chatModel.mobileClearClientUnread(gFFI.chatModel.currentKey.connId);
@@ -309,7 +307,7 @@ class ChatModel with ChangeNotifier {
     await toggleCMSidePage();
   }
 
-  var _togglingCMSidePage = false; // protect order for await
+  var _togglingCMSidePage = false;
   toggleCMSidePage() async {
     if (_togglingCMSidePage) return false;
     _togglingCMSidePage = true;
@@ -388,11 +386,9 @@ class ChatModel with ChangeNotifier {
 
     final messagekey = MessageKey(peerId, id);
 
-    // mobile: first message show overlay icon
     if (!isDesktop && chatIconOverlayEntry == null) {
       showChatIconOverlay();
     }
-    // show chat page
     await showChatPage(messagekey);
     late final ChatUser chatUser;
     if (id == clientModeID) {
@@ -408,8 +404,6 @@ class ChatModel with ChangeNotifier {
               .indexWhere((e) => e.key == session.id);
           final notSelected =
               index >= 0 && tabController.state.value.selected != index;
-          // minisized: top and switch tab
-          // not minisized: add count
           if (await WindowController.fromWindowId(stateGlobal.windowId)
               .isMinimized()) {
             windowOnTop(stateGlobal.windowId);
@@ -432,7 +426,6 @@ class ChatModel with ChangeNotifier {
       }
       if (isDesktop) {
         windowOnTop(null);
-        // disable auto jumpTo other tab when hasFocus, and mark unread message
         final currentSelectedTab =
             session.serverModel.tabController.state.value.selectedTabInfo;
         if (currentSelectedTab.key != id.toString() && inputNode.hasFocus) {
@@ -452,7 +445,6 @@ class ChatModel with ChangeNotifier {
     insertMessage(messagekey,
         ChatMessage(text: text, user: chatUser, createdAt: DateTime.now()));
     if (id == clientModeID || _currentKey.peerId.isEmpty) {
-      // client or invalid
       _currentKey = messagekey;
       mobileClearClientUnread(messagekey.connId);
     }
@@ -496,7 +488,7 @@ class ChatModel with ChangeNotifier {
       }
     }
     if (_currentKey == key || _currentKey.peerId.isEmpty) {
-      _currentKey = key; // hash != assign
+      _currentKey = key;
     }
   }
 
@@ -551,7 +543,6 @@ class ChatModel with ChangeNotifier {
       if (!bounds.contains(event.position)) return false;
       _softKeyboardRequested.value = true;
       _restoreChatInputControl();
-      // Reconnect so the platform receives the keyboard type instead of none.
       inputNode.unfocus(disposition: UnfocusDisposition.previouslyFocusedChild);
       scheduleMicrotask(() {
         if (chatWindowOverlayEntry != null && _softKeyboardRequested.value) {
@@ -572,7 +563,6 @@ class ChatModel with ChangeNotifier {
     }
     if (_usingPhysicalChatInput) return;
     _usingPhysicalChatInput = true;
-    // Keep the platform text-input connection for physical editing, without IME UI.
     TextInput.setInputControl(null);
   }
 
@@ -596,8 +586,6 @@ class ChatModel with ChangeNotifier {
   void onVoiceCallClosed(String reason) {
     _voiceCallStatus.value = VoiceCallStatus.notStarted;
     if (isAndroid) {
-      // We can always invoke "on_voice_call_closed"
-      // no matter if the `_voiceCallStatus` was `VoiceCallStatus.notStarted` or not.
       parent.target?.invokeMethod("on_voice_call_closed");
     }
   }
@@ -617,6 +605,5 @@ enum VoiceCallStatus {
   notStarted,
   waitingForResponse,
   connected,
-  // Connection manager only.
   incoming
 }

@@ -1,10 +1,8 @@
-// Runtime loader for libdrmtap.so (the DRM/KMS capture engine), dlopen'd so the binary carries no hard libdrm/libEGL/libGLESv2 dependency.
 
 use hbb_common::{libloading::Library, log};
 use std::os::raw::{c_char, c_int, c_void};
 use std::sync::OnceLock;
 
-// C ABI structs: must match libdrmtap include/drmtap.h.
 
 #[repr(C)]
 pub struct drmtap_ctx {
@@ -13,9 +11,9 @@ pub struct drmtap_ctx {
 
 #[repr(C)]
 pub struct drmtap_config {
-    pub device_path: *const c_char, // NULL = auto-detect /dev/dri/card*
-    pub crtc_id: u32,               // 0 = auto-select first active CRTC
-    pub helper_path: *const c_char, // only consulted if the direct DRM export is denied (no CAP_SYS_ADMIN)
+    pub device_path: *const c_char,
+    pub crtc_id: u32,
+    pub helper_path: *const c_char,
     pub debug: c_int,
 }
 
@@ -66,23 +64,20 @@ pub struct drmtap_frame_info {
     pub _priv: *mut c_void,
 }
 
-// Descriptor of an externally-supplied scanout DMA-BUF: the privileged exporter fills it via
-// `drmtap_grab_desc`; the converter overwrites `dma_buf_fd` with the fd it got via SCM_RIGHTS.
-// Mirrors `drmtap_dmabuf_desc` EXACTLY (field order + widths); a mismatch mis-reads CCS/HDR scanouts.
 #[repr(C)]
 #[derive(Clone, Copy)]
 pub struct drmtap_dmabuf_desc {
-    pub dma_buf_fd: c_int, // scanout DMA-BUF; -1 for an already-imported fb_id
+    pub dma_buf_fd: c_int,
     pub width: u32,
     pub height: u32,
-    pub format: u32,           // DRM fourcc of the scanout
-    pub modifier: u64,         // DRM format modifier (tiling/compression)
-    pub fb_id: u32,            // import-once cache key; 0 disables caching
-    pub num_planes: u32,       // used entries in offsets/pitches (1..4); 0 => 1
-    pub offsets: [u32; 4],     // per-plane byte offsets (CCS main+aux+clear-color)
-    pub pitches: [u32; 4],     // per-plane strides; pitches[0] = main stride
-    pub hdr_eotf: u32,         // DRMTAP_EOTF_* (SDR=0, PQ=2, HLG=3)
-    pub hdr_max_nits: u32,     // mastering/content peak luminance cd/m2; 0=unknown
+    pub format: u32,
+    pub modifier: u64,
+    pub fb_id: u32,
+    pub num_planes: u32,
+    pub offsets: [u32; 4],
+    pub pitches: [u32; 4],
+    pub hdr_eotf: u32,
+    pub hdr_max_nits: u32,
 }
 
 impl Default for drmtap_dmabuf_desc {
@@ -116,7 +111,6 @@ pub struct drmtap_cursor_info {
     pub _priv: *mut c_void,
 }
 
-// Resolved symbol typedefs.
 
 type FnVersion = unsafe extern "C" fn() -> c_int;
 type FnOpen = unsafe extern "C" fn(*const drmtap_config) -> *mut drmtap_ctx;
@@ -127,33 +121,17 @@ type FnGrabMapped = unsafe extern "C" fn(*mut drmtap_ctx, *mut drmtap_frame_info
 type FnFrameRelease = unsafe extern "C" fn(*mut drmtap_ctx, *mut drmtap_frame_info);
 type FnGetCursor = unsafe extern "C" fn(*mut drmtap_ctx, *mut drmtap_cursor_info) -> c_int;
 type FnCursorRelease = unsafe extern "C" fn(*mut drmtap_ctx, *mut drmtap_cursor_info);
-/// `drmtap_cursor_hotspot_valid`, added in libdrmtap 0.5.6. Answers, for the sample in hand,
-/// whether `hot_x`/`hot_y` were read from the driver's HOTSPOT_X/Y plane properties: 0 with
-/// `*valid` set, `-EINVAL` on a null argument, and `-ENOTSUP` when nothing recorded an answer,
-/// which is what a cursor read through an older privileged helper produces.
 type FnCursorHotspotValid =
     unsafe extern "C" fn(*const drmtap_cursor_info, *mut c_int) -> c_int;
-// Split-capture entry points (libdrmtap >= 0.4.10), required: `grab_desc` runs on the privileged
-// export side, `open_render`/`convert_dmabuf` on the unprivileged converter side.
 type FnGrabDesc =
     unsafe extern "C" fn(*mut drmtap_ctx, *mut drmtap_dmabuf_desc, *mut drmtap_frame_info) -> c_int;
 type FnOpenRender = unsafe extern "C" fn(*const c_char) -> *mut drmtap_ctx;
-// libdrmtap >= 0.4.15; returns a ctx-owned string, or NULL if it has none.
 type FnRenderNode = unsafe extern "C" fn(*mut drmtap_ctx) -> *const c_char;
-/// `drmtap_plane_rotation`, added in libdrmtap 0.5.8: the DRM `rotation` bitmask the primary
-/// plane scans out with, read now (0x1 = 0, 0x2 = 90, 0x4 = 180, 0x8 = 270, plus 0x10/0x20 for
-/// a reflection). 0 with `*rotation` set; `-ENOTSUP` when the plane has no such property, which
-/// means the compositor can only have rotated in software; `-ENOENT` with no plane bound;
-/// `-EINVAL` on a null argument.
 type FnPlaneRotation = unsafe extern "C" fn(*mut drmtap_ctx, *mut u32) -> c_int;
-/// `drmtap_crtc_refresh`, added in libdrmtap 0.5.9: the refresh of the captured CRTC in hertz as
-/// the reduced fraction `*num / *den` of its current mode. 0 on success; `-ENODATA` for a CRTC
-/// with no mode; `-ENOENT` with none to pick; `-EINVAL` on a null argument.
 type FnCrtcRefresh = unsafe extern "C" fn(*mut drmtap_ctx, *mut u64, *mut u64) -> c_int;
 type FnConvertDmabuf =
     unsafe extern "C" fn(*mut drmtap_ctx, *const drmtap_dmabuf_desc, *mut drmtap_frame_info) -> c_int;
 
-/// The dlopen'd libdrmtap; the `Library` is kept alive for the process lifetime, so the raw fn pointers stay valid.
 pub struct DrmtapLib {
     _lib: Library,
     pub open: FnOpen,
@@ -164,25 +142,16 @@ pub struct DrmtapLib {
     pub frame_release: FnFrameRelease,
     pub get_cursor: FnGetCursor,
     pub cursor_release: FnCursorRelease,
-    /// Optional: it only exists from libdrmtap 0.5.6. Absent means the library cannot say where a
-    /// hotspot came from, NOT that it was a guess; `drm_reader` keeps the old heuristic for that
-    /// case and nothing else changes.
     pub cursor_hotspot_valid: Option<FnCursorHotspotValid>,
     pub grab_desc: FnGrabDesc,
     pub open_render: FnOpenRender,
     pub convert_dmabuf: FnConvertDmabuf,
     pub render_node: Option<FnRenderNode>,
-    /// Optional: it only exists from libdrmtap 0.5.8. Absent means the library cannot say whether
-    /// the plane rotated the scanout, and the consumer keeps the pre-0.5.8 rule for that case.
     pub plane_rotation: Option<FnPlaneRotation>,
-    /// Optional: it only exists from libdrmtap 0.5.9. Absent means the producer takes the
-    /// whole-hertz refresh of the enumeration as its pacing floor.
     pub crtc_refresh: Option<FnCrtcRefresh>,
     pub version: (c_int, c_int, c_int),
 }
 
-/// A library whose capture entry points are the given fakes and whose others do nothing, for the
-/// tests of the reader.
 #[cfg(test)]
 impl DrmtapLib {
     pub(crate) fn fake(
@@ -234,23 +203,15 @@ impl DrmtapLib {
     }
 }
 
-// SAFETY: the resolved fn pointers are plain C entry points with no interior mutability;
-// libdrmtap contexts are used single-threaded by the caller. The Library handle is never moved out.
 unsafe impl Send for DrmtapLib {}
 unsafe impl Sync for DrmtapLib {}
 
 const DRMTAP_ABI_MAJOR: c_int = 0;
 
-// Lowest (minor, patch) accepted. 0.5.0 is the floor because it fixes the padded-framebuffer read
-// (a scanout whose pitch exceeds width*bpp was decoded at the wrong stride); the whole split API
-// has been present since 0.4.10.
 const DRMTAP_MIN_MINOR_PATCH: (c_int, c_int) = (5, 0);
 
-// The MINOR series this build's mirrored structs were verified against: libdrmtap's header freezes
-// only `drmtap_device` and `drmtap_dmabuf_desc`, so an unverified minor could be read at wrong offsets.
 const DRMTAP_ABI_MINOR: c_int = 5;
 
-/// Whether a library reporting `major.minor.patch` may be loaded (major and minor exact, patch at or above the floor).
 fn abi_accepted(major: c_int, minor: c_int, patch: c_int) -> bool {
     major == DRMTAP_ABI_MAJOR
         && minor == DRMTAP_ABI_MINOR
@@ -259,14 +220,7 @@ fn abi_accepted(major: c_int, minor: c_int, patch: c_int) -> bool {
 
 impl DrmtapLib {
     fn load() -> Option<Self> {
-        // Absolute path FIRST: the deb bundles the .so privately under /usr/lib/rustdesk and does NOT register that dir with ld.so.
-        const INSTALLED: &str = "/usr/lib/rustdesk/libdrmtap.so.0";
-        // Bare sonames exist so an unpackaged development build can load a locally built .so from
-        // the normal ld.so search path. They are NOT offered when running as root: this is the one
-        // place where which file happens to be on the load path decides what gets mapped into the
-        // CAP_SYS_ADMIN process, and the packaged service always finds the absolute path first
-        // anyway. A root process that reaches the fallback has no bundled library, which is the
-        // PipeWire-fallback case, not a reason to search.
+        const INSTALLED: &str = "/usr/lib/supportdesk/libdrmtap.so.0";
         const DEV_ONLY: [&str; 2] = ["libdrmtap.so.0", "libdrmtap.so"];
         let is_root = unsafe { hbb_common::libc::geteuid() } == 0;
         let candidates: Vec<&str> = if is_root {
@@ -284,13 +238,9 @@ impl DrmtapLib {
                 }
             });
             let Some((lib, name)) = found else {
-                // The dlerror names the real cause (a missing soname, a glibc too old for the
-                // bundled build); the caller only reports that DRM capture is off.
                 log::warn!("libdrmtap dlopen failed: {}", errs.join("; "));
                 return None;
             };
-            // Canonicalize the absolute candidate only: `dlopen` does not search the CWD for a bare
-            // soname, while `canonicalize` resolves a relative name against it.
             let real = std::path::Path::new(name)
                 .is_absolute()
                 .then(|| std::fs::canonicalize(name).ok())
@@ -363,7 +313,6 @@ impl DrmtapLib {
                 lib.get(b"drmtap_plane_rotation").ok().map(|s| *s);
             let crtc_refresh: Option<FnCrtcRefresh> =
                 lib.get(b"drmtap_crtc_refresh").ok().map(|s| *s);
-            // Log the load only now that every required symbol resolved: this fn still returns None on a missing one.
             let loaded_from = real
                 .as_ref()
                 .map_or_else(|| name.to_owned(), |p| p.display().to_string());
@@ -394,9 +343,6 @@ impl DrmtapLib {
                      points at and remove any leftover libdrmtap.so.0* beside it. {effect}"
                 );
             }
-            // Same shape as the check above, and for the same reason: a library that REPORTS a
-            // version which exports the symbol and then does not have it is a stale or
-            // hand-substituted object, and saying so beats silently taking the legacy path.
             if (minor, patch) >= (5, 6) && cursor_hotspot_valid.is_none() {
                 log::warn!(
                     "libdrmtap at {loaded_from} reports v{major}.{minor}.{patch} but is missing \
@@ -447,7 +393,6 @@ impl DrmtapLib {
 
 static DRMTAP_LIB: OnceLock<Option<DrmtapLib>> = OnceLock::new();
 
-/// The loaded libdrmtap, or None if the .so (or a runtime dep) is absent or its version/exports fall outside the ABI gate. Loaded once; a failure is remembered.
 pub fn get() -> Option<&'static DrmtapLib> {
     DRMTAP_LIB
         .get_or_init(|| {
@@ -478,8 +423,6 @@ mod tests {
 
     #[test]
     fn abi_gate_rejects_an_unknown_newer_minor() {
-        // Relative to DRMTAP_ABI_MINOR, so the next bump cannot leave this test asserting that the
-        // NEW verified minor must be refused -- which is what a hardcoded list did before.
         let verified = DRMTAP_ABI_MINOR;
         for (minor, patch) in [
             (verified - 1, 99),

@@ -9,11 +9,6 @@ use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use Illuminate\Http\Response;
 
-/**
- * Implements the small subset of the RustDesk "api-server" protocol that the
- * client already speaks (see client/src/hbbs_http/sync.rs), plus the
- * enrollment fields added by client/src/brand.rs.
- */
 class DeviceSyncController extends Controller
 {
     private const SYSINFO_VERSION = '1';
@@ -29,7 +24,7 @@ class DeviceSyncController extends Controller
             return response()->json(new \stdClass);
         }
 
-        $device = Device::where('rustdesk_id', $id)->first();
+        $device = Device::where('supportdesk_id', $id)->first();
         $uuid = $data['uuid'] ?? null;
         if (! $device || ($device->uuid !== null && $device->uuid !== $uuid)) {
             return response()->json(['sysinfo' => true]);
@@ -68,12 +63,12 @@ class DeviceSyncController extends Controller
         }
 
         $uuid = isset($data['uuid']) ? (string) $data['uuid'] : null;
-        $device = Device::where('rustdesk_id', $id)->first();
+        $device = Device::where('supportdesk_id', $id)->first();
         if ($device && $device->uuid !== null && $device->uuid !== $uuid) {
             return response('UUID_MISMATCH', 409, ['Content-Type' => 'text/plain']);
         }
 
-        $device ??= new Device(['rustdesk_id' => $id, 'first_seen_at' => now()]);
+        $device ??= new Device(['supportdesk_id' => $id, 'first_seen_at' => now()]);
         $os = $this->text($data['os'] ?? null);
         $device->fill([
             'client_app_id' => $app->id,

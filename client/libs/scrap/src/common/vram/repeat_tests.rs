@@ -199,7 +199,6 @@ fn hardware_repeats_own_pixels_and_reset_on_recreation() {
                             .unwrap();
                         check_picture(&mut decoder, frame, width, height, false, 0);
 
-                        // Overwrite and release the capture resource before any repeats.
                         let overwritten = pixels(width, height, 224);
                         (*context.0).UpdateSubresource(
                             source.0 as _,

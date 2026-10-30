@@ -41,7 +41,7 @@ class Grid: Behavior {
   
   function getCurrentColumn()
   {
-    return this.$(thead>:current); // return current cell in header row
+    return this.$(thead>:current);
   }
 
   function resetCurrent() {
@@ -56,13 +56,12 @@ class Grid: Behavior {
   function setCurrentRow(row, reason = #by_code, doubleClick = false)
     {
       if (!row) return;
-      // get previously selected row:
       var prev = this.getCurrentRow();
       if (prev)
       {
-        if (prev === row && !doubleClick) return; // already here, nothing to do.
-        prev.state.current = false; // drop state flag
-        prev.state.checked = false; // drop state flag
+        if (prev === row && !doubleClick) return;
+        prev.state.current = false;
+        prev.state.checked = false;
       }
       row.state.current = true; 
       row.state.checked = true; 
@@ -76,14 +75,13 @@ class Grid: Behavior {
   
   function setCurrentColumn(col)
     {
-      // get previously selected column:
       var prev = this.getCurrentColumn();
       if (prev)
       {
-        if (prev === col) return; // already here, nothing to do.
-        prev.state.current = false; // drop state flag
+        if (prev === col) return;
+        prev.state.current = false;
       }
-      col.state.current = true; // set state flag
+      col.state.current = true;
       col.scrollToView();
       this.onHeaderClick(col);
     }
@@ -94,7 +92,7 @@ class Grid: Behavior {
       if (!col) return;
       var byColumn = col.index;                                  
       var nowDesc = (col.attributes["sort"] || "desc") == "desc";                                 
-      if (sortClicked) (this.$(thead [sort]) || col).attributes["sort"] = undefined; // drop any other sort order.
+      if (sortClicked) (this.$(thead [sort]) || col).attributes["sort"] = undefined;
       var getValue = function(x) {
         var value = x.attributes["value"];
         if (value == undefined) return x.text.toLowerCase();
@@ -137,24 +135,21 @@ class Grid: Behavior {
       if (!evt.mainButton) 
           return false;
          
-      // auxiliary function, returns row this target element belongs to
       function targetRow(target) { return target.$p(tbody>tr); }
          
-      // auxiliary function, returns row this target element belongs to
       function targetHeaderCell(target) { return target.$p(thead>tr>th); }
           
-      if (var row = targetRow(evt.target)) // click on the row
+      if (var row = targetRow(evt.target))
         this.setCurrentRow(row, #by_mouse, evt.type == Event.MOUSE_DCLICK);
       else if (var headerCell = targetHeaderCell(evt.target))  
       {
-        this.setCurrentColumn(headerCell); // click on the header cell
+        this.setCurrentColumn(headerCell);
         if (evt.type != Event.MOUSE_DCLICK && headerCell.$is(.sortable)) {
           this.sortBy = headerCell;
           this.sortRows(true);
         }
       }
             
-      //return true; // as it is always ours then stop event bubbling
     }
 
   function onFocus(evt)
@@ -195,12 +190,11 @@ class Grid: Behavior {
                  var pr = r; r = this.body[i];
                  if (r.box(#top, #inner, #content) < y) 
                  {
-                    // this row is further than scroll pos - height of scroll area 
-                    this.setCurrentRow(pr? pr: r,#by_key); // to last fully visible
+                    this.setCurrentRow(pr? pr: r,#by_key);
                     return true;
                  }
              }
-             this.setCurrentRow(r,#by_key); // just in case
+             this.setCurrentRow(r,#by_key);
           }
           return true;
         case Event.VK_NEXT:
@@ -213,12 +207,11 @@ class Grid: Behavior {
                  var pr = r; r = this.body[i];
                  if (r.box(#bottom, #inner, #content) > y)
                  {                               
-                    // this row is further than scroll pos - height of scroll area
-                    this.setCurrentRow(pr? pr: r,#by_key); // to last fully visible
+                    this.setCurrentRow(pr? pr: r,#by_key);
                     return true;
                  }         
              }
-             this.setCurrentRow(r,#by_key); // just in case
+             this.setCurrentRow(r,#by_key);
           }
           return true;                       
                                                 

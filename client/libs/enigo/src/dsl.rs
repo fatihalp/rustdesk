@@ -2,27 +2,14 @@ use crate::{Key, KeyboardControllable};
 use std::error::Error;
 use std::fmt;
 
-/// An error that can occur when parsing DSL
 #[derive(Debug, PartialEq, Eq)]
 pub enum ParseError {
-    /// When a tag doesn't exist.
-    /// Example: {+TEST}{-TEST}
-    ///            ^^^^   ^^^^
     UnknownTag(String),
 
-    /// When a { is encountered inside a {TAG}.
-    /// Example: {+HELLO{WORLD}
-    ///                 ^
     UnexpectedOpen,
 
-    /// When a { is never matched with a }.
-    /// Example: {+SHIFT}Hello{-SHIFT
-    ///                              ^
     UnmatchedOpen,
 
-    /// Opposite of UnmatchedOpen.
-    /// Example: +SHIFT}Hello{-SHIFT}
-    ///         ^
     UnmatchedClose,
 }
 impl Error for ParseError {
@@ -41,7 +28,6 @@ impl fmt::Display for ParseError {
     }
 }
 
-/// Evaluate the DSL. This tokenizes the input and presses the keys.
 pub fn eval<K>(enigo: &mut K, input: &str) -> Result<(), ParseError>
 where
     K: KeyboardControllable,

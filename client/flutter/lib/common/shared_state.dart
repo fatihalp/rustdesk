@@ -3,7 +3,6 @@ import 'package:get/get.dart';
 
 import '../consts.dart';
 
-// TODO: A lot of dup code.
 
 class PrivacyModeState {
   static String tag(String id) => 'privacy_mode_$id';
@@ -204,7 +203,6 @@ class KeyboardEnabledState {
   static void init(String id) {
     final key = tag(id);
     if (!Get.isRegistered<RxBool>(tag: key)) {
-      // Server side, default true
       final RxBool state = true.obs;
       Get.put<RxBool>(state, tag: key);
     } else {
@@ -350,7 +348,7 @@ initSharedStates(String id) {
   FingerprintState.init(id);
   PeerBoolOption.init(id, kOptionZoomCursor, () => false);
   UnreadChatCountState.init(id);
-  if (isMobile) ConnectionTypeState.init(id); // desktop in other places
+  if (isMobile) ConnectionTypeState.init(id);
 }
 
 removeSharedStates(String id) {

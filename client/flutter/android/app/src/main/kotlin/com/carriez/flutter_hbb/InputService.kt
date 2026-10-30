@@ -1,10 +1,5 @@
 package com.carriez.flutter_hbb
 
-/**
- * Handle remote input and dispatch android gesture
- *
- * Inspired by [droidVNC-NG] https://github.com/bk138/droidVNC-NG
- */
 
 import android.accessibilityservice.AccessibilityService
 import android.accessibilityservice.GestureDescription
@@ -36,27 +31,19 @@ import hbb.MessageOuterClass.KeyEvent
 import hbb.MessageOuterClass.KeyboardMode
 import hbb.KeyEventConverter
 
-// const val BUTTON_UP = 2
-// const val BUTTON_BACK = 0x08
 
 const val LEFT_DOWN = 9
 const val LEFT_MOVE = 8
 const val LEFT_UP = 10
 const val RIGHT_UP = 18
-// (BUTTON_BACK << 3) | BUTTON_UP
 const val BACK_UP = 66
 const val WHEEL_BUTTON_DOWN = 33
 const val WHEEL_BUTTON_UP = 34
 const val WHEEL_DOWN = 523331
 const val WHEEL_UP = 963
 
-// src/common.rs MOUSE_TYPE_WHEEL: the controller sends a wheel tick as a
-// MouseEvent with these type bits and the scroll delta in y (y < 0 = down).
 const val MOUSE_TYPE_WHEEL = 3
 
-// Wheel-tick travel for MOUSE_TYPE_WHEEL events. Three quarters of the legacy
-// WHEEL_STEP; tuned on real devices during review (the full 120px felt too
-// far per tick).
 const val MOUSE_WHEEL_STEP = 90
 
 const val TOUCH_SCALE_START = 1
@@ -97,7 +84,6 @@ class InputService : AccessibilityService() {
     private var mouseY = 0
     private var timer = Timer()
     private var recentActionTask: TimerTask? = null
-    // 100(tap timeout) + 400(long press timeout)
     private val longPressDuration = ViewConfiguration.getTapTimeout().toLong() + ViewConfiguration.getLongPressTimeout().toLong()
 
     private val wheelActionsQueue = LinkedList<GestureDescription>()
@@ -111,12 +97,6 @@ class InputService : AccessibilityService() {
 
     private val volumeController: VolumeController by lazy { VolumeController(applicationContext.getSystemService(AUDIO_SERVICE) as AudioManager) }
 
-    /**
-     * Handles a remote mouse event on the gesture path. [mask] is the
-     * button/phase mask of the mouse protocol ([MOUSE_TYPE_WHEEL] ticks carry
-     * the scroll delta in [_y] instead of a position), x/y the screen-space
-     * position. Requires API 24 for the gesture APIs.
-     */
     @RequiresApi(Build.VERSION_CODES.N)
     fun onMouseInput(mask: Int, _x: Int, _y: Int) {
         val x = max(0, _x)
@@ -136,7 +116,6 @@ class InputService : AccessibilityService() {
             }
         }
 
-        // left button down, was up
         if (mask == LEFT_DOWN) {
             isWaitingLongPress = true
             timer.schedule(object : TimerTask() {
@@ -153,12 +132,10 @@ class InputService : AccessibilityService() {
             return
         }
 
-        // left down, was down
         if (leftIsDown) {
             continueGesture(mouseX, mouseY)
         }
 
-        // left up, was down
         if (mask == LEFT_UP) {
             if (leftIsDown) {
                 leftIsDown = false
@@ -178,7 +155,6 @@ class InputService : AccessibilityService() {
             return
         }
 
-        // long WHEEL_BUTTON_DOWN -> GLOBAL_ACTION_RECENTS
         if (mask == WHEEL_BUTTON_DOWN) {
             timer.purge()
             recentActionTask = object : TimerTask() {
@@ -190,7 +166,6 @@ class InputService : AccessibilityService() {
             timer.schedule(recentActionTask, LONG_TAP_DELAY)
         }
 
-        // wheel button up
         if (mask == WHEEL_BUTTON_UP) {
             if (recentActionTask != null) {
                 recentActionTask!!.cancel()
@@ -199,16 +174,7 @@ class InputService : AccessibilityService() {
             return
         }
 
-        // The controller sends a wheel tick as a MouseEvent with the type bits
-        // MOUSE_TYPE_WHEEL (src/common.rs) and the scroll delta in _y
-        // (y < 0 = wheel down); the WHEEL_DOWN/WHEEL_UP masks below are legacy
-        // values that current controllers never send. Gated to API 24+ like
-        // the rest of the gesture path - below that, legacy devices take the
-        // Shizuku backend or a no-op, not this class.
         if (mask == MOUSE_TYPE_WHEEL && Build.VERSION.SDK_INT >= Build.VERSION_CODES.N) {
-            // A horizontal tick (the controller sends y = 0 when the
-            // horizontal delta dominates) or a delta truncated to zero is not
-            // a vertical swipe.
             if (_y == 0) {
                 return
             }
@@ -447,9 +413,6 @@ class InputService : AccessibilityService() {
 
         var textToCommit: String? = null
 
-        // [down] indicates the key's state(down or up).
-        // [press] indicates a click event(down and up).
-        // https://github.com/rustdesk/rustdesk/blob/3a7594755341f023f56fa4b6a43b60d6b47df88d/flutter/lib/models/input_model.dart#L688
         if (keyEvent.hasSeq()) {
             textToCommit = keyEvent.getSeq()
         } else if (keyboardMode == KeyboardMode.Legacy) {
@@ -544,7 +507,6 @@ class InputService : AccessibilityService() {
 
     private fun tryHandlePowerKeyEvent(event: KeyEventAndroid): Boolean {
         if (event.keyCode == KeyEventAndroid.KEYCODE_POWER) {
-            // Perform power dialog action when action is up
             if (event.action == KeyEventAndroid.ACTION_UP) {
                 performGlobalAction(GLOBAL_ACTION_POWER_DIALOG);
             }
@@ -709,7 +671,6 @@ class InputService : AccessibilityService() {
             }
 
             this.fakeEditTextForTextStateCalculation?.let {
-                // This is essiential to make sure layout object is created. OnKeyDown may not work if layout is not created.
                 val rect = Rect()
                 node.getBoundsInScreen(rect)
 
@@ -783,7 +744,6 @@ class InputService : AccessibilityService() {
         }
         setServiceInfo(info)
         fakeEditTextForTextStateCalculation = EditText(this)
-        // Size here doesn't matter, we won't show this view.
         fakeEditTextForTextStateCalculation?.layoutParams = LayoutParams(100, 100)
         fakeEditTextForTextStateCalculation?.onPreDraw()
         val layout = fakeEditTextForTextStateCalculation?.getLayout()
@@ -793,7 +753,6 @@ class InputService : AccessibilityService() {
 
     override fun onDestroy() {
         ctx = null
-        // Keep this fallback even though onUnbind usually notifies first.
         notifyInputState()
         super.onDestroy()
     }

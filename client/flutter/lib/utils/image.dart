@@ -108,8 +108,6 @@ class ImagePainter extends CustomPainter {
     if (image == null) return;
     if (x.isNaN || y.isNaN) return;
     canvas.scale(scale, scale);
-    // https://github.com/flutter/flutter/issues/76187#issuecomment-784628161
-    // https://api.flutter-io.cn/flutter/dart-ui/FilterQuality.html
     var paint = Paint();
     if ((scale - 1.0).abs() > 0.001) {
       paint.filterQuality = FilterQuality.medium;
@@ -117,8 +115,6 @@ class ImagePainter extends CustomPainter {
         paint.filterQuality = FilterQuality.high;
       }
     }
-    // It's strange that if (scale < 0.5 && paint.filterQuality == FilterQuality.medium)
-    // The canvas.drawImage will not work on web
     if (isWeb) {
       paint.filterQuality = FilterQuality.high;
     }

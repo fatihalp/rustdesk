@@ -75,11 +75,6 @@ pub trait PrivacyMode: Sync + Send {
         Ok(false)
     }
 
-    /// `INVALID_PRIVACY_MODE_CONN_ID` deliberately bypasses the ownership check, meaning
-    /// "turn it off whoever owns it": shutdown (`ipc::Data::Close`), `reset_all`, and
-    /// `TurnOnGuard`, which undoes a half-finished turn-on however far it got. A caller
-    /// acting for one connection must pass that connection's own id, or it can turn off
-    /// privacy mode belonging to another.
     #[inline]
     fn check_off_conn_id(&self, conn_id: i32) -> ResultType<()> {
         let pre_conn_id = self.pre_conn_id();
@@ -200,14 +195,11 @@ fn get_supported_impl(impl_key: &str) -> String {
     if supported_impls.iter().any(|(k, _)| k == &impl_key) {
         return impl_key.to_owned();
     };
-    // TODO: Is it a good idea to use fallback here? Because user do not know the fallback.
-    // fallback
     let mut cur_impl = get_option("privacy-mode-impl-key".to_owned());
     if !get_supported_privacy_mode_impl()
         .iter()
         .any(|(k, _)| k == &cur_impl)
     {
-        // fallback
         cur_impl = DEFAULT_PRIVACY_MODE_IMPL.to_owned();
     }
     cur_impl
@@ -237,9 +229,6 @@ async fn turn_on_privacy_async(impl_key: String, conn_id: i32) -> Option<ResultT
         let res = turn_on_privacy_sync(&impl_key, conn_id);
         let _ = tx.send(res);
     });
-    // Wait at most 7.5 seconds for the result.
-    // Because it may take a long time to turn on the privacy mode with amyuni idd.
-    // Some laptops may take time to plug in a virtual display.
     match hbb_common::timeout(7500, rx).await {
         Ok(res) => match res {
             Ok(res) => res,
@@ -250,10 +239,8 @@ async fn turn_on_privacy_async(impl_key: String, conn_id: i32) -> Option<ResultT
 }
 
 fn turn_on_privacy_sync(impl_key: &str, conn_id: i32) -> Option<ResultType<bool>> {
-    // Check if privacy mode is already on or occupied by another one
     let mut privacy_mode_lock = PRIVACY_MODE.lock().unwrap();
 
-    // Check or switch privacy mode implementation
     let impl_key = get_supported_impl(impl_key);
 
     let mut cur_impl_key = "".to_string();
@@ -263,10 +250,8 @@ fn turn_on_privacy_sync(impl_key: &str, conn_id: i32) -> Option<ResultType<bool>
         match check_on_conn_id.as_ref() {
             Ok(true) => {
                 if cur_impl_key == impl_key {
-                    // Same peer, same implementation.
                     return Some(Ok(true));
                 } else {
-                    // Same peer, switch to new implementation.
                 }
             }
             Err(_) => return Some(check_on_conn_id),
@@ -290,7 +275,6 @@ fn turn_on_privacy_sync(impl_key: &str, conn_id: i32) -> Option<ResultType<bool>
         }
     }
 
-    // turn on privacy mode
     Some(privacy_mode_lock.as_mut()?.turn_on_privacy(conn_id))
 }
 
@@ -299,7 +283,6 @@ pub(crate) fn close_other_remote_connections_for_privacy(owner_id: i32) {
     use crate::server::{AuthConnType, AUTHED_CONNS};
 
     let privacy_mode_lock = PRIVACY_MODE.lock().unwrap();
-    // Ownership can change while the caller validates the capturer.
     if privacy_mode_lock.as_ref().map(|mode| mode.pre_conn_id()) != Some(owner_id) {
         return;
     }
@@ -379,9 +362,6 @@ pub fn get_supported_privacy_mode_impl() -> Vec<(&'static str, &'static str)> {
     }
     #[cfg(target_os = "macos")]
     {
-        // No translation is intended for privacy_mode_impl_macos_tip as it is a 
-        // placeholder for macOS specific privacy mode implementation which currently
-        // doesn't provide multiple modes like Windows does.
         vec![(macos::PRIVACY_MODE_IMPL, "privacy_mode_impl_macos_tip")]
     }
     #[cfg(not(any(target_os = "windows", target_os = "macos")))]
@@ -426,7 +406,6 @@ pub fn check_privacy_mode_err(
     display_idx: usize,
     timeout_millis: u64,
 ) -> String {
-    // win magnifier implementation requires a test of creating a capturer.
     if is_current_privacy_mode_impl(PRIVACY_MODE_IMPL_WIN_MAG) {
         crate::video_service::test_create_capturer(privacy_mode_id, display_idx, timeout_millis)
     } else {

@@ -20,17 +20,12 @@ move_binary() {
     TARGET=$2
     BINARY=$3
 
-    # run lipo over the command to check whether it really
-    # is a binary that we need to merge architectures
     lipo $SOURCE/$BINARY -info &> /dev/null || return 0
 
-    # get the directory name the file is in
     DIRNAME=$(dirname $BINARY)
 
-    # ensure the directory to move the binary to exists
     mkdir -p $TARGET/$DIRNAME
 
-    # now finally move the binary
     mv $SOURCE/$BINARY $TARGET/$BINARY
 }
 
@@ -72,7 +67,6 @@ merge_binaries() {
 
 export PKG_CONFIG_PATH="$(cygpath -p "${PKG_CONFIG_PATH}")"
 
-# Export HTTP(S)_PROXY as http(s)_proxy:
 [ -n "$HTTP_PROXY"  ] && export http_proxy="$HTTP_PROXY"
 [ -n "$HTTPS_PROXY" ] && export https_proxy="$HTTPS_PROXY"
 
@@ -85,13 +79,8 @@ JOBS=@VCPKG_CONCURRENCY@
 OSX_ARCHS="@OSX_ARCHS@"
 OSX_ARCH_COUNT=0@OSX_ARCH_COUNT@
 
-# Default to hardware concurrency if unset.
 : ${JOBS:=$(nproc)}
 
-# Disable asm and x86asm on all android targets because they trigger build failures:
-# arm64 Android build fails with 'relocation R_AARCH64_ADR_PREL_PG_HI21 cannot be used against symbol ff_cos_32; recompile with -fPIC'
-# x86 Android build fails with 'error: inline assembly requires more registers than available'.
-# x64 Android build fails with 'relocation R_X86_64_PC32 cannot be used against symbol ff_h264_cabac_tables; recompile with -fPIC'
 if [ "@VCPKG_CMAKE_SYSTEM_NAME@" = "Android" ]; then
     OPTIONS_arm=" --disable-asm --disable-x86asm"
     OPTIONS_arm64=" --disable-asm --disable-x86asm"
@@ -105,13 +94,11 @@ else
 fi
 
 build_ffmpeg() {
-    # extract build architecture
     BUILD_ARCH=$1
     shift
 
     echo "BUILD_ARCH=${BUILD_ARCH}"
 
-    # get architecture-specific options
     OPTION_VARIABLE="OPTIONS_${BUILD_ARCH}"
     echo "OPTION_VARIABLE=${OPTION_VARIABLE}"
 

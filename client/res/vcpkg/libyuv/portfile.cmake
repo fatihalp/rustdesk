@@ -4,7 +4,6 @@ vcpkg_from_git(
     OUT_SOURCE_PATH SOURCE_PATH
     URL https://chromium.googlesource.com/libyuv/libyuv
     REF 0faf8dd0e004520a61a603a4d2996d5ecc80dc3f
-    # Check https://chromium.googlesource.com/libyuv/libyuv/+/refs/heads/main/include/libyuv/version.h for a version!
     PATCHES
         fix-cmakelists.patch
 )
@@ -12,12 +11,9 @@ vcpkg_from_git(
 vcpkg_cmake_get_vars(cmake_vars_file)
 include("${cmake_vars_file}")
 if (VCPKG_DETECTED_CMAKE_CXX_COMPILER_ID STREQUAL "MSVC" AND NOT VCPKG_TARGET_IS_UWP)
-    # Most of libyuv accelerated features need to be compiled by clang/gcc, so force use clang-cl, otherwise the performance is too poor.
-    # Manually build the port with clang-cl when using MSVC as compiler
 
     message(STATUS "Set compiler to clang-cl when using MSVC")
 
-    # https://github.com/microsoft/vcpkg/pull/10398
     set(VCPKG_POLICY_SKIP_ARCHITECTURE_CHECK enabled)
 
     vcpkg_find_acquire_program(CLANG)

@@ -253,7 +253,6 @@ impl Encoder {
             h265: h265_useable,
             ..Default::default()
         });
-        // find the most frequent preference
         let mut counts = Vec::new();
         for pref in &preferences {
             match counts.iter_mut().find(|(p, _)| p == pref) {
@@ -268,7 +267,6 @@ impl Encoder {
             .unwrap_or((PreferCodec::Auto.into(), 0));
         let preference = most_frequent.enum_value_or(PreferCodec::Auto);
 
-        // auto: h265 > h264 > av1/vp9/vp8
         let av1_test = Config::get_option(base::config::keys::OPTION_AV1_TEST) != "N";
         let mut auto_codec = if av1_useable && av1_test {
             CodecFormat::AV1
@@ -285,7 +283,6 @@ impl Encoder {
             let mut system = System::new();
             system.refresh_memory();
             if vp8_useable && system.total_memory() <= 4 * 1024 * 1024 * 1024 {
-                // 4 Gb
                 auto_codec = CodecFormat::VP8
             }
         }
@@ -627,7 +624,6 @@ impl Decoder {
         self.valid
     }
 
-    // rgb [in/out] fmt and stride must be set in ImageRgb
     pub fn handle_video_frame(
         &mut self,
         frame: &video_frame::Union,
@@ -708,7 +704,6 @@ impl Decoder {
         }
     }
 
-    // rgb [in/out] fmt and stride must be set in ImageRgb
     fn handle_vpxs_video_frame(
         decoder: &mut VpxDecoder,
         vpxs: &EncodedVideoFrames,
@@ -735,7 +730,6 @@ impl Decoder {
         }
     }
 
-    // rgb [in/out] fmt and stride must be set in ImageRgb
     fn handle_av1s_video_frame(
         decoder: &mut AomDecoder,
         av1s: &EncodedVideoFrames,
@@ -762,7 +756,6 @@ impl Decoder {
         }
     }
 
-    // rgb [in/out] fmt and stride must be set in ImageRgb
     #[cfg(feature = "hwcodec")]
     fn handle_hwram_video_frame(
         decoder: &mut HwRamDecoder,
@@ -773,7 +766,6 @@ impl Decoder {
         let mut ret = false;
         for h264 in frames.frames.iter() {
             for image in decoder.decode(&h264.data)? {
-                // TODO: just process the last frame
                 if image.to_fmt(rgb, i420).is_ok() {
                     ret = true;
                 }
@@ -802,7 +794,6 @@ impl Decoder {
         return Ok(ret);
     }
 
-    // rgb [in/out] fmt and stride must be set in ImageRgb
     #[cfg(feature = "mediacodec")]
     fn handle_mediacodec_video_frame(
         decoder: &mut MediaCodecDecoder,
@@ -928,19 +919,19 @@ impl Quality {
 
 pub fn base_bitrate(width: u32, height: u32) -> u32 {
     const RESOLUTION_PRESETS: &[(u32, u32, u32)] = &[
-        (640, 480, 400),     // VGA, 307k pixels
-        (800, 600, 500),     // SVGA, 480k pixels
-        (1024, 768, 800),    // XGA, 786k pixels
-        (1280, 720, 1000),   // 720p, 921k pixels
-        (1366, 768, 1100),   // HD, 1049k pixels
-        (1440, 900, 1300),   // WXGA+, 1296k pixels
-        (1600, 900, 1500),   // HD+, 1440k pixels
-        (1920, 1080, 2073),  // 1080p, 2073k pixels
-        (2048, 1080, 2200),  // 2K DCI, 2211k pixels
-        (2560, 1440, 3000),  // 2K QHD, 3686k pixels
-        (3440, 1440, 4000),  // UWQHD, 4953k pixels
-        (3840, 2160, 5000),  // 4K UHD, 8294k pixels
-        (7680, 4320, 12000), // 8K UHD, 33177k pixels
+        (640, 480, 400),
+        (800, 600, 500),
+        (1024, 768, 800),
+        (1280, 720, 1000),
+        (1366, 768, 1100),
+        (1440, 900, 1300),
+        (1600, 900, 1500),
+        (1920, 1080, 2073),
+        (2048, 1080, 2200),
+        (2560, 1440, 3000),
+        (3440, 1440, 4000),
+        (3840, 2160, 5000),
+        (7680, 4320, 12000),
     ];
     let pixels = width * height;
 
@@ -954,7 +945,7 @@ pub fn base_bitrate(width: u32, height: u32) -> u32 {
                 pixels - preset_pixels
             }
         })
-        .unwrap_or(((1920 * 1080) as u32, &2073)); // default 1080p
+        .unwrap_or(((1920 * 1080) as u32, &2073));
 
     let bitrate = (*preset_bitrate as f32 * (pixels as f32 / preset_pixels as f32)).round() as u32;
 
@@ -991,14 +982,12 @@ pub fn codec_thread_num(limit: usize) -> usize {
     #[cfg(not(windows))]
     {
         s.refresh_cpu_usage();
-        // https://man7.org/linux/man-pages/man3/getloadavg.3.html
         let avg = s.load_average();
         info = format!("cpu loadavg: {}", avg.one);
         res = (((max as f64) - avg.one) * 0.5).round() as usize;
     }
     res = std::cmp::min(res, max / 2);
     res = std::cmp::min(res, memory as usize / 2);
-    //  Use common thread count
     res = match res {
         _ if res >= 64 => 64,
         _ if res >= 32 => 32,
@@ -1008,17 +997,7 @@ pub fn codec_thread_num(limit: usize) -> usize {
         _ if res >= 2 => 2,
         _ => 1,
     };
-    // https://aomedia.googlesource.com/aom/+/refs/heads/main/av1/av1_cx_iface.c#677
-    // https://aomedia.googlesource.com/aom/+/refs/heads/main/aom_util/aom_thread.h#26
-    // https://chromium.googlesource.com/webm/libvpx/+/refs/heads/main/vp8/vp8_cx_iface.c#148
-    // https://chromium.googlesource.com/webm/libvpx/+/refs/heads/main/vp9/vp9_cx_iface.c#190
-    // https://github.com/FFmpeg/FFmpeg/blob/7c16bf0829802534004326c8e65fb6cdbdb634fa/libavcodec/pthread.c#L65
-    // https://github.com/FFmpeg/FFmpeg/blob/7c16bf0829802534004326c8e65fb6cdbdb634fa/libavcodec/pthread_internal.h#L26
-    // libaom: MAX_NUM_THREADS = 64
-    // libvpx: MAX_NUM_THREADS = 64
-    // ffmpeg: MAX_AUTO_THREADS = 16
     res = std::cmp::min(res, limit);
-    // avoid frequent log
     let log = match THREAD_LOG_TIME.lock().unwrap().clone() {
         Some(instant) => instant.elapsed().as_secs() > 1,
         None => true,
@@ -1031,8 +1010,6 @@ pub fn codec_thread_num(limit: usize) -> usize {
 }
 
 fn disable_av1() -> bool {
-    // aom is very slow for x86 sciter version on windows x64
-    // disable it for all 32 bit platforms
     std::mem::size_of::<usize>() == 4
 }
 
@@ -1059,10 +1036,8 @@ pub fn test_av1() {
                     let mut rng = hbb_common::rand::thread_rng();
                     let mut bgra = vec![0u8; (width * height * 4) as usize];
                     let gradient = frame_index as f32 / frame_count as f32;
-                    // floating block
                     let x0 = (frame_index * move_step) % (width - block_size);
                     let y0 = (frame_index * move_step) % (height - block_size);
-                    // Fill the block with random colors
                     for y in 0..block_size {
                         for x in 0..block_size {
                             let index = (((y0 + y) * width + x0 + x) * 4) as usize;

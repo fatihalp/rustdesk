@@ -120,7 +120,7 @@ class ButtonOP extends StatelessWidget {
               backgroundColor: primaryColor,
             ).copyWith(elevation: ButtonStyleButton.allOrNull(0.0)),
             onPressed:
-                curOP.value == 'rustdesk' || !canStartAuth() ? null : onTap,
+                curOP.value == 'supportdesk' || !canStartAuth() ? null : onTap,
             child: Row(
               children: [
                 SizedBox(
@@ -167,7 +167,6 @@ class _OidcAuthController {
     }
     final authAttempt = ++_authAttempt;
     curOP.value = op;
-    // Web auth must start during the original user gesture so popups are allowed.
     if (isWeb) {
       return _startWeb(authAttempt, op);
     }
@@ -235,7 +234,7 @@ class _OidcAuthController {
       return;
     }
     final hasActiveOidcAuth =
-        curOP.value.isNotEmpty && curOP.value != 'rustdesk';
+        curOP.value.isNotEmpty && curOP.value != 'supportdesk';
     _closed = true;
     _authAttempt++;
     curOP.value = '';
@@ -669,7 +668,6 @@ class LoginWidgetUserPass extends StatelessWidget {
               reRequestFocus: true,
               errorText: passMsg,
             ),
-            // NOT use Offstage to wrap LinearProgressIndicator
             if (isInProgress) const LinearProgressIndicator(),
             const SizedBox(height: 12.0),
             FittedBox(
@@ -700,7 +698,6 @@ const kAuthReqTypeOidc = 'oidc/';
 
 Future<bool?>? _activeLoginDialog;
 
-// call this directly
 Future<bool?> loginDialog() {
   final activeDialog = _activeLoginDialog;
   if (activeDialog != null) {
@@ -731,7 +728,6 @@ Future<bool?> _openLoginDialog() async {
   var isInProgress = false;
   final oidcAuth = _OidcAuthController();
   final curOP = oidcAuth.curOP;
-  // Track hover state for the close icon
   bool isCloseHovered = false;
 
   final loginOptions = [].obs;
@@ -804,9 +800,6 @@ Future<bool?> _openLoginDialog() async {
                   resp.user, resp.secret, isEmailVerification);
             } else {
               setState(() => isInProgress = false);
-              // Workaround for web, close the dialog first, then show the verification code dialog.
-              // Otherwise, the text field will keep selecting the text and we can't input the code.
-              // Not sure why this happens.
               if (isWeb && close != null) close(null);
               final res = await verificationCodeDialog(
                   resp.user, resp.secret, isEmailVerification);
@@ -827,7 +820,6 @@ Future<bool?> _openLoginDialog() async {
       if (curOP.value.isNotEmpty || isInProgress) {
         return;
       }
-      // validate
       if (username.text.isEmpty) {
         setState(() => usernameMsg = translate('Username missed'));
         return;
@@ -836,7 +828,7 @@ Future<bool?> _openLoginDialog() async {
         setState(() => passwordMsg = translate('Password missed'));
         return;
       }
-      curOP.value = 'rustdesk';
+      curOP.value = 'supportdesk';
       setState(() => isInProgress = true);
       try {
         final resp = await gFFI.userModel.login(LoginRequest(
@@ -863,7 +855,6 @@ Future<bool?> _openLoginDialog() async {
             return Column(
               children: [
                 const SizedBox(height: 8.0),
-                // NOT use Offstage to wrap LinearProgressIndicator
                 if (inProgress) const LinearProgressIndicator(),
                 if (!inProgress && error is! RequestException)
                   Text(
@@ -913,7 +904,6 @@ Future<bool?> _openLoginDialog() async {
                   cbLogin: (Map<String, dynamic> authBody) async {
                     LoginResponse? resp;
                     try {
-                      // access_token is already stored in the rust side.
                       resp =
                           gFFI.userModel.getLoginResponseFromAuthBody(authBody);
                     } catch (e) {
@@ -946,8 +936,6 @@ Future<bool?> _openLoginDialog() async {
             child: Icon(
               Icons.close,
               size: 25,
-              // No need to handle the branch of null.
-              // Because we can ensure the color is not null when debug.
               color: isCloseHovered
                   ? Colors.white
                   : Theme.of(context)
@@ -1076,22 +1064,6 @@ Future<bool?> verificationCodeDialog(
                 ).workaroundFreezeLinuxMint()),
             isEmailVerification ? const SizedBox(height: 8) : const Offstage(),
             codeField,
-            /*
-            CheckboxListTile(
-              contentPadding: const EdgeInsets.all(0),
-              dense: true,
-              controlAffinity: ListTileControlAffinity.leading,
-              title: Row(children: [
-                Expanded(child: Text(translate("Trust this device")))
-              ]),
-              value: trustThisDevice,
-              onChanged: (v) {
-                if (v == null) return;
-                setState(() => trustThisDevice = !trustThisDevice);
-              },
-            ),
-            */
-            // NOT use Offstage to wrap LinearProgressIndicator
             if (isInProgress) const LinearProgressIndicator(),
           ],
         ),
@@ -1102,8 +1074,6 @@ Future<bool?> verificationCodeDialog(
           dialogButton("Verify", onPressed: getOnSubmit()),
         ]);
   });
-  // For verification code, desktop update other models in login dialog, mobile need to close login dialog first,
-  // otherwise the soft keyboard will jump out on each key press, so mobile update in verification code dialog.
   if (isMobile && res == true) {
     await UserModel.updateOtherModels();
   }

@@ -40,7 +40,6 @@ class DownloadController extends Controller
         $build = $link->clientApp->latestReadyBuild($platform);
         abort_if(! $build, 404);
 
-        // Atomic claim so max_downloads cannot be exceeded by concurrent requests.
         $claimed = DB::table('download_links')
             ->where('id', $link->id)
             ->where(fn ($q) => $q->whereNull('max_downloads')->orWhereColumn('download_count', '<', 'max_downloads'))

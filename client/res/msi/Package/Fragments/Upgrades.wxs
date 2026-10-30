@@ -3,8 +3,6 @@
 
 		<Property Id="UpgradesFile" Value="1" />
 
-		<!--$UpgradeStart$-->
-		<!--$UpgradeEnd$-->
-
+				
 	</Fragment>
 </Wix>

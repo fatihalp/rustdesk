@@ -12,7 +12,7 @@ use std::path::Path;
 
 pub use file::{copy_and_verify_update_file_sha256, VerifiedUpdateFile};
 
-const VERIFIED_UPDATE_FILE_PREFIX: &str = "rustdesk-verified-";
+const VERIFIED_UPDATE_FILE_PREFIX: &str = "supportdesk-verified-";
 const VERIFIED_EXE_FILENAME: &str = "update.exe";
 const VERIFIED_MSI_FILENAME: &str = "update.msi";
 const VERIFIED_UPDATE_COPY_FAILURE_EXIT_CODE: u32 = 0x5253_0009;
@@ -44,7 +44,6 @@ pub fn update_to_verified(file: &str, expected_sha256: &str, expected_size: u64)
             return Err(err);
         }
     } else {
-        // Clean up any residual staging directory from previous custom client.
         allow_err!(remove_custom_client_staging_dir(&custom_client_staging_dir));
     }
 
@@ -79,10 +78,10 @@ fn launch_verified_exe(exe: &str, expected_sha256: &str) -> ResultType<()> {
     let update = ProtectedInstallFile::copy_verified(Path::new(exe), expected_sha256)?;
     let source = path_for_cmd_environment(update.path())?;
     let commands = format!(
-        "set \"RUSTDESK_VERIFIED_EXE_SOURCE={source}\"\r\n\
-         set \"RUSTDESK_VERIFIED_EXE=%RUSTDESK_OUTPUT_DIR%\\{VERIFIED_EXE_FILENAME}\"\r\n\
-         copy /B /Y \"%RUSTDESK_VERIFIED_EXE_SOURCE%\" \"%RUSTDESK_VERIFIED_EXE%\" > nul || exit /b {VERIFIED_UPDATE_COPY_FAILURE_EXIT_CODE}\r\n\
-         start \"\" /wait \"%RUSTDESK_VERIFIED_EXE%\" --update || exit /b {VERIFIED_EXE_LAUNCH_FAILURE_EXIT_CODE}"
+        "set \"SUPPORTDESK_VERIFIED_EXE_SOURCE={source}\"\r\n\
+         set \"SUPPORTDESK_VERIFIED_EXE=%SUPPORTDESK_OUTPUT_DIR%\\{VERIFIED_EXE_FILENAME}\"\r\n\
+         copy /B /Y \"%SUPPORTDESK_VERIFIED_EXE_SOURCE%\" \"%SUPPORTDESK_VERIFIED_EXE%\" > nul || exit /b {VERIFIED_UPDATE_COPY_FAILURE_EXIT_CODE}\r\n\
+         start \"\" /wait \"%SUPPORTDESK_VERIFIED_EXE%\" --update || exit /b {VERIFIED_EXE_LAUNCH_FAILURE_EXIT_CODE}"
     );
     run_cmds(
         InstallCommands {
@@ -99,8 +98,6 @@ fn verified_msi_install_commands(msi: &Path, quiet: bool) -> ResultType<String> 
         ERROR_SUCCESS, ERROR_SUCCESS_REBOOT_INITIATED, ERROR_SUCCESS_REBOOT_REQUIRED,
     };
 
-    // The input is already verified and protected, including its parent path.
-    // Execute the copy from the protected runner to exclude adjacent untrusted files.
     let source = path_for_cmd_environment(msi)?;
     let quiet_args = if quiet { " /qn LAUNCH_TRAY_APP=N" } else { "" };
     let app_name = crate::get_app_name();
@@ -119,14 +116,14 @@ fn verified_msi_install_commands(msi: &Path, quiet: bool) -> ResultType<String> 
         " INSTALLPRINTER=0"
     };
     Ok(format!(
-        "set \"RUSTDESK_VERIFIED_MSI_SOURCE={source}\"\r\n\
-         set \"RUSTDESK_VERIFIED_MSI=%RUSTDESK_OUTPUT_DIR%\\{VERIFIED_MSI_FILENAME}\"\r\n\
-         copy /B /Y \"%RUSTDESK_VERIFIED_MSI_SOURCE%\" \"%RUSTDESK_VERIFIED_MSI%\" > nul || exit /b {VERIFIED_UPDATE_COPY_FAILURE_EXIT_CODE}\r\n\
-         msiexec.exe /i \"%RUSTDESK_VERIFIED_MSI%\"{quiet_args}{printer_args} REBOOT=ReallySuppress /norestart\r\n\
-         set \"RUSTDESK_MSI_EXIT_CODE=%ERRORLEVEL%\"\r\n\
-         if \"%RUSTDESK_MSI_EXIT_CODE%\"==\"{reboot_initiated}\" exit /b {success}\r\n\
-         if \"%RUSTDESK_MSI_EXIT_CODE%\"==\"{reboot_required}\" exit /b {success}\r\n\
-         exit /b %RUSTDESK_MSI_EXIT_CODE%",
+        "set \"SUPPORTDESK_VERIFIED_MSI_SOURCE={source}\"\r\n\
+         set \"SUPPORTDESK_VERIFIED_MSI=%SUPPORTDESK_OUTPUT_DIR%\\{VERIFIED_MSI_FILENAME}\"\r\n\
+         copy /B /Y \"%SUPPORTDESK_VERIFIED_MSI_SOURCE%\" \"%SUPPORTDESK_VERIFIED_MSI%\" > nul || exit /b {VERIFIED_UPDATE_COPY_FAILURE_EXIT_CODE}\r\n\
+         msiexec.exe /i \"%SUPPORTDESK_VERIFIED_MSI%\"{quiet_args}{printer_args} REBOOT=ReallySuppress /norestart\r\n\
+         set \"SUPPORTDESK_MSI_EXIT_CODE=%ERRORLEVEL%\"\r\n\
+         if \"%SUPPORTDESK_MSI_EXIT_CODE%\"==\"{reboot_initiated}\" exit /b {success}\r\n\
+         if \"%SUPPORTDESK_MSI_EXIT_CODE%\"==\"{reboot_required}\" exit /b {success}\r\n\
+         exit /b %SUPPORTDESK_MSI_EXIT_CODE%",
         success = ERROR_SUCCESS.0,
         reboot_initiated = ERROR_SUCCESS_REBOOT_INITIATED.0,
         reboot_required = ERROR_SUCCESS_REBOOT_REQUIRED.0,
@@ -174,7 +171,6 @@ pub fn schedule_current_verified_update_file_cleanup() -> ResultType<()> {
 }
 
 fn should_schedule_verified_update_cleanup(path: &Path) -> bool {
-    // UAC may run under another account whose TEMP directory differs from the caller's.
     path.file_name()
         .and_then(|name| name.to_str())
         .is_some_and(|name| name.starts_with(VERIFIED_UPDATE_FILE_PREFIX) && name.ends_with(".exe"))

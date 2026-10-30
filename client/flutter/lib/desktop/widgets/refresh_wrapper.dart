@@ -32,12 +32,10 @@ class RefreshWrapperState extends State<RefreshWrapper> {
     if (Get.context != null) {
       (context as Element).visitChildren(_rebuildElement);
     }
-    // Synchronize the window theme of the system.
     updateSystemWindowTheme();
     setState(() {});
   }
 
-  /// set root tree dirty to trigger global rebuild
   void _rebuildElement(Element el) {
     el.markNeedsBuild();
     el.visitChildren(_rebuildElement);

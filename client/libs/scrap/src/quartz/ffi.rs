@@ -48,13 +48,9 @@ pub fn cfbool(x: bool) -> CFBooleanRef {
 #[repr(i32)]
 #[derive(PartialEq, Eq, Debug, Clone, Copy)]
 pub enum CGDisplayStreamFrameStatus {
-    /// A new frame was generated.
     FrameComplete = 0,
-    /// A new frame was not generated because the display did not change.
     FrameIdle = 1,
-    /// A new frame was not generated because the display has gone blank.
     FrameBlank = 2,
-    /// The display stream was stopped.
     Stopped = 3,
     #[doc(hidden)]
     __Nonexhaustive,
@@ -63,15 +59,12 @@ pub enum CGDisplayStreamFrameStatus {
 #[repr(i32)]
 #[derive(PartialEq, Eq, Debug, Clone, Copy)]
 pub enum CFNumberType {
-    /* Fixed-width types */
     SInt8 = 1,
     SInt16 = 2,
     SInt32 = 3,
     SInt64 = 4,
     Float32 = 5,
     Float64 = 6,
-    /* 64-bit IEEE 754 */
-    /* Basic C types */
     Char = 7,
     Short = 8,
     Int = 9,
@@ -79,7 +72,6 @@ pub enum CFNumberType {
     LongLong = 11,
     Float = 12,
     Double = 13,
-    /* Other */
     CFIndex = 14,
     NSInteger = 15,
     CGFloat = 16,
@@ -107,13 +99,9 @@ pub enum CGError {
 #[repr(i32)]
 #[derive(PartialEq, Eq, Debug, Clone, Copy)]
 pub enum PixelFormat {
-    /// Packed Little Endian ARGB8888
     Argb8888 = pixel_format!('B', 'G', 'R', 'A'),
-    /// Packed Little Endian ARGB2101010
     Argb2101010 = pixel_format!('l', '1', '0', 'r'),
-    /// 2-plane "video" range YCbCr 4:2:0
     YCbCr420Video = pixel_format!('4', '2', '0', 'v'),
-    /// 2-plane "full" range YCbCr 4:2:0
     YCbCr420Full = pixel_format!('4', '2', '0', 'f'),
     #[doc(hidden)]
     __Nonexhaustive,
@@ -123,10 +111,10 @@ pub type CGDisplayStreamFrameAvailableHandler = *const c_void;
 
 pub type FrameAvailableHandler = RcBlock<
     (
-        CGDisplayStreamFrameStatus, // status
-        u64,                        // displayTime
-        IOSurfaceRef,               // frameSurface
-        CGDisplayStreamUpdateRef,   // updateRef
+        CGDisplayStreamFrameStatus,
+        u64,
+        IOSurfaceRef,
+        CGDisplayStreamUpdateRef,
     ),
     (),
 >;
@@ -156,7 +144,6 @@ pub struct CGRect {
 #[link(name = "CoreFoundation", kind = "framework")]
 #[link(name = "IOSurface", kind = "framework")]
 extern "C" {
-    // CoreGraphics
 
     pub static kCGDisplayStreamShowCursor: CFStringRef;
     pub static kCGDisplayStreamPreserveAspectRatio: CFStringRef;
@@ -195,7 +182,6 @@ extern "C" {
     pub fn CGDisplayBounds(display: u32) -> CGRect;
     pub fn BackingScaleFactor(display: u32) -> f32;
 
-    // IOSurface
 
     pub fn IOSurfaceGetAllocSize(buffer: IOSurfaceRef) -> usize;
     pub fn IOSurfaceGetBaseAddress(buffer: IOSurfaceRef) -> *mut c_void;
@@ -206,18 +192,15 @@ extern "C" {
     pub fn IOSurfaceGetBaseAddressOfPlane(buffer: IOSurfaceRef, index: usize) -> *mut c_void;
     pub fn IOSurfaceGetBytesPerRowOfPlane(buffer: IOSurfaceRef, index: usize) -> usize;
 
-    // Dispatch
 
     pub fn dispatch_queue_create(label: *const i8, attr: DispatchQueueAttr) -> DispatchQueue;
 
     pub fn dispatch_release(object: DispatchQueue);
 
-    // Core Foundation
 
     pub static kCFTypeDictionaryKeyCallBacks: CFDictionaryKeyCallBacks;
     pub static kCFTypeDictionaryValueCallBacks: CFDictionaryValueCallBacks;
 
-    // EVEN THE BOOLEANS ARE REFERENCES.
     pub static kCFBooleanTrue: CFBooleanRef;
     pub static kCFBooleanFalse: CFBooleanRef;
 

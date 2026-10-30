@@ -2,7 +2,6 @@ if (is_osx) view.windowBlurbehind = #light;
 stdout.println("current platform:", OS);
 stdout.println("is_xfce: ", is_xfce);
 
-// See default height in common.tis `msgbox()`.
 const msgbox_default_height = 180;
 const incoming_only_width = 180;
 
@@ -18,7 +17,6 @@ const hide_stop_service = handler.get_builtin_option("hide-stop-service") == "Y"
 const disable_change_permanent_password = handler.get_builtin_option("disable-change-permanent-password") == "Y";
 const disable_change_id = handler.get_builtin_option("disable-change-id") == "Y";
 
-// html min-width, min-height not working on mac, below works for all
 if (incoming_only) {
   view.windowMinSize = (scaleIt(incoming_only_width), scaleIt((handler.is_installed() || disable_installation) ? 300 : 390));
 } else {
@@ -350,7 +348,6 @@ class Enhancements: Reactor.Component {
     }
 }
 
-// Shared dialog functions
 function open_custom_server_dialog() {
     var configOptions = handler.get_options();
     var old_relay = configOptions["relay-server"] || "";
@@ -464,10 +461,8 @@ function open_proxy_dialog() {
 function updateTheme() {
     var root_element = self;
     if (handler.get_option("allow-darktheme") == "Y") {
-        // enable dark theme
         root_element.attributes.toggleClass("darktheme", true);
     } else {
-        // disable dark theme
         root_element.attributes.toggleClass("darktheme", false);
     }
 }
@@ -549,8 +544,6 @@ class MyIdMenu: Reactor.Component {
                 el.attributes.toggleClass("selected", enabled);
                 el.attributes.toggleClass("line-through", !enabled);
             } else if (id == "whitelist") {
-                // whitelist should be clickable even when fixed (to view the content)
-                // The dialog will show readonly textarea and no OK button when fixed
                 continue;
             }
             if (is_opt_fixed) {
@@ -760,7 +753,6 @@ function download(from, to, args..) {
     view.request(rqp);
 }
 
-// current running version is higher than installed
 class UpgradeMe: Reactor.Component {
     function render() {
         var update_or_download = is_osx ? "download" : "update";
@@ -778,7 +770,7 @@ class UpgradeMe: Reactor.Component {
 
 class UpdateMe: Reactor.Component {
     function render() {
-        var update_or_download = "download"; // !is_win ? "download" : "update";
+        var update_or_download = "download";
         return <div .install-me>
             <div>{translate('Status')}</div>
             <div>There is a newer version of {handler.get_app_name()} ({handler.get_new_version()}) available.</div>
@@ -908,7 +900,6 @@ class ModifyDefaultLogin: Reactor.Component {
 }
 
 function watch_trust() {
-    // not use TrustMe::update, because it is buggy
     var trusted = handler.is_process_trusted(false);
     var el = $(div#trust-me-box);
     if (el) {
@@ -1227,7 +1218,6 @@ class ID: Reactor.Component {
         value={formatId(handler.get_remote_id())} />;
     }
 
-    // https://github.com/c-smile/sciter-sdk/blob/master/doc/content/sciter/Event.htm
     event change {
         var fid = formatId(this.value);
         var d = this.value.length - (this.old_value || "").length;
@@ -1237,7 +1227,6 @@ class ID: Reactor.Component {
         if (fid == this.value || d <= 0 || start != end) {
             return;
         }
-        // fix Caret position
         this.value = fid;
         var text_after_caret = this.old_value.substr(start);
         var n = fid.length - formatId(text_after_caret).length;
@@ -1269,7 +1258,6 @@ event keydown (evt) {
             var el = $(button#connect);
             view.focus = el;
             el.sendEvent("click");
-            // simulate button click effect, windows does not have this issue
             el.attributes.toggleClass("active", true);
             self.timer(0.3s, function() {
                 el.attributes.toggleClass("active", false);
@@ -1304,7 +1292,6 @@ event click $(#open-settings) (_, me) {
     showSettings();
 }
 
-// Event handlers for outgoing_only mode (when menu items are in main UI, not in MyIdMenu)
 event click $(li#custom-server) (_, me) {
     if (!outgoing_only) return;
     open_custom_server_dialog();
@@ -1353,7 +1340,6 @@ function showSettings() {
     var menu = myIdMenu.$(menu#config-options);
     var anchor = $(#open-settings);
     if (!anchor) anchor = myIdMenu.$(svg#menu);
-    // show immediately at button, then update menu state asynchronously
     anchor.popup(menu);
     self.timer(1ms, function() {
         audioInputMenu.update({ show: true });
@@ -1363,7 +1349,7 @@ function showSettings() {
 }
 
 function checkConnectStatus() {
-    handler.check_mouse_time(); // trigger connection status updater
+    handler.check_mouse_time();
     self.timer(1s, function() {
         var tmp = handler.get_option("stop-service") == "Y";
         if (tmp != service_stopped) {

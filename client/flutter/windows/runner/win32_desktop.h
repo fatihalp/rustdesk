@@ -10,4 +10,4 @@ namespace Win32Desktop
   bool BumpMouse(int dx, int dy);
 }
 
-#endif  // RUNNER_WIN32_DESKTOP_H_
+#endif

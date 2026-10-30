@@ -70,13 +70,13 @@ KeepScreenOn optionToKeepScreenOn(String value) {
 
 class _SettingsState extends State<SettingsPage> with WidgetsBindingObserver {
   final _hasIgnoreBattery =
-      false; //androidVersion >= 26; // remove because not work on every device
+      false;
   var _ignoreBatteryOpt = false;
   var _enableStartOnBoot = false;
   var _checkUpdateOnStartup = false;
   var _showTerminalExtraKeys = false;
   var _floatingWindowDisabled = false;
-  var _keepScreenOn = KeepScreenOn.duringControlled; // relay on floating window
+  var _keepScreenOn = KeepScreenOn.duringControlled;
   var _enableAbr = false;
   var _denyLANDiscovery = false;
   var _onlyWhiteList = false;
@@ -175,7 +175,6 @@ class _SettingsState extends State<SettingsPage> with WidgetsBindingObserver {
         update = true;
       }
 
-      // start on boot depends on ACTION_IGNORE_BATTERY_OPTIMIZATION_SETTINGS and SYSTEM_ALERT_WINDOW
       var enableStartOnBoot =
           await gFFI.invokeMethod(AndroidChannel.kGetStartOnBootOpt);
       if (enableStartOnBoot) {
@@ -584,7 +583,7 @@ class _SettingsState extends State<SettingsPage> with WidgetsBindingObserver {
               title: Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
-                    Text(translate('Keep RustDesk background service')),
+                    Text(translate('Keep SupportDesk background service')),
                     Text('* ${translate('Ignore Battery Optimizations')}',
                         style: Theme.of(context).textTheme.bodySmall),
                   ]),
@@ -624,7 +623,6 @@ class _SettingsState extends State<SettingsPage> with WidgetsBindingObserver {
         ]),
         onToggle: (toValue) async {
           if (toValue) {
-            // 1. request kIgnoreBatteryOptimizations
             if (!await AndroidPermissionManager.check(
                 kRequestIgnoreBatteryOptimizations)) {
               if (!await AndroidPermissionManager.request(
@@ -633,14 +631,12 @@ class _SettingsState extends State<SettingsPage> with WidgetsBindingObserver {
               }
             }
 
-            // 2. request kSystemAlertWindow
             if (!await AndroidPermissionManager.check(kSystemAlertWindow)) {
               if (!await AndroidPermissionManager.request(kSystemAlertWindow)) {
                 return;
               }
             }
 
-            // (Optional) 3. request input permission
           }
           setState(() => _enableStartOnBoot = toValue);
 
@@ -1110,7 +1106,6 @@ class _SettingsState extends State<SettingsPage> with WidgetsBindingObserver {
   }
 
   Future<bool> canStartOnBoot() async {
-    // start on boot depends on ACTION_IGNORE_BATTERY_OPTIMIZATION_SETTINGS and SYSTEM_ALERT_WINDOW
     if (_hasIgnoreBattery && !_ignoreBatteryOpt) {
       return false;
     }
@@ -1172,7 +1167,6 @@ void showLanguageSettings(OverlayDialogManager dialogManager) async {
       );
     }, backDismiss: true, clickMaskDismiss: true);
   } catch (e) {
-    //
   }
 }
 
@@ -1207,7 +1201,7 @@ void showThemeSettings(OverlayDialogManager dialogManager) async {
 void showAbout(OverlayDialogManager dialogManager) {
   dialogManager.show((setState, close, context) {
     return CustomAlertDialog(
-      title: Text(translate('About RustDesk')),
+      title: Text(translate('About SupportDesk')),
       content: Wrap(direction: Axis.vertical, spacing: 12, children: [
         Text('Version: $version'),
         InkWell(

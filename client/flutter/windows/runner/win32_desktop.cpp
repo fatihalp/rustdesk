@@ -24,7 +24,7 @@ namespace Win32Desktop
     workAreaRect.left = 0;
     workAreaRect.top = 0;
     workAreaRect.right = 1280;
-    workAreaRect.bottom = 1024 - 40; // default Windows 10 task bar height
+    workAreaRect.bottom = 1024 - 40;
 
     if (hMonitor != NULL)
     {
@@ -47,18 +47,14 @@ namespace Win32Desktop
 
   void FitToWorkArea(Win32Window::Point& origin, Win32Window::Size& size)
   {
-    // Retrieve the work area of the monitor that contains or
-    // is closed to the supplied window bounds.
     Win32Window::Point workarea_origin = origin;
     Win32Window::Size workarea_size = size;
 
     GetWorkArea(workarea_origin, workarea_size);
 
-    // Translate the window so that its top/left is inside the work area.
     origin.x = std::max(origin.x, workarea_origin.x);
     origin.y = std::max(origin.y, workarea_origin.y);
 
-    // Crop the window if it extends past the bottom/right of the work area.
     Win32Window::Point workarea_bottom_right(
       workarea_origin.x + workarea_size.width,
       workarea_origin.y + workarea_size.height);

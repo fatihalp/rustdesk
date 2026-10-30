@@ -6,7 +6,7 @@ import 'package:flutter/widgets.dart';
 import 'package:xterm/xterm.dart';
 
 import 'platform_model.dart';
-import 'rustdesk_terminal.dart';
+import 'supportdesk_terminal.dart';
 import 'terminal_copy_shortcut.dart';
 import 'terminal_mouse_drag_reporter.dart';
 import 'terminal_scroll_controller.dart';
@@ -70,7 +70,6 @@ class _TerminalMouseInteractionState extends State<TerminalMouseInteraction> {
   PointerDownEvent? _pendingTouchMouseDown;
   var _selectionHasScrolled = false;
   var _scrollDirection = _noScroll;
-  // xterm can finish its tap callbacks after the raw drag was reported.
   var _suppressXtermLeftButton = false;
   var _terminalClipboardGesturePrepared = false;
   TerminalViewState? get _terminalView => _terminalViewKey.currentState;

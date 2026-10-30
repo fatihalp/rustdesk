@@ -11,8 +11,6 @@ use std::sync::Mutex;
 
 #[cfg(windows)]
 lazy_static::lazy_static! {
-    // If device is uninstalled though "Device Manager" Window.
-    // RustDesk is unable to handle device any more...
     static ref H_SW_DEVICE: Mutex<u64> = Mutex::new(0);
 }
 
@@ -29,7 +27,6 @@ pub fn download_driver() -> ResultType<()> {
     #[cfg(target_os = "linux")]
     let _download_url = "";
 
-    // process download and report progress
 
     Ok(())
 }
@@ -56,8 +53,6 @@ pub fn install_update_driver(_reboot_required: &mut bool) -> ResultType<()> {
     #[cfg(windows)]
     unsafe {
         {
-            // Device must be created before install driver.
-            // https://github.com/fufesou/RustDeskIddDriver/issues/1
             if let Err(e) = create_device() {
                 bail!("{}", e);
             }

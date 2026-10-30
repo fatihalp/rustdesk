@@ -16,7 +16,7 @@ import 'package:flutter_hbb/models/platform_model.dart';
 import 'package:flutter_hbb/models/shortcut_model.dart';
 import 'package:uuid/uuid.dart';
 
-class _ChatBinding extends Fake implements RustdeskImpl {
+class _ChatBinding extends Fake implements SupportdeskImpl {
   final sent = <(SessionID, String)>[];
   final cmSent = <(int, String)>[];
 
@@ -169,7 +169,6 @@ void main() {
         expect(binding.keys, [
           (alt.$3, true, true),
           if (peer == kPeerPlatformWindows) ('VK_CONTROL', true, true),
-          // GTK reports Alt without a side on the letter event.
           ('VK_MENU', false, false),
           ('RAlt', false, false),
           if (peer == kPeerPlatformWindows) ('VK_CONTROL', false, false),

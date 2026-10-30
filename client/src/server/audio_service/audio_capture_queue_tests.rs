@@ -45,7 +45,6 @@ fn assert_callback_progress() {
         sender
     });
     let completed = completed_rx.recv_timeout(TEST_TIMEOUT);
-    // Release and join both threads before asserting progress, including on failure.
     resume_tx.send(()).unwrap();
     let receiver = worker.join().unwrap();
     let mut sender = callback.join().unwrap();

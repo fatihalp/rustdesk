@@ -4,10 +4,6 @@ import 'package:ffi/ffi.dart';
 
 import 'package:win32/win32.dart' as win32;
 
-/// Get windows target build number.
-///
-/// [Note]
-/// Please use this function wrapped with `Platform.isWindows`.
 int getWindowsTargetBuildNumber_() {
   final rtlGetVersion = DynamicLibrary.open('ntdll.dll').lookupFunction<
       Void Function(Pointer<win32.OSVERSIONINFOEX>),
@@ -19,10 +15,6 @@ int getWindowsTargetBuildNumber_() {
   return buildNumber;
 }
 
-/// Get Windows OS version pointer
-///
-/// [Note]
-/// Please use this function wrapped with `Platform.isWindows`.
 Pointer<win32.OSVERSIONINFOEX> _getOSVERSIONINFOEXPointer() {
   final pointer = calloc<win32.OSVERSIONINFOEX>();
   pointer.ref

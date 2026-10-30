@@ -13,13 +13,9 @@ use crate::{
     CodecFormat, I420ToABGR, I420ToARGB, ImageRgb,
 };
 
-/// MediaCodec mime type name
 const H264_MIME_TYPE: &str = "video/avc";
 const H265_MIME_TYPE: &str = "video/hevc";
-// const VP8_MIME_TYPE: &str = "video/x-vnd.on2.vp8";
-// const VP9_MIME_TYPE: &str = "video/x-vnd.on2.vp9";
 
-// TODO MediaCodecEncoder
 
 pub static H264_DECODER_SUPPORT: AtomicBool = AtomicBool::new(false);
 pub static H265_DECODER_SUPPORT: AtomicBool = AtomicBool::new(false);
@@ -49,9 +45,7 @@ impl MediaCodecDecoder {
         }
     }
 
-    // rgb [in/out] fmt and stride must be set in ImageRgb
     pub fn decode(&mut self, data: &[u8], rgb: &mut ImageRgb) -> ResultType<bool> {
-        // take dst_stride into account please
         let dst_stride = rgb.stride();
         match self.dequeue_input_buffer(Duration::from_millis(10))? {
             Some(mut input_buffer) => {
@@ -141,7 +135,7 @@ fn create_media_codec(name: &str, direction: MediaCodecDirection) -> Option<Medi
     media_format.set_str("mime", name);
     media_format.set_i32("width", 0);
     media_format.set_i32("height", 0);
-    media_format.set_i32("color-format", 19); // COLOR_FormatYUV420Planar
+    media_format.set_i32("color-format", 19);
     if let Err(e) = codec.configure(&media_format, None, direction) {
         log::error!("Failed to init decoder: {:?}", e);
         return None;
@@ -160,12 +154,10 @@ fn create_media_codec(name: &str, direction: MediaCodecDirection) -> Option<Medi
 
 pub fn check_mediacodec() {
     std::thread::spawn(move || {
-        // check decoders
         let decoders = MediaCodecDecoder::new_decoders();
         H264_DECODER_SUPPORT.swap(decoders.h264.is_some(), Ordering::SeqCst);
         H265_DECODER_SUPPORT.swap(decoders.h265.is_some(), Ordering::SeqCst);
         decoders.h264.map(|d| d.stop());
         decoders.h265.map(|d| d.stop());
-        // TODO encoders
     });
 }

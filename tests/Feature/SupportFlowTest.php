@@ -50,11 +50,11 @@ class SupportFlowTest extends TestCase
         $this->postJson('/api/heartbeat', ['id' => '123456789', 'uuid' => 'uuid-1'])
             ->assertOk()->assertJsonMissing(['sysinfo' => true]);
 
-        $device = Device::where('rustdesk_id', '123456789')->firstOrFail();
+        $device = Device::where('supportdesk_id', '123456789')->firstOrFail();
         $this->assertTrue($device->isOnline());
         $this->assertSame($app->id, $device->client_app_id);
         $this->assertSame('windows', $device->platform);
-        $this->assertSame('rustdesk --connect 123456789 --password s3cret-pass', $device->connectCommand());
+        $this->assertSame('supportdesk --connect 123456789 --password s3cret-pass', $device->connectCommand());
         $this->assertNotSame('s3cret-pass', $device->getRawOriginal('unattended_password'));
     }
 

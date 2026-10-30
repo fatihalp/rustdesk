@@ -97,7 +97,6 @@ impl Drop for CaptureEncoderWorker {
     fn drop(&mut self) {
         self.stop.store(true, Ordering::Release);
         if let Some(handle) = self.handle.take() {
-            // Owner-thread shutdown already waits via join(); see CapturePcmSender::wake for Win7.
             handle.thread().unpark();
             if let Err(error) = handle.join() {
                 log::error!("Failed to join audio encoder thread: {error:?}");
@@ -134,7 +133,6 @@ pub(super) fn new_pcm_handoff(
         max_samples,
     });
     {
-        // Initialize the mutex on this thread, including on platforms with lazy allocation.
         let mut buffers = handoff.buffers.lock().unwrap();
         for _ in 0..capacity {
             buffers.available.push(Vec::with_capacity(max_samples));
@@ -165,9 +163,6 @@ impl CapturePcmSender {
             self.wake();
             return;
         }
-        // Do not wait for a descheduled worker. Contention rejects the current
-        // packet even if buffers are available; this is separate from drop-oldest
-        // when the buffer pool is exhausted.
         let mut buffers = match self.handoff.buffers.try_lock() {
             Ok(buffers) => buffers,
             Err(TryLockError::WouldBlock) => {
@@ -210,16 +205,6 @@ impl CapturePcmSender {
 
     fn wake(&self) {
         if let Some(thread) = self.handoff.wake_thread.get() {
-            // #16095 moved Opus encoding and message submission from the capture callback to a worker.
-            // Previously, the callback did that work directly, with allocations and blocking locks.
-            // On Win7 with Rust 1.75, if the worker is descheduled after publishing PARKED but before
-            // NtWaitForKeyedEvent, unpark() waits in NtReleaseKeyedEvent until the worker enters that wait.
-            // It does not wait for encoding; park_timeout() does not bound the callback's wait.
-            // Delays can cause gaps or stall teardown; a Win7 microphone regression has not been measured.
-            // System loopback already failed on Win7 before #16095 (see cpal_impl::get_device),
-            // so the affected path is microphone/input-device capture, including outgoing voice calls.
-            // Accept this risk to preserve Win7 input capture without a separate legacy notifier.
-            // https://github.com/rust-lang/rust/blob/1.75.0/library/std/src/sys/windows/thread_parking.rs
             thread.unpark();
         }
     }

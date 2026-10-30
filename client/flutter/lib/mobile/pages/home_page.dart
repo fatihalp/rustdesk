@@ -31,7 +31,7 @@ class HomePageState extends State<HomePage> {
   int _chatPageTabIndex = -1;
   bool get isChatPageCurrentTab => isAndroid
       ? _selectedIndex == _chatPageTabIndex
-      : false; // change this when ios have chat page
+      : false;
 
   void refreshPages() {
     setState(() {
@@ -73,7 +73,6 @@ class HomePageState extends State<HomePage> {
           return false;
         },
         child: Scaffold(
-          // backgroundColor: MyTheme.grayBg,
           appBar: AppBar(
             centerTitle: true,
             title: appTitle(),
@@ -87,10 +86,9 @@ class HomePageState extends State<HomePage> {
                 .toList(),
             currentIndex: _selectedIndex,
             type: BottomNavigationBarType.fixed,
-            selectedItemColor: MyTheme.accent, //
+            selectedItemColor: MyTheme.accent,
             unselectedItemColor: MyTheme.darkGray,
             onTap: (index) => setState(() {
-              // close chat overlay when go chat page
               if (_selectedIndex != index) {
                 _selectedIndex = index;
                 if (isChatPageCurrentTab) {
@@ -163,7 +161,6 @@ class WebHomePage extends StatelessWidget {
     stateGlobal.isInMainPage = true;
     handleUnilink(context);
     return Scaffold(
-      // backgroundColor: MyTheme.grayBg,
       appBar: AppBar(
         centerTitle: true,
         title: Text("${bind.mainGetAppNameSync()} (Preview)"),
@@ -188,7 +185,7 @@ class WebHomePage extends StatelessWidget {
           return;
         }
         list.removeAt(0);
-        fakelink = "rustdesk://${list.join(s)}";
+        fakelink = "supportdesk://${list.join(s)}";
         break;
       }
     }

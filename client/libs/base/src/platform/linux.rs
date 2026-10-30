@@ -1,6 +1,4 @@
 use hbb_common::ResultType;
-// Kept in hbb_common because `config::patch()` needs the shell lookup; re-exported
-// here so the long-standing `platform::linux::CMD_SH` paths are unchanged.
 pub use hbb_common::sh::{run_cmds_trim_newline, CMD_LOGINCTL, CMD_PS, CMD_SH};
 use std::{
     collections::HashMap,
@@ -49,8 +47,6 @@ impl Distro {
     }
 }
 
-// Deprecated. Use `base::platform::linux::is_kde_session()` instead for now.
-// Or we need to set the correct environment variable in the server process.
 #[inline]
 pub fn is_kde() -> bool {
     if let Ok(env) = std::env::var(XDG_CURRENT_DESKTOP) {
@@ -60,8 +56,6 @@ pub fn is_kde() -> bool {
     }
 }
 
-// Don't use `base::platform::linux::is_kde()` here.
-// It's not correct in the server process.
 pub fn is_kde_session() -> bool {
     std::process::Command::new(CMD_SH.as_str())
         .arg("-c")
@@ -75,7 +69,6 @@ pub fn is_kde_session() -> bool {
 #[inline]
 pub fn is_gdm_user(username: &str) -> bool {
     username == "gdm" || username == "sddm"
-    // || username == "lightgdm"
 }
 
 #[inline]
@@ -88,25 +81,20 @@ pub fn is_x11_or_headless() -> bool {
     !is_desktop_wayland()
 }
 
-// -1
 const INVALID_SESSION: &str = "4294967295";
 
 pub fn get_display_server() -> String {
-    // Check for forced display server environment variable first
-    if let Ok(forced_display) = std::env::var("RUSTDESK_FORCED_DISPLAY_SERVER") {
+    if let Ok(forced_display) = std::env::var("SUPPORTDESK_FORCED_DISPLAY_SERVER") {
         return forced_display;
     }
 
-    // Check if `loginctl` can be called successfully
     if run_loginctl(None).is_err() {
         return DISPLAY_SERVER_X11.to_owned();
     }
 
     let mut session = get_values_of_seat0(&[0])[0].clone();
     if session.is_empty() {
-        // loginctl has not given the expected output.  try something else.
         if let Ok(sid) = std::env::var("XDG_SESSION_ID") {
-            // could also execute "cat /proc/self/sessionid"
             session = sid;
         }
         if session.is_empty() {
@@ -126,7 +114,6 @@ pub fn get_display_server() -> String {
 pub fn get_display_server_of_session(session: &str) -> String {
     let mut display_server = if let Ok(output) =
         run_loginctl(Some(vec!["show-session", "-p", "Type", session]))
-    // Check session type of the session
     {
         String::from_utf8_lossy(&output.stdout)
             .replace("Type=", "")
@@ -164,7 +151,6 @@ pub fn get_values_of_seat0_with_gdm_wayland(indices: &[usize]) -> Vec<String> {
     _get_values_of_seat0(indices, false)
 }
 
-// Ignore "3 sessions listed."
 fn ignore_loginctl_line(line: &str) -> bool {
     line.contains("sessions") || line.split(" ").count() < 4
 }
@@ -191,7 +177,6 @@ fn _get_values_of_seat0(indices: &[usize], ignore_gdm_wayland: bool) -> Vec<Stri
             }
         }
 
-        // some case, there is no seat0 https://github.com/rustdesk/rustdesk/issues/73
         for line in String::from_utf8_lossy(&output.stdout).lines() {
             if ignore_loginctl_line(line) {
                 continue;
@@ -235,7 +220,6 @@ pub fn is_active_and_seat0(sid: &str) -> bool {
     }
 }
 
-// Check both "Lock" and "Switch user"
 pub fn is_session_locked(sid: &str) -> bool {
     if let Ok(output) = run_loginctl(Some(vec!["show-session", sid, "--property=LockedHint"])) {
         String::from_utf8_lossy(&output.stdout).contains("LockedHint=yes")
@@ -244,8 +228,6 @@ pub fn is_session_locked(sid: &str) -> bool {
     }
 }
 
-// **Note** that the return value here, the last character is '\n'.
-// Use `run_cmds_trim_newline()` if you want to remove '\n' at the end.
 pub fn run_cmds(cmds: &str) -> ResultType<String> {
     let output = std::process::Command::new(CMD_SH.as_str())
         .args(vec!["-c", cmds])
@@ -273,7 +255,6 @@ fn run_loginctl(args: Option<Vec<&str>>) -> std::io::Result<std::process::Output
     cmd.output()
 }
 
-/// forever: may not work
 #[cfg(target_os = "linux")]
 pub fn system_message(title: &str, msg: &str, forever: bool) -> ResultType<()> {
     let cmds: HashMap<&str, Vec<&str>> = HashMap::from([
@@ -321,30 +302,20 @@ pub struct WaylandDisplayInfo {
     pub height: i32,
     pub logical_size: Option<(i32, i32)>,
     pub refresh_rate: i32,
-    /// Output rotation in degrees (0/90/180/270), from `wl_output.geometry`. The mode keeps its
-    /// unrotated dimensions and `logical_size` arrives already swapped, so without this field a
-    /// rotated output is indistinguishable from a scaled one. Flipped variants map to their
-    /// rotation. Defaulted so a serialized snapshot from an older probe child still deserializes.
     #[serde(default)]
     pub transform: i32,
 }
 
-/// The isolated socket-probe fallback, in its own file and behind the `wayland_probe` feature so
-/// the base Wayland path never compiles it. The DRM login-screen build turns it on.
 #[cfg(feature = "wayland_probe")]
 pub mod wayland_probe;
 #[cfg(feature = "wayland_probe")]
 pub use wayland_probe::{wayland_display_probe_child_main, WAYLAND_DISPLAY_PROBE_ARG};
 
-// Retrieves information about all connected displays via the Wayland protocol.
 pub fn get_wayland_displays() -> ResultType<Vec<WaylandDisplayInfo>> {
-    // Read before connecting: `connect_to_env` consumes `WAYLAND_SOCKET`. Only the probe fallback
-    // needs this, so it is computed only when that feature is compiled in.
     #[cfg(feature = "wayland_probe")]
     let named_endpoint = wayland_probe::env_names_wayland_endpoint();
     match Connection::connect_to_env() {
         Ok(conn) => collect_wayland_displays(&conn),
-        // Without the feature, the connect error is final, exactly as before this fallback existed.
         #[cfg(not(feature = "wayland_probe"))]
         Err(err) => Err(err.into()),
         #[cfg(feature = "wayland_probe")]
@@ -353,11 +324,6 @@ pub fn get_wayland_displays() -> ResultType<Vec<WaylandDisplayInfo>> {
     }
 }
 
-/// `wl_output::Transform` as degrees. Flipped variants report their rotation ONLY: wayland
-/// defines them as a vertical-axis mirror followed by the rotation, and the mirror half is
-/// dropped here - a consumer correcting frames by this value serves a flipped output mirrored.
-/// Said once in the log rather than silently, because no compositor of ours produces a flipped
-/// output to measure the mirror half against; carrying it must wait for a measured producer.
 fn transform_degrees(t: sctk::reexports::client::protocol::wl_output::Transform) -> i32 {
     use sctk::reexports::client::protocol::wl_output::Transform;
     match t {
@@ -433,10 +399,6 @@ fn collect_wayland_displays(conn: &Connection) -> ResultType<Vec<WaylandDisplayI
         if let Some(output_data) = output.data::<OutputData>() {
             output_data.with_output_info(|info| {
                 if let Some(mode) = info.modes.iter().find(|m| m.current) {
-                    // wlroots compositors leave wl_output.geometry at (0, 0) for every output and
-                    // publish the real layout only through xdg-output, so taking `location` there
-                    // stacks the whole desktop on the origin. Mutter fills both, so this stays a
-                    // no-op on GNOME.
                     let (x, y) = info.logical_position.unwrap_or(info.location);
                     let (width, height) = mode.dimensions;
                     let refresh_rate = mode.refresh_rate;
@@ -461,33 +423,11 @@ fn collect_wayland_displays(conn: &Connection) -> ResultType<Vec<WaylandDisplayI
     Ok(display_infos)
 }
 
-/// Escape a string for safe use in shell commands by wrapping in single quotes.
-///
-/// This function handles the edge case of single quotes within the string by:
-/// 1. Ending the current single-quoted section
-/// 2. Adding an escaped single quote
-/// 3. Starting a new single-quoted section
-///
-/// Example: "it's here" -> "'it'\''s here'"
 #[inline]
 pub fn shell_quote(s: &str) -> String {
     format!("'{}'", s.replace("'", "'\\''"))
 }
 
-/// Get the current user's home directory via getpwuid (trusted source).
-///
-/// This function uses the system's password database (via `getpwuid`) to retrieve
-/// the home directory, avoiding the security risk of relying on the `HOME`
-/// environment variable which can be manipulated by untrusted input.
-///
-/// # Returns
-/// - `Some(PathBuf)` if the home directory was found and exists
-/// - `None` if the user lookup failed or the directory doesn't exist
-///
-/// # Security
-/// This function is designed to be safe against confused-deputy attacks where
-/// an attacker might manipulate environment variables to influence privileged
-/// operations.
 pub fn get_home_dir_trusted() -> Option<PathBuf> {
     let uid = get_current_uid();
     match get_user_by_uid(uid) {
@@ -515,22 +455,18 @@ pub fn get_home_dir_trusted() -> Option<PathBuf> {
 mod tests {
     use super::*;
 
-    /// Test get_home_dir_trusted: returns valid path and ignores HOME env var
     #[test]
     fn test_get_home_dir_trusted() {
         let original_home = std::env::var("HOME").ok();
 
-        // Set HOME to a fake/malicious path
         std::env::set_var("HOME", "/tmp/fake_malicious_home");
         let result = get_home_dir_trusted();
 
-        // Restore original HOME
         match original_home {
             Some(home) => std::env::set_var("HOME", home),
             None => std::env::remove_var("HOME"),
         }
 
-        // Verify: returns valid path that is NOT the fake HOME
         if let Some(path) = result {
             assert!(path.is_absolute(), "Path should be absolute: {:?}", path);
             assert!(path.is_dir(), "Path should be a directory: {:?}", path);
@@ -542,17 +478,14 @@ mod tests {
         }
     }
 
-    /// Test shell_quote with single quotes (the tricky case)
     #[test]
     fn test_shell_quote_single_quotes() {
         assert_eq!(shell_quote("it's"), "'it'\\''s'");
         assert_eq!(shell_quote("don't stop"), "'don'\\''t stop'");
     }
 
-    /// Test shell_quote with shell metacharacters
     #[test]
     fn test_shell_quote_metacharacters() {
-        // These should all be safely quoted
         assert_eq!(shell_quote("test;rm -rf /"), "'test;rm -rf /'");
         assert_eq!(shell_quote("$(whoami)"), "'$(whoami)'");
         assert_eq!(shell_quote("`id`"), "'`id`'");

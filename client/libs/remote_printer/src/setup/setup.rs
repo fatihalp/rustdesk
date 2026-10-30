@@ -31,16 +31,6 @@ fn get_driver_inf_abs_path() -> ResultType<PathBuf> {
     Ok(abs_path)
 }
 
-// Note: This function must be called in a separate thread.
-// Because many functions in this module are blocking or synchronous.
-// Calling this function from a thread that manages interaction with the user interface could make the application appear to be unresponsive.
-// Steps:
-// 1. Add the local port.
-// 2. Check if the driver is installed.
-//    Uninstall the existing driver if it is installed.
-//    We should not check the driver version because the driver is deployed with the application.
-//    It's better to uninstall the existing driver and install the driver from the application.
-// 3. Add the printer.
 pub fn install_update_printer(app_name: &str) -> ResultType<()> {
     let printer_name = crate::get_printer_name(app_name);
     let driver_name = crate::get_driver_name();

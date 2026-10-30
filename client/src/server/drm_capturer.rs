@@ -1,5 +1,3 @@
-// Unprivileged consumer of the root `--service`'s DRM/KMS capture stream: the service does the
-// privileged export (open + grab the scanout dma-buf fd), the EGL detile / RGBA convert runs here.
 
 use crate::ipc::{connect_drm, Data, DrmDisplayInfo};
 use hbb_common::{anyhow::anyhow, bail, log, tokio, ResultType};
@@ -16,29 +14,15 @@ use std::time::{Duration, Instant};
 
 const HANDSHAKE_TIMEOUT_MS: u64 = 3000;
 const DRM_CONNECT_TIMEOUT_MS: u64 = 1000;
-/// The service may hold the list back while it wakes sleeping displays: ~3.6s (DRM_WAKE_*).
 const DISPLAY_LIST_TIMEOUT_MS: u64 = HANDSHAKE_TIMEOUT_MS + 4000;
-/// Covers the connect timeout plus `recv_msg_timeout2` applying DISPLAY_LIST_TIMEOUT_MS TWICE
-/// (first byte, then body). The render-node open and the DrmStart send can still overrun it.
 const HANDSHAKE_WAIT_MS: u64 = DRM_CONNECT_TIMEOUT_MS + DISPLAY_LIST_TIMEOUT_MS * 2 + 500;
-/// Only the header read rechecks `stop`, so bound the body read here rather than relying on
-    /// `next_raw_into`'s own cap.
 const BODY_READ_TIMEOUT: Duration = Duration::from_secs(5);
-/// A repeat of the frame returned last goes out anyway once this much time has passed since
-/// then: a frame whose encode failed reaches the encoder again, even if nothing moves.
 const REPEAT_EVERY: Duration = Duration::from_secs(1);
-/// After this long without a new frame the screen reads as still, and the producer is asked for at
-/// most STILL_FPS, its old 33 ms tick: grabbing a still screen faster only feeds frame() repeats to
-/// drop. Three of those ticks, so a producer paced at STILL_FPS in motion never reads as still.
 const STILL_AFTER: Duration = Duration::from_millis(100);
 const STILL_FPS: u8 = 30;
 
 struct FrameSlot {
-    // Row stride is `pixels.len() / height`, possibly padded; the format and the plane rotation
-    // the producer read for this frame (`DmabufDesc::plane_rotation`) are per frame.
     latest: Option<(usize, usize, Pixfmt, Option<u32>, Vec<u8>)>,
-    // TWO slots: two buffers can be idle at once -- the receive path takes one and publishes in two
-    // SEPARATE acquisitions, so the encoder can hand its borrow back in between.
     free: [Option<Vec<u8>>; 2],
     ended: Option<String>,
 }
@@ -69,37 +53,17 @@ impl FrameSlot {
     }
 }
 
-/// `Shared.cursor_transform` before new() stores the real value: a cursor arriving this early is
-/// held back and replayed once the session transform is in, because the producer will not resend
-/// it until the shape changes.
 const TRANSFORM_PENDING: i32 = i32::MIN;
 
 struct Shared {
     slot: Mutex<FrameSlot>,
     cv: Condvar,
-    // The output's real transform, TRANSFORM_PENDING until new() stores it post-handshake. Only
-    // the cursor needs it across threads: it differs from the angle the FRAME is turned by on a
-    // hardware-rotated 180 output, where the primary plane scans out upright but the compositor
-    // still pre-rotates the sprite (measured on i915 + mutter: the frame arrived upright and the
-    // sprite upside down). The frame's own angle is not shared: `frame()` computes it per frame
-    // from the output transform and the plane rotation stamped on the frame. The receive thread
-    // defers any cursor that races the store.
     cursor_transform: std::sync::atomic::AtomicI32,
-    // The cursor calibration geometry, from the same snapshot as the transform and stored before
-    // it: a receive thread that has seen the transform sees this too. `None` means this stream
-    // never measures. Read once per shape arrival, never on the frame path.
     cal_context: Mutex<Option<CalContext>>,
-    // The rate the encoder takes frames at, carried on every ack so the producer grabs no faster.
-    // 0 until the first frame() call, which keeps the producer on its old 33 ms tick.
     demand_fps: std::sync::atomic::AtomicU8,
     pace: Mutex<EncoderPace>,
 }
 
-/// The encoder's own time per frame: from a frame() call that returned a frame to the next call,
-/// less what the call spent waiting for it, smoothed. Work inside frame() (a rotation) counts; the
-/// wait does not, so a late producer cannot talk its own demand down. A call that returned no frame
-/// (a dropped repeat, a timeout) left the encoder nothing to do, so the time after it is no sample.
-/// The samples also hold the sleep video_service paces itself with, so a shorter spf starts over.
 #[derive(Default)]
 struct EncoderPace {
     last_call: Option<Instant>,
@@ -109,11 +73,8 @@ struct EncoderPace {
 }
 
 impl EncoderPace {
-    /// The rate to ask the producer for at a frame() call at `now` with `spf`, the last frame
-    /// having been returned at `returned_at`.
     fn demand(&mut self, now: Instant, returned_at: Instant, spf: Duration) -> u8 {
         if spf < self.spf {
-            // The sample that spans the change holds the old sleep too.
             self.busy = None;
             self.last_call = None;
         }
@@ -136,7 +97,6 @@ impl EncoderPace {
     }
 }
 
-/// Records how long a frame() call waited for a frame, on every way out of the wait.
 struct WaitStamp<'a>(&'a Mutex<EncoderPace>, Instant);
 
 impl Drop for WaitStamp<'_> {
@@ -147,14 +107,11 @@ impl Drop for WaitStamp<'_> {
     }
 }
 
-/// The rate to grab at for an encoder that asks for `spf` and is busy `busy` per frame: what it
-/// asks for, or what it achieves when that is less.
 fn demand_fps_of(spf: Duration, busy: Option<Duration>) -> u8 {
     let max = f64::from(super::video_qos::MAX_FPS);
     let asked = if spf.is_zero() {
         max
     } else {
-        // f32 makes 1/60 read 59.99999: round, or 60 would be asked as 59.
         (1.0 / spf.as_secs_f64()).round().clamp(1.0, max)
     };
     let achieved = match busy {
@@ -169,35 +126,22 @@ pub struct IpcDrmCapturer {
     stop: Arc<AtomicBool>,
     display: i32,
     connector: Option<String>,
-    // What the encoder was sized from: CapturerInfo{width,height} is read once, at build time.
-    // With a rotated output these are the ROTATED dimensions, matching the frames delivered.
     session_size: Option<(usize, usize)>,
-    // Output transform in degrees, from the wayland snapshot; each frame is turned back by it
-    // unless the plane rotated the scanout (`frame_transform`). Fixed per session; a rotation
-    // rebuilds the capturer.
     transform: i32,
-    // The wayland snapshot generation this session was built from: a later invalidation means
-    // the layout (a rotation included) may have changed, and frame() asks for a rebuild.
     snapshot_gen: u64,
     cur: Vec<u8>,
     cur_w: usize,
     cur_h: usize,
     cur_fmt: Pixfmt,
     got_frame: bool,
-    // A rotated output turns each frame into here first, to compare it with `cur`.
     spare: Vec<u8>,
-    // When frame() last returned a frame; see REPEAT_EVERY.
     returned_at: Instant,
 }
 
-/// A list index is NOT an identity: `drm_enumerate_all_displays` concatenates per-card lists.
 fn connector_key(d: &DrmDisplayInfo) -> String {
     format!("{}:{}", d.device, d.name)
 }
 
-/// The transform whose dimensions the delivered frames have: a plane rotated 90/270 in hardware
-/// already hands over the transposed scanout (and `frame_transform` then turns nothing), whatever
-/// the output transform says; otherwise the output transform is undone in software.
 fn delivered_transform(d: &DrmDisplayInfo, wl_transform: i32) -> i32 {
     if d.plane_transposed {
         90
@@ -206,7 +150,6 @@ fn delivered_transform(d: &DrmDisplayInfo, wl_transform: i32) -> i32 {
     }
 }
 
-/// Frame dimensions after undoing `transform` degrees of output rotation.
 fn rotated_dims(transform: i32, w: usize, h: usize) -> (usize, usize) {
     if transform == 90 || transform == 270 {
         (h, w)
@@ -215,8 +158,6 @@ fn rotated_dims(transform: i32, w: usize, h: usize) -> (usize, usize) {
     }
 }
 
-/// Hotspot of a rotated cursor bitmap: the same point mapping `unrotate_bgra` applies to
-/// pixels, applied to the one coordinate that must keep naming the click point.
 fn unrotate_hotspot(transform: i32, w: i32, h: i32, hotx: i32, hoty: i32) -> (i32, i32) {
     match transform {
         90 => (h - 1 - hoty, hotx),
@@ -226,9 +167,6 @@ fn unrotate_hotspot(transform: i32, w: i32, h: i32, hotx: i32, hoty: i32) -> (i3
     }
 }
 
-/// Turn a 4-byte-pixel frame upright into tightly packed `dst`, undoing `transform` degrees;
-/// padded `src` rows ok (stride = len/h). Direction pinned by the tests to the measured anchor
-/// of rustdesk#15886; libyuv walks pixels, so channel order does not matter.
 fn unrotate_bgra(src: &[u8], w: usize, h: usize, transform: i32, dst: &mut Vec<u8>) {
     const PX: usize = 4;
     let stride = if h > 0 { src.len() / h } else { 0 };
@@ -260,9 +198,6 @@ fn unrotate_bgra(src: &[u8], w: usize, h: usize, transform: i32, dst: &mut Vec<u
     }
 }
 
-/// Transform and augmented origin for one wire entry, derived from ONE wayland snapshot so both
-/// reflect the same output assignment; two `get_displays()` reads could straddle a cache
-/// invalidation. `None` origin means nothing to augment with (caller keeps the DRM origin).
 fn transform_and_origin(
     drm: &[DrmDisplayInfo],
     wire_idx: usize,
@@ -270,9 +205,6 @@ fn transform_and_origin(
 ) -> (i32, Option<(i32, i32)>) {
     if wl.displays.is_empty() || (wl.displays.len() == 1 && drm.len() > 1) {
         if wl.displays.is_empty() && !drm.is_empty() {
-            // A later successful enumeration refills the cache and hides this state from
-            // wayland_snapshot_missing, so the layout poll needs this durable record to know a
-            // capturer was built blind and owes a rebuild.
             UNROTATED_SNAPSHOT_PENDING.store(true, Ordering::Release);
             log::warn!(
                 "drm: no wayland snapshot at capturer build for display {:?}; assuming unrotated",
@@ -282,10 +214,6 @@ fn transform_and_origin(
         return (0, None);
     }
     let assignment = assign_wayland_outputs(drm, &wl.displays);
-    // The transform comes ONLY from an identity match (name, or unique resolution), through the
-    // SAME progressive-taken pass the advertise side keys its swap off: the layout-order
-    // fallback is fine for an origin guess, but a rotation pinned on a guess splits the
-    // advertised dimensions from the delivered ones.
     let transform = identity_matches(drm, &wl.displays)
         .get(wire_idx)
         .copied()
@@ -298,23 +226,8 @@ fn transform_and_origin(
     (transform, origin)
 }
 
-/// The DRM `rotation` value of a plane that did not rotate or reflect anything.
 const PLANE_ROTATE_0: u32 = 0x1;
 
-/// The angle the FRAME has to be turned back by.
-///
-/// A compositor rotates an output either in hardware, setting the primary plane's `rotation`
-/// (i915 + mutter at 180, measured: the scanout is upright and the plane reports rotate-180), or
-/// in software, drawing the scanout already turned (virtio-gpu and vmwgfx have no such property,
-/// KWin leaves the amdgpu plane at rotate-0; measured: 180 comes out upside down and 90/270
-/// sideways inside the native mode). `wl_output` cannot tell the two apart; `plane_rotation` can.
-/// A plane that rotated scans out the logical desktop whatever the output transform says: the
-/// compositor programs it from the CRTC transform, which also folds in the connector's panel
-/// orientation that `wl_output` never carries, so the two are not subtracted. A plane at rotate-0
-/// (a plane without the property arrives as rotate-0, see `DrmReader::plane_rotation`) scanned
-/// out what the compositor drew, and the frame is turned by the whole transform. `None` (a
-/// libdrmtap before 0.5.8, or nothing the library could read) keeps the pre-0.5.8 rule: 90/270
-/// turned, 180 left alone. The cursor does not go through this: see `Shared::cursor_transform`.
 fn frame_transform(wl_transform: i32, plane_rotation: Option<u32>) -> i32 {
     match plane_rotation {
         Some(mask) if mask != PLANE_ROTATE_0 => 0,
@@ -329,7 +242,6 @@ fn frame_transform(wl_transform: i32, plane_rotation: Option<u32>) -> i32 {
     }
 }
 
-/// Takes DRM_STATE: never call it while holding one of the per-display maps below.
 fn display_info_of(display: i32) -> Option<DrmDisplayInfo> {
     match &*DRM_STATE.lock().unwrap() {
         ProbeState::Available(_, list) => list.get(display.max(0) as usize).cloned(),
@@ -337,8 +249,6 @@ fn display_info_of(display: i32) -> Option<DrmDisplayInfo> {
     }
 }
 
-/// A delivered frame resets the streak verdicts (`zero_frame_streak`, `demotes`, `since`) and
-    /// nothing else.
 #[derive(Clone, Copy)]
 struct DisplayHealth {
     zero_frame_streak: u32,
@@ -346,11 +256,7 @@ struct DisplayHealth {
     demotes: u32,
     last_build: Option<Instant>,
     rapid_builds: u32,
-    /// The dma-buf convert failed for this display. The COMMON cause is multi-GPU: our render node
-    /// is not the GPU that exported the scanout. Follows the monitor for the process run.
     prefer_cpu: bool,
-    /// The PipeWire fallback for this display was rejected on geometry (a transposed stream), so
-    /// the lone-display carve-out in `mark_demoted_displays` must not keep advertising it online.
     fallback_rejected: bool,
 }
 
@@ -380,8 +286,6 @@ const DEMOTE_BACKOFF_MAX_SHIFT: u32 = 4;
 const RAPID_REBUILD_WINDOW: Duration = Duration::from_secs(3);
 const RAPID_REBUILD_MAX: u32 = 6;
 
-/// Doubling per demotion up to `DEMOTE_BACKOFF_MAX_SHIFT`; a delivered frame zeroes the demote
-/// count (see `frame()`), not decayed by time.
 fn demote_cooldown(demotes: u32) -> Duration {
     DEMOTE_COOLDOWN * (1u32 << demotes.saturating_sub(1).min(DEMOTE_BACKOFF_MAX_SHIFT))
 }
@@ -391,11 +295,9 @@ enum RefreshOutcome {
     Publish,
     Unavailable,
     Restamp,
-    /// The evidence is about the PRODUCER, not the hardware: give the verdict up to `Unknown`.
     GiveUp,
 }
 
-/// `failures` counts consecutive failures INCLUDING this one, so it is 1 on the first.
 fn refresh_outcome(probe: Option<usize>, failures: u32) -> RefreshOutcome {
     match probe {
         Some(0) => RefreshOutcome::Unavailable,
@@ -442,8 +344,6 @@ fn render_node_count() -> usize {
 }
 
 static UINPUT_REFRESH_GEN: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
-/// A capturer was built with no wayland snapshot and runs unrotated; the layout poll consumes
-/// this to bump the generation once a live snapshot exists.
 static UNROTATED_SNAPSHOT_PENDING: std::sync::atomic::AtomicBool =
     std::sync::atomic::AtomicBool::new(false);
 
@@ -453,8 +353,6 @@ pub(super) fn take_unrotated_snapshot_pending() -> bool {
 static UINPUT_REFRESH_BUSY: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
 
 impl IpcDrmCapturer {
-    /// The service resolves indices against ITS OWN enumeration, so the receive thread re-resolves
-    /// `expected` by connector identity and returns the index geometry must be read at.
     pub fn new(
         display: i32,
         expected: Option<DrmDisplayInfo>,
@@ -484,26 +382,19 @@ impl IpcDrmCapturer {
         let (displays, wire_idx) = match rx.recv_timeout(Duration::from_millis(HANDSHAKE_WAIT_MS)) {
             Ok(res) => res?,
             Err(_) => {
-                // A handshake completing later would stream unowned: Drop never runs here.
                 stop.store(true, Ordering::SeqCst);
                 bail!("drm capture handshake timed out");
             }
         };
-        // One snapshot for the session: transform, origin and the advertised swap must all
-        // reflect the same output assignment. The generation is read BEFORE the snapshot, so a
-        // clear racing the build rebuilds once instead of running a session on stale geometry.
         let snapshot_gen = scrap::wayland::display::wayland_snapshot_generation();
         let wl = scrap::wayland::display::get_displays();
         let (wl_transform, origin) = transform_and_origin(&displays, wire_idx, &wl);
-        // Same snapshot as the transform, stored BEFORE the transform's Release store below.
         let cal = calibration_context(&displays, wire_idx, &wl, snapshot_gen);
         log::info!(
             "drm: cursor calibration for display {display} ({}): {cal:?}",
             displays.get(wire_idx).map(|d| d.name.as_str()).unwrap_or("?")
         );
         *shared.cal_context.lock().unwrap() = cal.ok();
-        // This capturer now shows that layout. If the session init's own wayland query failed it
-        // saved an empty baseline, so this is the only record of what the stream is built on.
         super::display_service::note_capturer_layout(&wl.displays, snapshot_gen);
         shared
             .cursor_transform
@@ -537,8 +428,6 @@ impl IpcDrmCapturer {
         ))
     }
 
-    /// Without an identity, skip rather than record under "", which get_capturer_info reads back
-    /// as the same key: one unidentifiable display would demote the next.
     fn note_session_without_frame(&self) {
         let Some(key) = self.connector.clone() else {
             log::debug!(
@@ -574,8 +463,6 @@ impl Drop for IpcDrmCapturer {
 
 impl TraitCapturer for IpcDrmCapturer {
     fn frame<'a>(&'a mut self, timeout: Duration) -> io::Result<Frame<'a>> {
-        // video_service passes its spf as the timeout: that, and how busy it is between calls, is
-        // the rate the producer is asked for.
         let demand =
             self.shared
                 .pace
@@ -602,9 +489,6 @@ impl TraitCapturer for IpcDrmCapturer {
             if let Some((w, h, fmt, plane_rotation, buf)) = slot.latest.take() {
                 drop(slot);
                 drop(waited);
-                // A layout change bumps the generation and is otherwise invisible here (mode
-                // and framebuffer keep their size). Rebuild for the new transform; not counted
-                // against health: the layout moved, the display did not fail.
                 if scrap::wayland::display::wayland_snapshot_generation() != self.snapshot_gen {
                     self.shared.slot.lock().unwrap().recycle(buf);
                     return Err(io::Error::new(
@@ -612,14 +496,6 @@ impl TraitCapturer for IpcDrmCapturer {
                         format!("drm: display {} layout changed; rebuilding", self.display),
                     ));
                 }
-                // The angle this frame still has to be turned by: the output transform, unless
-                // the plane rotated the scanout itself (per frame, since only the producer can
-                // see the plane). Frames arrive in scanout orientation, the session was
-                // sized rotated, so the guard compares rotated dims: a plane that rotated 90 in
-                // hardware hands over a portrait scanout and `t` is 0, a plane that did not hands
-                // over the landscape mode and `t` is 90; both land on the session size.
-                // convert_to_yuv only refuses a LARGER source (a smaller one leaves stale edges);
-                // first frame: CRTC mode vs scanout fb.
                 let t = frame_transform(self.transform, plane_rotation);
                 let (fw, fh) = rotated_dims(t, w, h);
                 if self.session_size.is_some_and(|(sw, sh)| (fw, fh) != (sw, sh)) {
@@ -641,18 +517,12 @@ impl TraitCapturer for IpcDrmCapturer {
                         ),
                     ));
                 }
-                // The producer grabs on a timer, so a still screen arrives as the same bytes every
-                // tick. `cur` still holds the previous frame; the same bytes in another format are
-                // another picture.
                 let repeat = if t == 0 {
                     let repeat = fmt == self.cur_fmt && buf == self.cur;
                     let previous = std::mem::replace(&mut self.cur, buf);
                     self.shared.slot.lock().unwrap().recycle(previous);
                     repeat
                 } else if !matches!(fmt, Pixfmt::BGRA | Pixfmt::RGBA) {
-                    // Unreachable with today's producers (the convert path emits 4-byte pixels
-                    // and the CPU path hardcodes BGRA); kept so a future non-4-byte producer
-                    // fails the session instead of shearing the image.
                     self.shared.slot.lock().unwrap().recycle(buf);
                     if !self.got_frame {
                         self.note_session_without_frame();
@@ -675,8 +545,6 @@ impl TraitCapturer for IpcDrmCapturer {
                 self.cur_h = fh;
                 self.cur_fmt = fmt;
                 if !self.got_frame {
-                    // Clear ONLY the streak: `rapid_builds` is for a display that delivers a first
-                    // frame then fails, and `prefer_cpu` is written on the recv thread.
                     self.got_frame = true;
                     if let Some(key) = &self.connector {
                         if let Some(h) = DRM_DISPLAY_HEALTH.lock().unwrap().get_mut(key) {
@@ -747,8 +615,6 @@ async fn recv_thread(
             return;
         }
     };
-    // Our monitor's index IN THIS CONNECTION'S LIST; `display` indexes the CLIENT's. Measured on a
-    // T2: a woken 2880x1800 panel re-enters ahead of the Touch Bar, flipping index 0.
     let wire_idx = match &expected {
         Some(e) => {
             match displays
@@ -773,7 +639,6 @@ async fn recv_thread(
             return;
         }
     };
-    // (device, crtc_id) survives a topology change; list indices do not.
     let bound_to = displays
         .get(wire_idx)
         .map(|d| (d.device.clone(), d.crtc_id));
@@ -783,9 +648,6 @@ async fn recv_thread(
         .or_else(|| displays.first())
         .map(|d| d.render_node.clone())
         .unwrap_or_default();
-    // An unnamed exporter on a multi-render-node host fails SILENTLY: on a Jetson
-    // (scanout nvidia-drm, first render node tegra) the wrong device's import SUCCEEDS and corrupts
-    // the pixels, so there is no convert error for prefer_cpu to learn from.
     let ambiguous_gpu = render_node.is_empty() && render_node_count() > 1;
     let force_cpu = drm_prefer_cpu(&our_key) || ambiguous_gpu;
     let mut converter = if force_cpu {
@@ -823,10 +685,7 @@ async fn recv_thread(
     }
     let _ = tx.send(Ok((displays, wire_idx)));
 
-    // A cursor that arrived before new() stored the session transform, held for replay. Only the
-    // newest matters; the 200 ms recv timeout guarantees this is retried even on an idle wire.
     let mut pending_cursor: Option<(u64, u32, u32, i32, i32, bool, Vec<u8>)> = None;
-    // The shape being measured, or None: hidden, kernel-measured, or no context for this stream.
     let mut cal: Option<CursorCal> = None;
     let end_reason = loop {
         if stop.load(Ordering::SeqCst) {
@@ -844,7 +703,7 @@ async fn recv_thread(
             }
         }
         let (msg, recv_fd) = match conn.recv_msg_timeout2(200).await {
-            None => continue, // timeout: re-check stop at the loop top
+            None => continue,
             Some(Ok(pair)) => pair,
             Some(Err(err)) => break format!("recv: {err}"),
         };
@@ -867,7 +726,6 @@ async fn recv_thread(
                     Some(c) => c,
                     None => break "no DRM render node; cannot convert dma-buf frame".to_owned(),
                 };
-                // Valid in THIS process; -1 is an import-once cache hit on `fb_id`.
                 let received_fd: RawFd = if desc.has_fd {
                     match recv_fd.as_ref() {
                         Some(f) => f.as_raw_fd(),
@@ -885,8 +743,6 @@ async fn recv_thread(
                     format: desc.format,
                     modifier: desc.modifier,
                     fb_id: desc.fb_id,
-                    // RAW: `drm_render::convert` REJECTS an out-of-range count rather than
-                    // clamping, so the count the C reads is the one that was validated.
                     num_planes: desc.num_planes,
                     offsets: desc.offsets,
                     pitches: desc.pitches,
@@ -895,9 +751,6 @@ async fn recv_thread(
                 };
                 match conv.convert(&mut ddesc, received_fd) {
                     Ok((data, w, h, fmt)) => {
-                        // Borrowed from the render context, valid only until the next convert.
-                        // Copy into a recycled buffer, and OUTSIDE the slot lock, so a
-                        // multi-megabyte memcpy never holds the encoder off the slot.
                         let mut buf = shared.slot.lock().unwrap().take_free().unwrap_or_default();
                         buf.clear();
                         buf.extend_from_slice(data);
@@ -911,9 +764,6 @@ async fn recv_thread(
                         break format!("convert: {err}");
                     }
                 }
-                // `recv_fd` closes at the end of this iteration, AFTER convert imported it.
-                // Ack so the producer RELEASES ONE SEND CREDIT and forwards the next; this bounds
-                // the socket to a couple of in-flight frames instead of a stale backlog.
                 if let Err(err) = conn.send_frame_ack(shared.demand_fps.load(Ordering::Relaxed)).await {
                     break format!("frame ack: {err}");
                 }
@@ -937,8 +787,6 @@ async fn recv_thread(
                         cursor_epoch,
                     );
                 }
-                // `frame()` hands this to PixelBuffer::new, which derives the stride as
-                // `data.len() / height`: height==0 would DIVIDE BY ZERO.
                 if width == 0 || height == 0 {
                     break format!("cpu frame: degenerate geometry {width}x{height}");
                 }
@@ -967,7 +815,6 @@ async fn recv_thread(
                     }
                     Ok(Err(err)) => break format!("frame body: {err}"),
                 }
-                // Ack this CPU frame too (flow control; see the dma-buf arm above).
                 if let Err(err) = conn.send_frame_ack(shared.demand_fps.load(Ordering::Relaxed)).await {
                     break format!("frame ack: {err}");
                 }
@@ -980,10 +827,6 @@ async fn recv_thread(
                 hoty,
                 hot_measured,
             } => {
-                // get_cursor_data() hands `colors` straight to the client, which renders
-                // width*height*4 RGBA bytes: a short body would make it READ PAST THE BUFFER. A
-                // hidden-cursor sentinel arrives as 1x1 with a 4-byte body, so `need` is 4 and the
-                // check is live.
                 let need = (width as usize)
                     .saturating_mul(height as usize)
                     .saturating_mul(4);
@@ -1023,14 +866,6 @@ async fn recv_thread(
                 }
             }
             Data::DrmDisplaysChanged(list) => {
-                // `display` (the CLIENT's index) and NOT `wire_idx`, deliberately. `bound_to` is an
-                // identity `(device, crtc_id)`, not a position, so this asks "does that slot still
-                // name MY monitor"; and the swap below installs this list as DRM_STATE, which is the
-                // client-space list display_service re-advertises and input is mapped through.
-                // Probing `wire_idx` stays quiet in exactly the case this guard exists for: a stream
-                // whose wire_idx differs from display keeps running while the client's index comes to
-                // mean another monitor. Checked BEFORE the swap, against the topology this stream
-                // started on.
                 let now_at_our_index = list
                     .get(display.max(0) as usize)
                     .map(|d| (d.device.clone(), d.crtc_id));
@@ -1048,9 +883,6 @@ async fn recv_thread(
                 scrap::wayland::display::clear_wayland_displays_cache();
                 UINPUT_REFRESH_GEN.fetch_add(1, Ordering::AcqRel);
                 if !UINPUT_REFRESH_BUSY.swap(true, Ordering::AcqRel) {
-                    // Taken BEFORE the spawn and moved in: `Builder::spawn` can FAIL with EAGAIN after
-                    // the swap, so a guard built inside the closure would never exist and the flag
-                    // would stay set for the PROCESS LIFETIME.
                     let mut busy = UinputRefreshGuard(true);
                     let spawned = std::thread::Builder::new()
                         .name("drm-uinput-refresh".into())
@@ -1064,7 +896,7 @@ async fn recv_thread(
                                 log::warn!(
                                     "drm: uinput refresh worker could not build a runtime: {err}"
                                 );
-                                return; // the guard hands the slot back
+                                return;
                             }
                         };
                         let mut served = 0u64;
@@ -1080,7 +912,7 @@ async fn recv_thread(
                                 break;
                             }
                             if !busy.retake() {
-                                break; // another handler already started a fresh worker
+                                break;
                             }
                         }
                     });
@@ -1089,12 +921,10 @@ async fn recv_thread(
                     }
                 }
             }
-            _ => {} // ignore any unexpected control message
+            _ => {}
         }
     };
     log::info!("drm capture stream ended: {end_reason}");
-    // Drop the render context on THIS thread: its EGL state + cached imports are thread-local and
-    // a cross-thread close strands them. Never in `Drop`, which runs on the encoder thread.
     drop(converter);
     remove_drm_cursor(display, cursor_epoch);
     let mut slot = shared.slot.lock().unwrap();
@@ -1102,8 +932,6 @@ async fn recv_thread(
     shared.cv.notify_one();
 }
 
-// Keyed by display index: the cursor lives on whichever CRTC the pointer is over and every other
-// stream reports a hidden sentinel, which under a single global would clobber it.
 #[derive(Clone)]
 pub struct DrmCursorData {
     pub id: u64,
@@ -1115,48 +943,23 @@ pub struct DrmCursorData {
 }
 
 
-// The kernel only exposes a cursor hotspot on DRIVER_CURSOR_HOTSPOT drivers (VMs); on bare metal
-// the wire carries `infer_hotspot`'s guess, which the bitmap alone cannot get right for a shape
-// whose click point the theme put where the alpha does not mark it. But
-// `plane_origin = pointer_tip - hotspot`, this process injects the tip itself, and the plane
-// position rides every frame: once both sit still, the difference IS the hotspot.
 
 type Pos = (i32, i32);
 type Hotspot = (i32, i32);
 
-/// The plane must hold one position this many consecutive frames, not counting the frame that
-/// first reported it, before a measurement is taken ...
 const CURSOR_CAL_STABLE_TICKS: u32 = 3;
-/// ... and a position still for longer than this is not measured any more: the peer point that
-/// would be subtracted is that much staler.
 const CURSOR_CAL_WINDOW_TICKS: u32 = 33;
-/// Two measurements this close agree; a correction this close to what is drawn is jitter. The
-/// peer coordinate is quantized to logical px, so at a fractional scale a measurement wobbles by
-/// ceil(scale) physical px between positions.
 const CURSOR_CAL_TOLERANCE: i32 = 2;
-/// The last absolute peer move must be at least this old (the compositor consumed it) ...
 const CURSOR_CAL_MIN_INPUT_AGE_MS: u64 = 150;
-/// ... and at most this old: a local user may have moved the pointer since.
 const CURSOR_CAL_MAX_INPUT_AGE_MS: u64 = 10_000;
 
-/// The calibration geometry of one stream, resolved once when the capturer is built, from the
-/// wayland snapshot the frame transform comes from. Immutable for the session; a layout change
-/// bumps the snapshot generation, which stops measurement, and rebuilds the capturer.
 #[derive(Clone, Copy, Debug, PartialEq)]
 struct CalContext {
-    /// This output's rect in the logical layout the peer's absolute coordinates live in.
     rect: (i32, i32, i32, i32),
-    /// The scanout size the cursor plane position is expressed in.
     physical_size: (i32, i32),
-    /// The snapshot generation this was built from.
     built_gen: u64,
 }
 
-/// Every eligibility check at once, on one snapshot. A partial snapshot cannot be trusted (the
-/// same rule `transform_and_origin` applies before it trusts a match), the output must be an
-/// identity match and never the layout-order guess, any rotation declines because the plane is
-/// unrotated scanout space while the injected point is the oriented layout (180 included, so the
-/// UNFOLDED transform is read), and the geometry must be usable.
 fn calibration_context(
     drm: &[DrmDisplayInfo],
     wire_idx: usize,
@@ -1187,12 +990,6 @@ fn calibration_context(
     })
 }
 
-/// Pure geometry. The injected point is in the logical layout (`logical_rects_of`: a lone output
-/// at its oriented physical size, several outputs at their logical sizes) and the plane origin is
-/// in this CRTC's scanout px, so the point is required to fall inside this output's rect (else
-/// the pointer is on another monitor and that stream measures), scaled into scanout space, and
-/// only then is the plane subtracted. An answer outside the bitmap is a race, an edge clip or a
-/// local user having moved the pointer, not a hotspot.
 fn measure_hotspot(
     ctx: &CalContext,
     injected: Pos,
@@ -1214,35 +1011,24 @@ fn measure_hotspot(
     Some(h)
 }
 
-/// What one stream knows about the shape it is currently showing.
 struct CursorCal {
-    /// The wire id: what the cache is keyed by, and what a corrected id is remixed from.
     id: u64,
     width: u32,
     height: u32,
-    /// Kept so a confirmed measurement can re-deliver the same pixels under the new hotspot.
     raw: Vec<u8>,
     ctx: CalContext,
-    /// What the producer reported.
     wire_hot: Hotspot,
-    /// What the client is being served: the cache's confirmed value, else the wire's.
     current_hot: Hotspot,
-    /// An unconfirmed measurement, with the peer sample it was taken against and the
-    /// input-mapping epoch of that sample.
     candidate: Option<(Hotspot, u64, u64)>,
     plane: Option<Pos>,
     stable_ticks: u32,
     measured_this_position: bool,
 }
 
-/// Only a hotspot the producer guessed is measured; kernel truth is never overridden. A producer
-/// that predates the provenance field arrives as measured (`legacy_hot_measured`), so it is never
-/// measured over either.
 fn calibratable(id: u64, hot_measured: bool) -> bool {
     id != scrap::drm_reader::HIDDEN_CURSOR_ID && !hot_measured
 }
 
-/// One frame reported where the plane is.
 fn update_plane_stability(c: &mut CursorCal, p: Pos) {
     if c.plane != Some(p) {
         c.plane = Some(p);
@@ -1253,21 +1039,11 @@ fn update_plane_stability(c: &mut CursorCal, p: Pos) {
     c.stable_ticks = c.stable_ticks.saturating_add(1);
 }
 
-/// Each stable plane position yields at most one measurement, and only inside the window.
 fn settled_unmeasured(c: &CursorCal) -> bool {
     !c.measured_this_position
         && (CURSOR_CAL_STABLE_TICKS..=CURSOR_CAL_WINDOW_TICKS).contains(&c.stable_ticks)
 }
 
-/// The peer sample a measurement may subtract from, or none: the layout must not have moved
-/// since the context was built (the remap flag is a secondary guard for the window in which the
-/// promotion is still owed), the device must run the uinput range of that layout and the sample
-/// must have been injected after it adopted that range (a stale range maps the point elsewhere,
-/// and two stops share the error), the sample must have been mapped against that same layout,
-/// and it must be old enough to have been consumed and young enough to still describe the
-/// pointer. The generation and the flag are both advanced by the display service's layout poll,
-/// so a monitor moved mid-session is seen up to one check interval late; a measurement inside
-/// that window is bounded by the bitmap and cached under its generation only.
 fn usable_sample(
     ctx: &CalContext,
     s: Option<super::input_service::PeerAbsSample>,
@@ -1293,12 +1069,6 @@ fn near(a: Hotspot, b: Hotspot) -> bool {
     (a.0 - b.0).abs() <= CURSOR_CAL_TOLERANCE && (a.1 - b.1).abs() <= CURSOR_CAL_TOLERANCE
 }
 
-/// The confirmation policy. `Some` only when a second measurement agrees with the candidate,
-/// and then it IS the candidate, never the second raw value. Two measurements against the same
-/// peer sample are not independent: the plane moved and the peer did not, which is what a local
-/// hand on the mouse looks like, so they never confirm each other. Nor do two taken under
-/// different input mappings: the device adopted a new range in between, and the candidate was
-/// measured against the old one.
 fn observe_measurement(c: &mut CursorCal, m: Hotspot, seq: u64, map_epoch: u64) -> Option<Hotspot> {
     match c.candidate {
         Some((_, kseq, _)) if kseq == seq => None,
@@ -1313,16 +1083,9 @@ fn observe_measurement(c: &mut CursorCal, m: Hotspot, seq: u64, map_epoch: u64) 
     }
 }
 
-/// Both decisions are taken on the one accepted value. What is served is compared first: near
-/// it, nothing visible changes and the served value stays cached. That includes a value that is
-/// also near the wire, which a correction 3 or 4 px from the wire makes possible, and comparing
-/// the wire first there would flap the served hotspot and the id on every confirmation. Near the
-/// wire otherwise, the producer's guess was right: the wire value is served and a correction
-/// cached earlier for this shape is dropped. Otherwise the accepted value is cached and served.
 fn apply_confirmed_hotspot(c: &mut CursorCal, accepted: Hotspot, display: i32, cursor_epoch: u64) {
     if near(accepted, c.current_hot) {
         if c.current_hot == c.wire_hot {
-            // The wire is served and was right: nothing of ours stays cached for this shape.
             forget_cursor_cal(c.id, c.ctx.built_gen);
         } else if cached_cursor_cal(c.id, c.ctx.built_gen) != Some(c.current_hot) {
             store_cursor_cal(c.id, c.current_hot, c.ctx.built_gen);
@@ -1361,17 +1124,9 @@ fn apply_confirmed_hotspot(c: &mut CursorCal, accepted: Hotspot, display: i32, c
     );
 }
 
-/// Confirmed hotspots per wire cursor id, so a shape the compositor reuses (arrow, beam, arrow)
-/// is served right from its first frame, each with the layout generation it was confirmed under:
-/// a value measured against a layout the poll had not yet seen move is served only to streams
-/// of that generation, never to the one rebuilt after the promotion. Bounded by clearing what
-/// the writer's generation or an older one confirmed; ids churn on theme or size changes and
-/// re-measuring is cheap. Read in one place, behind the context gate.
 static CURSOR_CAL_CACHE: Mutex<BTreeMap<u64, (Hotspot, u64)>> = Mutex::new(BTreeMap::new());
 const CURSOR_CAL_CACHE_CAP: usize = 64;
 
-/// An entry is replaced or dropped only by its own generation or a newer one: a receive thread
-/// still running on the old layout cannot undo what the rebuilt stream confirmed.
 fn store_cursor_cal(wire_id: u64, h: Hotspot, gen: u64) {
     let mut cache = CURSOR_CAL_CACHE.lock().unwrap();
     if cache.get(&wire_id).is_some_and(|(_, g)| *g > gen) {
@@ -1391,8 +1146,6 @@ fn forget_cursor_cal(wire_id: u64, gen: u64) {
         cache.remove(&wire_id);
     }
 }
-/// The correction confirmed for this shape under this generation, if any. A stream of another
-/// generation gets none and serves the wire hotspot until a pair confirms one.
 fn cached_cursor_cal(wire_id: u64, gen: u64) -> Option<Hotspot> {
     CURSOR_CAL_CACHE
         .lock()
@@ -1402,10 +1155,6 @@ fn cached_cursor_cal(wire_id: u64, gen: u64) -> Option<Hotspot> {
         .map(|(h, _)| *h)
 }
 
-/// Mixes the hotspot into the wire id on top of the reader's fold, so `run_cursor` sees the
-/// corrected shape as a change and caches it under its own key; the id a peer sees is the content
-/// hash made in input_service, which covers the hotspot by itself. A collision is as unlikely as
-/// between any two 64-bit ids and would serve one cached bitmap for another until the next change.
 fn remix_cursor_id(wire_id: u64, hotx: i32, hoty: i32) -> u64 {
     let mut id = wire_id ^ 0x9e37_79b9_7f4a_7c15;
     for v in [hotx as u32 as u64, hoty as u32 as u64] {
@@ -1415,10 +1164,6 @@ fn remix_cursor_id(wire_id: u64, hotx: i32, hoty: i32) -> u64 {
     id
 }
 
-/// A shape arrived. Publish it as the producer sent it, or under a confirmed correction the
-/// cache holds for it, and start measuring it when there is a context and it is a guess. The
-/// cache is consulted here and nowhere else, so without a context a correction measured on an
-/// upright output can never reach a rotated one.
 #[allow(clippy::too_many_arguments)]
 fn on_cursor_shape(
     display: i32,
@@ -1462,8 +1207,6 @@ fn on_cursor_shape(
     cal
 }
 
-/// A frame reported where the plane is. The sample is read only once the plane has settled, so
-/// most frames cost one comparison and no lock.
 #[allow(clippy::too_many_arguments)]
 fn on_cursor_plane(
     cal: &mut Option<CursorCal>,
@@ -1500,17 +1243,12 @@ fn on_cursor_plane(
 }
 
 static DRM_CURSOR: Mutex<BTreeMap<i32, (u64, DrmCursorData)>> = Mutex::new(BTreeMap::new());
-// Monotonic per-stream tag: a rebuilt stream reuses the display index, so a torn-down stream drops
-// its entry ONLY if the epoch still matches.
 static DRM_CURSOR_EPOCH: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(1);
 
 fn next_cursor_epoch() -> u64 {
     DRM_CURSOR_EPOCH.fetch_add(1, std::sync::atomic::Ordering::Relaxed)
 }
 
-// Compare-and-set: a still-draining predecessor stream (older epoch) must not overwrite the entry a
-// replacement stream (newer epoch) already published. Only accept a write whose epoch is at least
-// the stored one.
 fn set_drm_cursor(display: i32, epoch: u64, c: DrmCursorData) {
     let mut map = DRM_CURSOR.lock().unwrap();
     match map.get(&display) {
@@ -1528,13 +1266,6 @@ fn remove_drm_cursor(display: i32, epoch: u64) {
     }
 }
 
-/// Unrotate a wire cursor into the session orientation and publish it. The compositor
-/// pre-rotates the bitmap it programs into the cursor plane, so over the unrotated video the
-/// cursor alone would stay turned and its hotspot transposed (review finding 11 on
-/// rustdesk#15889). The wire id hashes only the plane pixels and geometry, so a stream rebuilt
-/// under a new transform resends the SAME id and the client's by-id cursor cache would keep the
-/// old orientation: fold the transform in (the producer's own FNV step) so id and orientation
-/// can never disagree. The hidden sentinel must survive untouched.
 #[allow(clippy::too_many_arguments)]
 fn deliver_drm_cursor(
     display: i32,
@@ -1548,19 +1279,10 @@ fn deliver_drm_cursor(
     raw: Vec<u8>,
     t: i32,
 ) {
-    // Every non-zero angle, 180 included. Measured on i915 + mutter with the output at 180: the
-    // frame arrived upright and the sprite upside down, so the compositor had pre-rotated the
-    // sprite by the full transform while the plane scanned out already turned. wl_output cannot
-    // say which of the two happened, so the sprite is treated as pre-rotated at every angle.
     let (width, height, hotx, hoty, colors) = if t != 0 {
         let mut turned = Vec::new();
         unrotate_bgra(&raw, width as usize, height as usize, t, &mut turned);
         let (dw, dh) = rotated_dims(t, width as usize, height as usize);
-        // A hotspot the driver measured is a point on the scanout sprite and maps like a pixel.
-        // A guessed one was guessed on the ROTATED sprite - top-left of an arrow's box - and
-        // the tip of a turned arrow is some other corner, so it is guessed again on the upright
-        // one. The old flow was off at every angle; what differs is the size of the error, which
-        // is why only one of them got reported.
         let (hx, hy) = if hot_measured {
             unrotate_hotspot(t, width as i32, height as i32, hotx, hoty)
         } else {
@@ -1586,14 +1308,8 @@ fn deliver_drm_cursor(
     );
 }
 
-/// Last provenance seen PER DISPLAY. Not one global: several streams run at once and their
-/// provenance can differ and still be stable -- one output publishing HOTSPOT_X/Y while another
-/// does not is a normal multi-GPU host -- and a single slot would read that as an endless
-/// alternation and log on every cursor message.
 static LAST_RECEIVED_PROVENANCE: Mutex<BTreeMap<i32, bool>> = Mutex::new(BTreeMap::new());
 
-/// Whether this display's provenance changed, recording the new value. Its own function so the
-/// per-display behaviour can be asserted without reading a log.
 fn provenance_is_news_for(display: i32, hot_measured: bool) -> bool {
     LAST_RECEIVED_PROVENANCE
         .lock()
@@ -1602,14 +1318,6 @@ fn provenance_is_news_for(display: i32, hot_measured: bool) -> bool {
         != Some(hot_measured)
 }
 
-/// Say once per display, and again only on a change, what the producer told us about the hotspot.
-///
-/// The counterpart of the producer's own provenance line, and it exists for the case that line
-/// cannot cover: a message that arrives with no `hot_measured` field at all, where what happens is
-/// decided by the field's serde default and is otherwise invisible on a running box.
-///
-/// The hidden-cursor sentinel is skipped. It is sent with `hot_measured: false` because there is no
-/// hotspot to describe, so recording it would make every hide/show look like a provenance change.
 fn note_received_provenance(display: i32, id: u64, hot_measured: bool) {
     if id == scrap::drm_reader::HIDDEN_CURSOR_ID {
         return;
@@ -1651,8 +1359,6 @@ pub fn drm_cursor_id() -> Option<u64> {
     with_drm_cursor(|c| c.id)
 }
 
-/// Snapshot of the DRM hardware cursor, or None. The pixels are premultiplied ARGB and are passed
-/// through as-is, like the XFixes path, so the client sees one cursor format from either backend.
 pub fn drm_cursor() -> Option<DrmCursorData> {
     with_drm_cursor(|c| c.clone())
 }
@@ -1667,7 +1373,6 @@ static DRM_STATE: Mutex<ProbeState> = Mutex::new(ProbeState::Unknown);
 const NEGATIVE_TTL: Duration = Duration::from_secs(30);
 const POSITIVE_TTL: Duration = Duration::from_secs(15);
 
-/// Runs on a throwaway thread: a nested `#[tokio::main]` panics if called from inside a runtime.
 fn query_displays(wake: bool) -> ResultType<Vec<DrmDisplayInfo>> {
     let (tx, rx) = std::sync::mpsc::channel();
     std::thread::Builder::new()
@@ -1700,21 +1405,16 @@ static DRM_PROBE_FAILURES: std::sync::atomic::AtomicU32 = std::sync::atomic::Ato
 const DRM_PROBE_MAX_FAILURES: u32 = 5;
 static DRM_REFRESH_FAILURES: std::sync::atomic::AtomicU32 = std::sync::atomic::AtomicU32::new(0);
 const DRM_REFRESH_MAX_FAILURES: u32 = 3;
-// Single-flight, so is_available() never calls query_displays() (~4s of IPC) holding DRM_STATE.
 static DRM_PROBE_IN_FLIGHT: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
 
-/// Advanced by every publish, so a slow UNLOCKED probe can tell a newer verdict landed meanwhile.
 static DRM_STATE_GEN: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
 
-/// EVERY verdict change to DRM_STATE goes through here so the generation stays truthful; the TTL
-    /// restamp in `refresh_available_async` is the one direct write.
 #[inline]
 fn publish_probe_state(st: &mut ProbeState, next: ProbeState) {
     *st = next;
     DRM_STATE_GEN.fetch_add(1, Ordering::Release);
 }
 
-/// Releases DRM_PROBE_IN_FLIGHT on EVERY exit; a leaked release wedges all future probes.
 struct ProbeInFlightGuard;
 impl Drop for ProbeInFlightGuard {
     fn drop(&mut self) {
@@ -1722,8 +1422,6 @@ impl Drop for ProbeInFlightGuard {
     }
 }
 
-/// Ownership of `UINPUT_REFRESH_BUSY`, released on every exit. It is handed back and re-taken
-/// mid-loop, so releasing on drop unconditionally would clear a flag a REPLACEMENT worker owns.
 struct UinputRefreshGuard(bool);
 impl UinputRefreshGuard {
     fn release(&mut self) {
@@ -1743,14 +1441,10 @@ impl Drop for UinputRefreshGuard {
     }
 }
 
-/// Never probes or blocks. Use in hot paths such as `wayland::clear()`, `is_inited()`, and display
-/// enumeration, where seconds of IPC would trip "deadline has elapsed".
 pub(crate) fn is_available_cached() -> bool {
     matches!(&*DRM_STATE.lock().unwrap(), ProbeState::Available(..))
 }
 
-/// A tri-state assessment of DRM capture availability.
-/// `Unsettled` means a probe is in flight or failures have not reached the disable threshold.
 #[derive(Clone, Copy, PartialEq, Eq)]
 pub(crate) enum Availability {
     Available,
@@ -1758,14 +1452,9 @@ pub(crate) enum Availability {
     Unsettled,
 }
 
-/// MAY BLOCK for seconds: never on an async executor (a login with no verdict runs it on the
-/// blocking pool). This blocking form serves the capture-side callers through
-/// `is_available`, where waiting out a settle is acceptable.
 fn availability() -> Availability {
     let (verdict, stale_no) = {
         let st = DRM_STATE.lock().unwrap();
-        // Keep a settled "no" while an off-thread probe re-verifies it, avoiding a transient
-        // Unsettled result whenever the negative cache expires.
         let stale_no =
             matches!(&*st, ProbeState::Unavailable(since) if since.elapsed() >= NEGATIVE_TTL);
         let verdict = match &*st {
@@ -1773,7 +1462,7 @@ fn availability() -> Availability {
                 Some((Availability::Available, since.elapsed() >= POSITIVE_TTL))
             }
             ProbeState::Unavailable(_) => Some((Availability::Unavailable, false)),
-            ProbeState::Unknown => None, // fall through and probe with the lock released
+            ProbeState::Unknown => None,
         };
         (verdict, stale_no)
     };
@@ -1787,7 +1476,6 @@ fn availability() -> Availability {
         return answer;
     }
     if DRM_PROBE_IN_FLIGHT.swap(true, Ordering::AcqRel) {
-        // Someone else is mid-probe: their result is not in yet, and "not yet" is not "no".
         return match &*DRM_STATE.lock().unwrap() {
             ProbeState::Available(..) => Availability::Available,
             ProbeState::Unavailable(_) => Availability::Unavailable,
@@ -1798,8 +1486,6 @@ fn availability() -> Availability {
     probe_and_publish()
 }
 
-/// Non-blocking login-path assessment.
-/// Unknown starts a probe off-thread; callers require `Available` before admitting a session.
 pub(crate) fn availability_cached() -> Availability {
     let (verdict, stale_no) = {
         let st = DRM_STATE.lock().unwrap();
@@ -1831,7 +1517,6 @@ pub(crate) fn availability_cached() -> Availability {
                 let _in_flight = in_flight;
                 probe_and_publish();
             });
-        // On error the guard moved into the dropped closure and released the flag already.
         if let Err(err) = spawned {
             log::warn!("drm: could not spawn the availability probe thread: {err}");
         }
@@ -1839,7 +1524,6 @@ pub(crate) fn availability_cached() -> Availability {
     Availability::Unsettled
 }
 
-/// Probe synchronously and publish the outcome. The caller must hold DRM_PROBE_IN_FLIGHT.
 fn probe_and_publish() -> Availability {
     let t = Instant::now();
     let result = query_displays(true);
@@ -1870,7 +1554,6 @@ fn probe_and_publish() -> Availability {
                 log::info!(
                     "drm: availability probe failed ({err}), attempt {n}/{DRM_PROBE_MAX_FAILURES}; will retry"
                 );
-                // Deliberately still Unknown in DRM_STATE: this is a retry window, not a verdict.
                 Availability::Unsettled
             }
         }
@@ -1879,15 +1562,10 @@ fn probe_and_publish() -> Availability {
     answer
 }
 
-/// The boolean form for capture-path callers, where an unsettled probe and a definitive "no"
-/// route the same way (into the non-DRM fallback).
 pub(crate) fn is_available() -> bool {
     availability() == Availability::Available
 }
 
-/// The negative mirror of `refresh_available_async`: re-verify a stale Unavailable without ever
-/// answering Unknown in the meantime. A failed or empty re-probe re-confirms the "no" with a
-/// fresh timestamp; only a non-empty display list flips the verdict.
 fn refresh_unavailable_async() {
     if DRM_PROBE_IN_FLIGHT.swap(true, Ordering::AcqRel) {
         return;
@@ -1922,12 +1600,10 @@ fn refresh_unavailable_async() {
                     scrap::wayland::display::clear_wayland_displays_cache();
                 }
                 _ => {
-                    // Restamp: a failed or empty re-probe is a fresh confirmation of "no".
                     publish_probe_state(&mut st, ProbeState::Unavailable(Instant::now()));
                 }
             }
         });
-    // Nothing to release on error: the guard moved into the closure and drops with it either way.
     if let Err(err) = spawned {
         log::warn!("drm: could not spawn the unavailability re-probe thread: {err}");
     }
@@ -1978,7 +1654,6 @@ fn refresh_available_async() {
                     log::info!("drm: refresh -> 0 displays, marking DRM unavailable");
                     publish_probe_state(&mut st, ProbeState::Unavailable(Instant::now()));
                 }
-                // Only the TTL stamp moves, so this does NOT go through publish_probe_state.
                 RefreshOutcome::Restamp => {
                     if let ProbeState::Available(since, _) = &mut *st {
                         *since = Instant::now();
@@ -1995,8 +1670,6 @@ fn refresh_available_async() {
                 }
             }
         });
-    // Nothing to release: the guard moved into the closure and drops with it. Clearing the flag
-    // explicitly would let TWO PROBES RUN AT ONCE, since another refresh may already hold it.
     if let Err(err) = spawned {
         log::warn!(
             "drm: could not spawn the availability refresh thread: {err}; the cached verdict \
@@ -2006,9 +1679,6 @@ fn refresh_available_async() {
 }
 
 pub(super) fn warm_availability() {
-    // The gate is INSIDE the loop because `get_display_server()` answers "x11" whenever loginctl
-    // cannot yet name the seat0 session. `is_x11_for_drm()` is that form minus the greeter
-    // blind spot, where plain `is_x11()` is permanently true.
     for _ in 0..10 {
         if crate::platform::linux::is_x11_for_drm() {
             std::thread::sleep(Duration::from_millis(300));
@@ -2024,7 +1694,6 @@ pub(super) fn warm_availability() {
         match query_displays(false) {
             Ok(list) if !list.is_empty() => {
                 let mut st = DRM_STATE.lock().unwrap();
-                // A login probe that published while this query ran keeps its newer list.
                 if DRM_STATE_GEN.load(Ordering::Acquire) == sampled_gen {
                     log::info!("drm: consumer cache warmed ({} displays) at startup", list.len());
                     publish_probe_state(&mut st, ProbeState::Available(Instant::now(), list));
@@ -2041,8 +1710,6 @@ pub(super) fn warm_availability() {
     log::info!("drm: consumer cache warm found no producer at startup (will probe lazily)");
 }
 
-/// With no verdict yet, a login probes now instead of answering "not yet"; that may wake displays.
-/// A login that finds another probe running does not wait for it.
 pub(super) async fn settle_unknown_availability() {
     let unknown = matches!(&*DRM_STATE.lock().unwrap(), ProbeState::Unknown);
     if unknown {
@@ -2052,7 +1719,6 @@ pub(super) async fn settle_unknown_availability() {
     }
 }
 
-/// The service holds its answer until the topology settles. Replaces only an `Available` verdict.
 pub(super) async fn refresh_displays_for_login() {
     let sampled_gen = {
         let st = DRM_STATE.lock().unwrap();
@@ -2102,10 +1768,7 @@ pub(super) async fn refresh_displays_for_login() {
     }
 }
 
-/// Mirrors get_display_infos: only a MULTI-display host advertises a demoted display.
 pub(super) fn display_count_and_any_demoted() -> Option<(usize, bool)> {
-    // Snapshot the identity keys under DRM_STATE, then consult health with DRM_STATE RELEASED --
-    // same order as get_display_infos: never hold DRM_STATE while taking a per-display map.
     let (len, keys): (usize, Vec<String>) = match &*DRM_STATE.lock().unwrap() {
         ProbeState::Available(_, list) => (
             list.len(),
@@ -2127,10 +1790,6 @@ pub(super) fn display_count_and_any_demoted() -> Option<(usize, bool)> {
     Some((len, any_demoted))
 }
 
-// A multi-display portal stream cannot replace one demoted connector. Keep its index but mark it
-// offline; a single connector remains usable through the whole-desktop fallback - unless that
-// fallback itself was rejected on geometry, in which case advertising the lone display online
-// would restart-loop the video service against a stream nothing can serve.
 fn mark_demoted_displays(list: &[DrmDisplayInfo], infos: &mut [DisplayInfo]) {
     let health = DRM_DISPLAY_HEALTH.lock().unwrap();
     if list.len() <= 1 {
@@ -2154,9 +1813,6 @@ fn mark_demoted_displays(list: &[DrmDisplayInfo], infos: &mut [DisplayInfo]) {
     }
 }
 
-/// The PipeWire fallback for this display was rejected on geometry; recorded so the lone-display
-/// carve-out above stops advertising a display nothing can serve. Cleared by a delivered frame
-/// and by the demote-cooldown re-arm.
 pub(super) fn mark_fallback_rejected(display_idx: usize) {
     let Some(expected) = display_info_of(display_idx as i32) else {
         return;
@@ -2176,7 +1832,6 @@ fn primary_index_from_assignment(assignment: &[Option<usize>], primary: usize) -
         .unwrap_or(0)
 }
 
-/// Releases DRM_STATE before taking the Wayland and health locks.
 pub(super) fn get_display_infos_and_primary() -> Option<(Vec<DisplayInfo>, usize)> {
     let list = match &*DRM_STATE.lock().unwrap() {
         ProbeState::Available(_, list) => list.clone(),
@@ -2186,7 +1841,6 @@ pub(super) fn get_display_infos_and_primary() -> Option<(Vec<DisplayInfo>, usize
     let assignment = assign_wayland_outputs(&list, &wl.displays);
     let mut infos = augment_with_wayland_geometry_from(&list, &wl, &assignment);
     mark_demoted_displays(&list, &mut infos);
-    // Primary and geometry must use the same connector assignment snapshot.
     let primary = primary_index_from_assignment(&assignment, wl.primary);
     Some((infos, primary))
 }
@@ -2201,12 +1855,6 @@ pub(super) fn get_display_infos() -> Option<Vec<DisplayInfo>> {
     Some(infos)
 }
 
-/// DRM reports every monitor at physical size and origin (0,0), stacking a multi-monitor client.
-///
-/// Asked at login screens too, on purpose: a greeter runs a compositor, and the socket fallback in
-/// hbb_common lets the enumerator reach it with no environment variables. Where that fallback
-/// cannot answer, the list comes back empty and everything stays unaugmented, which is what the
-/// old is-login-screen gate produced unconditionally.
 fn augment_with_wayland_geometry(drm: &[DrmDisplayInfo]) -> Vec<DisplayInfo> {
     let wl = scrap::wayland::display::get_displays();
     let assignment = assign_wayland_outputs(drm, &wl.displays);
@@ -2219,19 +1867,12 @@ fn augment_with_wayland_geometry_from(
     matched: &[Option<usize>],
 ) -> Vec<DisplayInfo> {
     let mut infos: Vec<DisplayInfo> = drm.iter().map(display_info_from_drm).collect();
-    // A single display is still augmented: on a multi-GPU host the one connector this service can
-    // open may sit at a non-zero origin in the compositor layout, and DRM alone reports (0,0).
     if drm.is_empty() {
         return infos;
     }
     if wl.displays.is_empty() {
         return infos;
     }
-    // One connector against one output is the origin-only case: the lone output can still sit at
-    // a non-zero origin this side cannot see, but it keeps the scale-1 convention — a single
-    // display is advertised at physical size (see `logical_rects_of`), so its logical size must
-    // not be adopted. More connectors than the one output is an inconsistent snapshot, and the
-    // layout-order fallback in `assign_wayland_outputs` would plant that origin on a guess.
     let origin_only = wl.displays.len() == 1;
     if origin_only && drm.len() > 1 {
         return infos;
@@ -2243,14 +1884,7 @@ fn augment_with_wayland_geometry_from(
         };
         info.x = w.x;
         info.y = w.y;
-        // Rotated size before the origin-only cut: a lone rotated output still delivers rotated
-        // frames, so it must advertise them; only the logical-scale adoption stays multi-output.
-        // original_resolution follows in the same motion, or the client reads the transposed
-        // current size against an untransposed original as a third-party resolution change.
-        // Identity matches ONLY, the same rule the capturer's transform follows: swapping on a
-        // layout-order guess advertises dimensions the capturer will not deliver.
         let is_identity = identity[i].is_some() && identity[i] == matched[i];
-        // A plane-transposed display was already swapped by `display_info_from_drm`.
         if is_identity && !drm[i].plane_transposed && (w.transform == 90 || w.transform == 270) {
             std::mem::swap(&mut info.width, &mut info.height);
             info.original_resolution = super::display_service::get_original_resolution(
@@ -2264,8 +1898,6 @@ fn augment_with_wayland_geometry_from(
         }
         if let Some((lw, lh)) = w.logical_size {
             if lw > 0 && lh > 0 {
-                // Post-swap width over logical width, which arrives already swapped when rotated:
-                // the unrotated numerator made a rotated 1:1 monitor advertise scale 16/9.
                 info.scale = info.width as f64 / lw as f64;
                 info.original_resolution = super::display_service::get_original_resolution(
                     &drm[i].name,
@@ -2278,16 +1910,6 @@ fn augment_with_wayland_geometry_from(
     infos
 }
 
-/// Each output goes to at most one connector; unmatched ones take the next free output of the same
-/// size, else the next free one in layout order, since leaving them unaugmented keeps them all at
-/// DRM's (0,0).
-/// The identity half of the assignment (name, or unique resolution), same progressive `taken`
-/// as the full one. Rotation keys off THIS on both sides: swapping or turning on a layout-order
-/// guess splits the advertised dimensions from the delivered frames.
-/// Identity assignment in two GLOBAL passes: every exact name match is reserved first, then
-/// resolution pairing runs on the unmatched remainder, and only when it is forced - exactly one
-/// free output AND exactly one unmatched connector at that resolution. A resolution guess for an
-/// earlier connector must never steal an exact name match from a later one.
 fn identity_matches(
     drm: &[DrmDisplayInfo],
     wl: &[base::platform::linux::WaylandDisplayInfo],
@@ -2346,7 +1968,7 @@ fn assign_wayland_outputs(
             .enumerate()
             .position(|(j, w)| !taken[j] && w.width == d.width as i32 && w.height == d.height as i32);
         let Some(j) = free_same_size.or_else(|| taken.iter().position(|t| !t)) else {
-            continue; // more connectors than outputs; leave the rest unaugmented
+            continue;
         };
         log::warn!(
             "drm: connector {} matched no compositor output by name or by a unique resolution; \
@@ -2363,8 +1985,6 @@ fn assign_wayland_outputs(
 }
 
 
-/// DRM inserts a single-letter type discriminator the compositor drops ("HDMI-A-1" -> "HDMI-1").
-/// Only a *letter* folds: a single *digit* is an MST port index, so "DP-1-2" is not "DP-2".
 fn normalize_connector(name: &str) -> String {
     let parts: Vec<&str> = name.split('-').collect();
     if parts.len() == 3 && parts[1].len() == 1 && parts[1].chars().all(|c| c.is_ascii_alphabetic()) {
@@ -2409,8 +2029,6 @@ fn display_info_from_drm(d: &DrmDisplayInfo) -> DisplayInfo {
     }
 }
 
-/// Deliberately does NOT publish the handshake list into DRM_STATE: it is read before a possibly
-/// seconds-long stall, and when `wire_idx != display_idx` it is ordered differently.
 pub(super) fn get_capturer_info(
     display_idx: usize,
 ) -> ResultType<super::video_service::CapturerInfo> {
@@ -2427,14 +2045,11 @@ pub(super) fn get_capturer_info(
                 }
                 h.zero_frame_streak = 0;
                 h.since = Instant::now();
-                // The cooldown re-arms DRM for this display, so the fallback verdict restarts too.
                 h.fallback_rejected = false;
             }
         }
     }
-    // Built FIRST: a transient `_drm` outage must NOT count toward the flap threshold below.
     let (capturer, displays, wire_idx, origin) = IpcDrmCapturer::new(display_idx as i32, expected)?;
-    // The initial build counts 0, so demotion fires on the (RAPID_REBUILD_MAX + 1)-th in a window.
     if let Some(key) = key.clone() {
         let now = Instant::now();
         let mut map = DRM_DISPLAY_HEALTH.lock().unwrap();
@@ -2456,13 +2071,10 @@ pub(super) fn get_capturer_info(
         }
     }
     let ndisplay = displays.len();
-    // From the entry the stream was BOUND to; `display_idx` is a position in the CLIENT's list.
     let d = displays
         .get(wire_idx)
         .ok_or_else(|| anyhow!("drm display index {wire_idx} out of range ({ndisplay})"))?
         .clone();
-    // Origin and transform come from the ONE snapshot new() resolved, so both reflect the
-    // same output assignment; dimensions stay PHYSICAL, rotated to frame orientation.
     let origin = origin.unwrap_or((d.x, d.y));
     let (cap_w, cap_h) = rotated_dims(
         delivered_transform(&d, capturer.transform),
@@ -2489,7 +2101,6 @@ mod drm_capturer_tests {
         capturer_named(session, None)
     }
 
-    // DRM_DISPLAY_HEALTH is process-wide and tests run in parallel: pass each test its OWN key.
     fn capturer_named(session: Option<(usize, usize)>, key: Option<&str>) -> IpcDrmCapturer {
         let connector = key.map(|k| k.to_owned());
         IpcDrmCapturer {
@@ -2521,7 +2132,6 @@ mod drm_capturer_tests {
         }
     }
 
-    /// One BGRA pixel per label byte, so a rotation result reads as a matrix of labels.
     fn px_frame(labels: &[&[u8]], pad_bytes: usize) -> (Vec<u8>, usize, usize) {
         let h = labels.len();
         let w = labels[0].len();
@@ -2543,22 +2153,16 @@ mod drm_capturer_tests {
 
     #[test]
     fn the_cursor_id_names_the_orientation_too() {
-        // Same wire cursor under two transforms must publish as two ids, or the client's by-id
-        // cache serves the previous orientation after a mid-session rotation.
         let wire = 0xDEAD_BEEF_u64;
         assert_ne!(fold_cursor_id(wire, 0), fold_cursor_id(wire, 90));
         assert_ne!(fold_cursor_id(wire, 90), fold_cursor_id(wire, 270));
-        // Deterministic per (id, transform), so an unchanged cursor is still deduped.
         assert_eq!(fold_cursor_id(wire, 90), fold_cursor_id(wire, 90));
-        // The hidden sentinel is compared by VALUE at the consumers, so it must pass unfolded.
         let hidden = scrap::drm_reader::HIDDEN_CURSOR_ID;
         assert_eq!(fold_cursor_id(hidden, 90), hidden);
     }
 
     #[test]
     fn unrotate_hotspot_follows_the_pixel_mapping() {
-        // 3 wide x 2 tall, hotspot at (2,0) (top-right): after the 90 turn (left column to top
-        // row) that pixel sits at (1,2) in the 2x3 result; 270 sends it to (0,0).
         assert_eq!(unrotate_hotspot(90, 3, 2, 2, 0), (1, 2));
         assert_eq!(unrotate_hotspot(270, 3, 2, 2, 0), (0, 0));
         assert_eq!(unrotate_hotspot(180, 3, 2, 2, 0), (0, 1));
@@ -2567,18 +2171,12 @@ mod drm_capturer_tests {
 
     #[test]
     fn unrotate_90_maps_the_left_column_to_the_top_row() {
-        // The measured anchor from rustdesk#15886: mutter transform=1 carries the panel bar down
-        // the scanout's LEFT edge, and upright means that edge becomes the TOP row.
         let (src, w, h) = px_frame(&[&[1, 2, 3], &[4, 5, 6]], 0);
         let mut dst = Vec::new();
         unrotate_bgra(&src, w, h, 90, &mut dst);
-        // src left column top-to-bottom = [1, 4]; clockwise puts it on the top row as [4, 1].
         assert_eq!(labels_of(&dst, h, w), vec![vec![4, 1], vec![5, 2], vec![6, 3]]);
     }
 
-    /// An upright arrow, tip at (0,0): a 4x6 bitmap, every pixel with x <= y/2 opaque, so the
-    /// opaque box is the left 3 columns. Its top-left corner IS the tip - which is exactly why
-    /// the bare-metal guess works when the sprite is upright, and only then.
     fn arrow() -> (Vec<u8>, usize, usize) {
         let (w, h) = (4usize, 6usize);
         let mut px = vec![0u8; w * h * 4];
@@ -2592,11 +2190,6 @@ mod drm_capturer_tests {
         (px, w, h)
     }
 
-    /// The shape at the aspect ratio that actually matters: a 20x9 opaque box, which is what the
-    /// installed Adwaita `vertical-text` measures at 24 px. 2.22:1, only just past the rule's
-    /// factor of two. Placed off-centre in a 24x24 buffer like the real one, box (2,6)-(21,14),
-    /// centre (11,10) - the same numbers the theme file gives, against its declared hotspot of
-    /// (12,11).
     fn ibeam_theme_aspect() -> (Vec<u8>, usize, usize, (i32, i32)) {
         let (w, h) = (24usize, 24usize);
         let mut px = vec![0u8; w * h * 4];
@@ -2608,8 +2201,6 @@ mod drm_capturer_tests {
         (px, w, h, (11, 10))
     }
 
-    /// What the compositor puts in the cursor plane on an output rotated by `t`: the upright sprite
-    /// rotated forward by t, which is what turning it back by (360 - t) degrees produces.
     fn as_scanned_out(upright: &[u8], w: usize, h: usize, t: i32) -> (Vec<u8>, usize, usize) {
         let mut out = Vec::new();
         unrotate_bgra(upright, w, h, (360 - t) % 360, &mut out);
@@ -2617,18 +2208,6 @@ mod drm_capturer_tests {
         (out, dw, dh)
     }
 
-    /// The upgrade window, end to end from the WIRE rather than from a struct literal.
-    ///
-    /// An old root service can be streaming to a freshly started `--server`, and its `DrmCursor`
-    /// carries no `hot_measured` at all. This takes the exact bytes such a producer puts on the
-    /// socket, deserializes them the way the consumer's receive loop does, and drives the real
-    /// delivery path, then reads back what was published. Staging it with two live processes is
-    /// not possible with how the package is built - a `--server` from one build will not run
-    /// inside the other's tree - so this is the honest form of that test, and it runs in CI
-    /// instead of once on somebody's desk.
-    ///
-    /// The transform must be non-zero: at 0 the delivery path never consults `hot_measured`, so a
-    /// test at 0 could not tell the two branches apart.
     #[test]
     fn a_legacy_cursor_message_keeps_the_hotspot_the_old_protocol_meant() {
         use crate::ipc::Data;
@@ -2636,11 +2215,8 @@ mod drm_capturer_tests {
         let (up, w, h, _box_centre) = ibeam_theme_aspect();
         let t = 90;
         let (scan, sw, sh) = as_scanned_out(&up, w, h, t);
-        // A hotspot the old producer measured and sent as a point on the scanned-out sprite.
         let (hotx, hoty) = (3, 5);
 
-        // Exactly what an old producer writes: `Data` is adjacently tagged, and there is no
-        // `hot_measured` key because that build has no such field.
         let legacy = format!(
             r#"{{"t":"DrmCursor","c":{{"id":11,"width":{sw},"height":{sh},"hotx":{hotx},"hoty":{hoty}}}}}"#
         );
@@ -2653,7 +2229,6 @@ mod drm_capturer_tests {
             };
         assert!(measured, "no provenance on the wire must mean what the old protocol meant");
 
-        // The two branches must disagree here, or the assertion below proves nothing.
         let mapped = unrotate_hotspot(t, mw as i32, mh as i32, mx, my);
         let mut turned = Vec::new();
         unrotate_bgra(&scan, sw, sh, t, &mut turned);
@@ -2677,8 +2252,6 @@ mod drm_capturer_tests {
              re-inferring it would move the cursor for the length of an upgrade"
         );
 
-        // The control: a NEW producer asking for re-inference says so explicitly, and that must
-        // not be swallowed by the default.
         let modern = format!(
             r#"{{"t":"DrmCursor","c":{{"id":12,"width":{sw},"height":{sh},"hotx":{hotx},"hoty":{hoty},"hot_measured":false}}}}"#
         );
@@ -2706,7 +2279,6 @@ mod drm_capturer_tests {
     fn the_cursor_path_publishes_an_upright_sprite_at_every_angle() {
         let (up, w, h) = arrow();
         for (i, t) in [0, 90, 180, 270].into_iter().enumerate() {
-            // A display id of its own per angle: DRM_CURSOR is process-wide and keyed by display.
             let display = 9_100 + i as i32;
             let (scan, sw, sh) = as_scanned_out(&up, w, h, t);
             deliver_drm_cursor(display, 1, 7, sw as u32, sh as u32, 0, 0, false, scan, t);
@@ -2722,11 +2294,6 @@ mod drm_capturer_tests {
         }
     }
 
-    /// The compositor programs the plane from the CRTC transform, which is the logical transform
-    /// composed with the connector's panel orientation (mutter: meta_output_logical_to_crtc_transform);
-    /// `wl_output` carries the logical part only. A panel mounted upside down at logical 0 has
-    /// the plane at rotate-180 and an upright framebuffer: subtracting would turn it over, and
-    /// master delivered it upright. So the plane answer is not measured against `wl_output`.
     #[test]
     fn a_plane_that_rotated_holds_the_logical_desktop_whatever_wl_output_says() {
         assert_eq!(frame_transform(0, Some(0x4)), 0);
@@ -2741,7 +2308,6 @@ mod drm_capturer_tests {
         let (src, w, h) = px_frame(&[&[1, 2, 3], &[4, 5, 6]], 0);
         let mut c = capturer_with(Some((w, h)));
         c.transform = 180;
-        // Software rotation (virtio-gpu): the scanout is upside down and comes back upright.
         put_frame_with(&c, w, h, Some(0x1), &src);
         match c.frame(Duration::from_millis(50)) {
             Ok(Frame::PixelBuffer(pb)) => {
@@ -2751,13 +2317,11 @@ mod drm_capturer_tests {
             Ok(_) => panic!("expected a pixel-buffer frame"),
             Err(err) => panic!("expected a delivered frame, got {err}"),
         }
-        // The same scanout again: once turned it repeats the frame above, so it is dropped.
         put_frame_with(&c, w, h, Some(0x1), &src);
         assert!(matches!(
             c.frame(Duration::from_millis(50)),
             Err(e) if e.kind() == io::ErrorKind::WouldBlock
         ));
-        // Hardware rotation (i915 + mutter): the scanout is already upright and is left alone.
         put_frame_with(&c, w, h, Some(0x4), &src);
         match c.frame(Duration::from_millis(50)) {
             Ok(Frame::PixelBuffer(pb)) => {
@@ -2766,8 +2330,6 @@ mod drm_capturer_tests {
             Ok(_) => panic!("expected a pixel-buffer frame"),
             Err(err) => panic!("expected a delivered frame, got {err}"),
         }
-        // A producer that cannot say (pre-0.5.8 library) keeps the old rule: 180 left alone.
-        // A new picture: `src` left alone is the frame above and would be dropped as a repeat.
         let (other, _, _) = px_frame(&[&[7, 8, 9], &[10, 11, 12]], 0);
         put_frame_with(&c, w, h, None, &other);
         match c.frame(Duration::from_millis(50)) {
@@ -2791,7 +2353,6 @@ mod drm_capturer_tests {
             c.frame(Duration::from_millis(50)),
             Err(e) if e.kind() == io::ErrorKind::WouldBlock
         ));
-        // A second later it goes out again, in case its encode failed, and the second starts over.
         std::thread::sleep(REPEAT_EVERY);
         put_frame_with(&c, w, h, None, &still);
         assert!(c.frame(Duration::from_millis(50)).is_ok());
@@ -2807,7 +2368,6 @@ mod drm_capturer_tests {
     #[test]
     fn a_portrait_scanout_from_a_plane_that_rotated_90_is_left_alone() {
         use scrap::TraitPixelBuffer;
-        // A 2x3 portrait scanout: the plane did the 90, so the pixels are already upright.
         let (portrait, pw, ph) = px_frame(&[&[1, 2], &[3, 4], &[5, 6]], 0);
         let mut c = capturer_with(Some((pw, ph)));
         c.transform = 90;
@@ -2820,8 +2380,6 @@ mod drm_capturer_tests {
             Ok(_) => panic!("expected a pixel-buffer frame"),
             Err(err) => panic!("expected a delivered frame, got {err}"),
         }
-        // The same output with a plane that did nothing: the 3x2 landscape mode arrives and is
-        // turned exactly as `unrotate_bgra` turns a 90 frame.
         let (landscape, lw, lh) = px_frame(&[&[1, 2, 3], &[4, 5, 6]], 0);
         let mut expected = Vec::new();
         unrotate_bgra(&landscape, lw, lh, 90, &mut expected);
@@ -2838,7 +2396,6 @@ mod drm_capturer_tests {
 
     #[test]
     fn unrotate_reads_padded_strides_and_writes_tight() {
-        // Row stride is derived from len/h, so a padded source must not shear the result.
         let (src, w, h) = px_frame(&[&[1, 2, 3], &[4, 5, 6]], 8);
         let mut dst = Vec::new();
         unrotate_bgra(&src, w, h, 90, &mut dst);
@@ -2852,7 +2409,7 @@ mod drm_capturer_tests {
     #[test]
     fn a_rotated_session_delivers_rotated_frames_and_guards_in_rotated_dims() {
         use scrap::TraitPixelBuffer;
-        let mut c = capturer_with(Some((32, 64))); // rotated session of a 64x32 scanout
+        let mut c = capturer_with(Some((32, 64)));
         c.transform = 90;
         put_frame(&c, 64, 32);
         match c.frame(Duration::from_millis(50)) {
@@ -2862,7 +2419,6 @@ mod drm_capturer_tests {
             Ok(_) => panic!("expected a pixel-buffer frame"),
             Err(err) => panic!("expected a delivered frame, got {err}"),
         }
-        // A scanout change still ends the session, reported in rotated dimensions.
         put_frame(&c, 32, 64);
         let err = match c.frame(Duration::from_millis(50)) {
             Err(e) => e,
@@ -2886,7 +2442,6 @@ mod drm_capturer_tests {
     }
 
     fn put_frame_rot(c: &IpcDrmCapturer, w: usize, h: usize, plane_rotation: Option<u32>) {
-        // Each call differs in its first pixel: frame() drops a frame equal to the last one.
         static SEQ: std::sync::atomic::AtomicU32 = std::sync::atomic::AtomicU32::new(0);
         let mut buf = c.shared.slot.lock().unwrap().take_free().unwrap_or_default();
         buf.clear();
@@ -2935,10 +2490,6 @@ mod drm_capturer_tests {
         );
     }
 
-    // ---- cursor hotspot calibration ----
-    // The cache and DRM_CURSOR are process-wide and libtest runs tests concurrently: every test
-    // below has its own display id (9_700..9_799) and its own shape id, and the ones that read
-    // the cache back hold this lock.
     static CACHE_TEST_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
 
     const CAL_GEN: u64 = 7;
@@ -2952,7 +2503,6 @@ mod drm_capturer_tests {
     fn peer(pos: Pos, seq: u64) -> crate::server::input_service::PeerAbsSample {
         peer_under(pos, seq, CAL_GEN, 0)
     }
-    /// A sample injected under layout generation `gen` and input-mapping count `map_epoch`.
     fn peer_under(
         pos: Pos,
         seq: u64,
@@ -2967,7 +2517,6 @@ mod drm_capturer_tests {
             map_epoch,
         }
     }
-    /// A guessed shape arriving on a stream with a context, as the receive loop registers it.
     fn arrive(display: i32, epoch: u64, shape: u64, wire: Hotspot) -> Option<CursorCal> {
         on_cursor_shape(
             display,
@@ -2983,8 +2532,6 @@ mod drm_capturer_tests {
             0,
         )
     }
-    /// One stable plane position against one sample: the first frame reports the move, the
-    /// next STABLE frames settle it, and the last one measures.
     fn settle(
         cal: &mut Option<CursorCal>,
         plane: Pos,
@@ -2994,8 +2541,6 @@ mod drm_capturer_tests {
     ) {
         settle_under(cal, plane, sample, display, epoch, (CAL_GEN, CAL_GEN, 0));
     }
-    /// `settle` under (layout generation, generation whose uinput range the device runs,
-    /// input-mapping count), as the receive loop reads them.
     fn settle_under(
         cal: &mut Option<CursorCal>,
         plane: Pos,
@@ -3020,10 +2565,6 @@ mod drm_capturer_tests {
         fold_cursor_id(remix_cursor_id(shape, h.0, h.1), 0)
     }
 
-    // Two stable positions against two samples: the first measurement is a candidate and changes
-    // nothing visible; the second, 1 px away, confirms it, and everything that follows uses the
-    // retained candidate, not the second sample. Mutations caught: publishing the first
-    // measurement, confirming with the new value, dropping the seq check.
     #[test]
     fn a_confirming_measurement_publishes_the_retained_candidate_not_the_new_sample() {
         let _serial = CACHE_TEST_LOCK.lock().unwrap_or_else(|p| p.into_inner());
@@ -3031,13 +2572,11 @@ mod drm_capturer_tests {
         forget_cursor_cal(shape, CAL_GEN);
         let mut cal = arrive(d, e, shape, (4, 4));
         assert_eq!(served(d), (plain(shape), 4, 4));
-        // (500,300) - (488,288) = (12,12): the candidate.
         settle(&mut cal, (488, 288), Some(peer((500, 300), 1)), d, e);
         assert_eq!(cal.as_ref().unwrap().candidate, Some(((12, 12), 1, 0)));
         assert_eq!(cal.as_ref().unwrap().current_hot, (4, 4));
         assert_eq!(served(d), (plain(shape), 4, 4), "unconfirmed: nothing visible changes");
         assert_eq!(cached_cursor_cal(shape, CAL_GEN), None);
-        // (600,400) - (587,388) = (13,12): confirms (12,12).
         settle(&mut cal, (587, 388), Some(peer((600, 400), 2)), d, e);
         let c = cal.as_ref().unwrap();
         assert_eq!(c.candidate, None);
@@ -3069,16 +2608,12 @@ mod drm_capturer_tests {
         for t in [90, 180, 270] {
             assert!(calibration_context(&drm, 0, &one(t), 7).is_err(), "transform {t}");
         }
-        // A plane that rotated folds 180 to 0 for the FRAME; that fold must never reach the
-        // calibration.
         assert_eq!(frame_transform(transform_and_origin(&drm, 0, &one(180)).0, Some(0x4)), 0);
-        // Partial snapshot: two connectors, one output, even one with a matching name.
         let two = [
             drm_display("HDMI-A-1", 1920, 1080),
             drm_display("DP-1", 2560, 1440),
         ];
         assert!(calibration_context(&two, 0, &one(0), 7).is_err());
-        // No identity match: the frame path guesses an origin, the calibration must not.
         let wl = scrap::wayland::display::Displays {
             primary: 0,
             displays: vec![
@@ -3088,7 +2623,6 @@ mod drm_capturer_tests {
         };
         assert!(calibration_context(&drm, 0, &wl, 7).is_err());
         assert_eq!(transform_and_origin(&drm, 0, &wl).0, 0);
-        // Degenerate geometry.
         let mut a = wl_display("HDMI-1", 0, 0, 1920, 1080);
         a.logical_size = Some((0, 0));
         let mut b = wl_display("DP-1", 1920, 0, 2560, 1440);
@@ -3098,7 +2632,6 @@ mod drm_capturer_tests {
             displays: vec![a, b],
         };
         assert!(calibration_context(&two, 0, &wl, 7).is_err());
-        // wire_idx = 1: the rotated index 0 declines, the upright index 1 yields ITS rect.
         let mut r = wl_display("HDMI-1", 0, 0, 1920, 1080);
         r.transform = 90;
         let wl = scrap::wayland::display::Displays {
@@ -3110,7 +2643,6 @@ mod drm_capturer_tests {
             calibration_context(&two, 1, &wl, 7).map(|c| (c.rect, c.physical_size)),
             Ok(((1920, 0, 2560, 1440), (2560, 1440)))
         );
-        // Chained and scaled: the T2 panel, 2880x1800 scanning out a 1986x1241 logical rect.
         let panel = [
             drm_display("eDP-1", 2880, 1800),
             drm_display("DP-6", 1920, 1080),
@@ -3130,20 +2662,17 @@ mod drm_capturer_tests {
     fn the_measurement_is_the_injected_tip_in_scanout_space_minus_the_plane() {
         let ctx = ctx1();
         assert_eq!(measure_hotspot(&ctx, (500, 300), (488, 288), (32, 32)), Some((12, 12)));
-        // The T2 reading that found the space mismatch: 2880x1800 advertised as 1986x1241.
         let scaled = CalContext {
             rect: (0, 0, 1986, 1241),
             physical_size: (2880, 1800),
             built_gen: CAL_GEN,
         };
         assert_eq!(measure_hotspot(&scaled, (1643, 577), (2357, 814), (128, 128)), Some((26, 23)));
-        // The pointer is on another monitor: that stream measures, not this one.
         let right = CalContext {
             rect: (1920, 0, 1920, 1080),
             ..ctx
         };
         assert_eq!(measure_hotspot(&right, (500, 300), (488, 288), (32, 32)), None);
-        // Outside the bitmap: far away, and the plane ahead of the tip.
         assert_eq!(measure_hotspot(&ctx, (900, 300), (488, 288), (32, 32)), None);
         assert_eq!(measure_hotspot(&ctx, (480, 300), (488, 288), (32, 32)), None);
     }
@@ -3191,8 +2720,6 @@ mod drm_capturer_tests {
 
     #[test]
     fn a_plane_transposed_display_advertises_its_scanout() {
-        // Steam Deck under gamescope: 800x1280 panel mode, 1280x800 framebuffer on a rotate-270
-        // plane, and no wayland output that matches the connector.
         let drm = [plane_transposed_display("eDP-1", 800, 1280)];
         let wl = scrap::wayland::display::Displays {
             primary: 0,
@@ -3205,7 +2732,6 @@ mod drm_capturer_tests {
 
     #[test]
     fn a_rotated_output_over_a_rotated_plane_is_swapped_once() {
-        // mutter rotates the output and programs the plane from it: one quarter turn, as before.
         let drm = [plane_transposed_display("HDMI-A-1", 1920, 1080)];
         let mut out = wl_display("HDMI-1", 0, 0, 1920, 1080);
         out.transform = 90;
@@ -3220,9 +2746,6 @@ mod drm_capturer_tests {
 
     #[test]
     fn a_lone_rotated_output_advertises_delivered_dimensions() {
-        // Fix for the origin-only cut: one connector, one rotated output. The capturer will
-        // deliver rotated frames, so the advertised size must swap even in the origin-only case,
-        // while the logical scale is still not adopted (stays 1.0).
         let drm = [drm_display("HDMI-A-1", 1920, 1080)];
         let mut out = wl_display("HDMI-1", 0, 0, 1920, 1080);
         out.transform = 90;
@@ -3238,9 +2761,6 @@ mod drm_capturer_tests {
 
     #[test]
     fn transform_and_origin_come_from_the_same_snapshot() {
-        // Both derive from ONE Displays snapshot: the rotated output's transform and its origin
-        // must belong to the same assignment, and the multi-connector one-output guard zeroes
-        // both rather than mixing a guessed origin with a real transform.
         let drm = [
             drm_display("HDMI-A-1", 1920, 1080),
             drm_display("DP-1", 2560, 1440),
@@ -3283,8 +2803,6 @@ mod drm_capturer_tests {
 
     #[test]
     fn a_resolution_guess_never_steals_an_exact_name_match() {
-        // The review's scenario: an earlier connector with an unmatchable name shares the
-        // resolution of a later connector's exact name match. Names reserve globally first.
         let drm = vec![
             drm_display("DSI-1", 1920, 1080),
             drm_display("HDMI-A-1", 1920, 1080),
@@ -3296,8 +2814,6 @@ mod drm_capturer_tests {
         let m = identity_matches(&drm, &wl);
         assert_eq!(m[1], Some(0), "the exact name match must win globally");
         assert_eq!(m[0], None, "the leftover pairing is not forced, so no identity");
-        // Two unmatched connectors at the lone free resolution: ambiguous on the DRM side too,
-        // so rotation must not be pinned on either.
         let drm2 = vec![
             drm_display("DSI-1", 1920, 1080),
             drm_display("DSI-2", 1920, 1080),
@@ -3307,7 +2823,6 @@ mod drm_capturer_tests {
         assert!(m2[0].is_none() && m2[1].is_none());
     }
 
-    // The M10 case: same model and resolution, names that do not normalize to the compositor's.
     #[test]
     fn identical_monitors_that_match_no_name_take_layout_order() {
         let drm = [drm_display("DP-1", 1920, 1080), drm_display("DP-2", 1920, 1080)];
@@ -3333,22 +2848,7 @@ mod drm_capturer_tests {
         assert!(h.demoted(), "the backoff must still be holding it at demotion 4");
     }
 
-    // ---------------------------------------------------------------------------------------
-    // rustdesk#16242 round 2: the measurement behind the inference model.
-    //
-    // The question a synthetic fixture cannot answer: when the driver publishes no hotspot and
-    // the sprite has to be turned upright before guessing, how far from the THEME's real click
-    // point does each flow land? Both flows are driven here, per shape and per angle, against
-    // the hotspot the theme author wrote into the cursor file. It reads the installed Adwaita
-    // theme, so it prints instead of asserting and is ignored by default:
-    //
-    //   cargo test --features drm --lib drm_capturer_tests::adwaita -- --ignored --nocapture
-    // ---------------------------------------------------------------------------------------
 
-    /// Minimal Xcursor reader. The format is a 16-byte header, a table of contents of 12-byte
-    /// entries, and one chunk per (nominal size, animation frame); an image chunk is 36 bytes of
-    /// header followed by width*height little-endian ARGB words, so byte 3 of each pixel is the
-    /// alpha `infer_hotspot` reads. Only the FIRST frame of each nominal size is taken.
     fn xcursor_images(path: &std::path::Path) -> Vec<(u32, usize, usize, i32, i32, Vec<u8>)> {
         let b = match std::fs::read(path) {
             Ok(b) => b,
@@ -3418,7 +2918,6 @@ mod drm_capturer_tests {
                 println!("# {name}: no {want} px image");
                 continue;
             };
-            // The opaque box, to tell the shapes apart afterwards.
             let (mut minx, mut miny, mut maxx, mut maxy) = (w as i32, h as i32, -1i32, -1i32);
             for (i, px) in up.chunks_exact(4).take(w * h).enumerate() {
                 if px[3] >= 128 {
@@ -3432,12 +2931,8 @@ mod drm_capturer_tests {
             let bx = format!("{}x{}+{}+{}", maxx - minx + 1, maxy - miny + 1, minx, miny);
             for t in [0, 90, 180, 270] {
                 let (scan, sw, sh) = as_scanned_out(&up, w, h, t);
-                // What the producer puts on the wire: the guess taken on the sprite as the plane
-                // holds it, with hot_measured false.
                 let sent = scrap::drm_reader::infer_hotspot(&scan, sw, sh);
-                // The flow before this PR: map that point back as if it were a pixel.
                 let base = unrotate_hotspot(t, sw as i32, sh as i32, sent.0, sent.1);
-                // The flow in this PR, read back from the real delivery path.
                 display += 1;
                 deliver_drm_cursor(display, 1, 1, sw as u32, sh as u32, sent.0, sent.1, false, scan, t);
                 let head = {
@@ -3456,20 +2951,9 @@ mod drm_capturer_tests {
         }
     }
 
-    // -----------------------------------------------------------------------------------------
-    // rustdesk#16242 round 2: the guess measured against the hotspots a THEME declares.
-    //
-    // Every test above builds its own sprite, so all of them compare the guess with the guess.
-    // That can pin a mapping but it cannot say whether the guess is any good. This one reads the
-    // expected value from the cursor theme instead - the click point its author wrote into the
-    // file, which is exactly what a compositor programs into HOTSPOT_X/Y when it has the
-    // property to program.
-    // -----------------------------------------------------------------------------------------
 
     include!("drm_cursor_theme.rs");
 
-    /// Expand a fixture's packed alpha mask into the sprite the delivery path takes. Only alpha
-    /// is set: the guess reads nothing else.
     fn theme_sprite(mask_hex: &str, w: usize, h: usize) -> Vec<u8> {
         let bytes: Vec<u8> = (0..mask_hex.len() / 2)
             .map(|i| u8::from_str_radix(&mask_hex[i * 2..i * 2 + 2], 16).expect("fixture hex"))
@@ -3483,9 +2967,6 @@ mod drm_capturer_tests {
         px
     }
 
-    /// The guess MASTER ships, frozen. Only a TALL box is centred there: the symmetric aspect
-    /// test came later, in this PR, so freezing that instead would measure this PR against its own
-    /// earlier revision rather than against what is merged.
     fn master_guess(rgba: &[u8], w: usize, h: usize) -> (i32, i32) {
         let (mut minx, mut miny, mut maxx, mut maxy) = (w as i32, h as i32, -1i32, -1i32);
         for (i, px) in rgba.chunks_exact(4).take(w * h).enumerate() {
@@ -3508,9 +2989,6 @@ mod drm_capturer_tests {
         }
     }
 
-    /// What master DELIVERS for an upright sprite on an output turned by `t`: it guesses on the
-    /// sprite as the plane holds it and then maps that point as if it were a pixel, and it does
-    /// that only at 90 and 270 - 0 and 180 pass through untouched.
     fn master_delivered(up: &[u8], w: usize, h: usize, t: i32) -> (i32, i32) {
         let (scan, sw, sh) = as_scanned_out(up, w, h, t);
         let (gx, gy) = master_guess(&scan, sw, sh);
@@ -3525,16 +3003,6 @@ mod drm_capturer_tests {
         (((a.0 - b.0) as f64).powi(2) + ((a.1 - b.1) as f64).powi(2)).sqrt()
     }
 
-    /// How far the delivered hotspot lands from the click point the theme declares, per shape,
-    /// measured against MASTER and not against an earlier revision of this PR.
-    ///
-    /// Master handles 0, 90 and 270 for the cursor (180 passes through untouched there), so the
-    /// comparison is over those three angles, which is the set master actually covers.
-    ///
-    /// Two shapes stay further out than master and they are named rather than averaged away.
-    /// `help` is the honest limit of any bitmap rule: the theme puts its click point on the dot of
-    /// its question mark, which is not recoverable from alpha. `alias` is 0.51 px. Everything else
-    /// is equal or better, and the mean over the corpus falls from 12.08 px to 4.20.
     #[test]
     fn no_shape_lands_further_from_the_theme_than_master_except_the_two_no_bitmap_can_reach() {
         const NOT_INFERABLE: [&str; 2] = ["help", "alias"];
@@ -3549,7 +3017,6 @@ mod drm_capturer_tests {
             let mut e_now = 0f64;
             for t in angles {
                 e_master += away(master_delivered(&up, w, h, t), truth);
-                // The upright inference answers the same at every angle by construction.
                 e_now += away(scrap::drm_reader::infer_hotspot(&up, w, h), truth);
             }
             let (e_master, e_now) = (e_master / angles.len() as f64, e_now / angles.len() as f64);

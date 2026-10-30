@@ -62,7 +62,6 @@ impl AppHandler for Rc<Host> {
     }
 }
 
-// https://github.com/xi-editor/druid/blob/master/druid-shell/src/platform/mac/application.rs
 unsafe fn set_delegate(handler: Option<Box<dyn AppHandler>>) {
     let Some(mut decl) = ClassDecl::new("AppDelegate", class!(NSObject)) else {
         log::error!("Failed to new AppDelegate");
@@ -114,7 +113,6 @@ unsafe fn set_delegate(handler: Option<Box<dyn AppHandler>>) {
     let state = DelegateState { handler };
     let handler_ptr = Box::into_raw(Box::new(state));
     (*delegate).set_ivar(APP_HANDLER_IVAR, handler_ptr as *mut c_void);
-    // Set the url scheme handler
     let Some(cls) = Class::get("NSAppleEventManager") else {
         log::error!("Failed to get NSAppleEventManager");
         return;
@@ -170,7 +168,6 @@ extern "C" fn application_will_terminate(_this: &mut Object, _: Sel, _sender: id
     YES
 }
 
-/// This handles menu items in the case that all windows are closed.
 extern "C" fn handle_menu_item(this: &mut Object, _: Sel, item: id) {
     unsafe {
         let tag: isize = msg_send![item, tag];
@@ -201,7 +198,6 @@ extern "C" fn handle_open_urls(_self: &Object, _cmd: Sel, _: id, urls: id) -> ()
     }
 }
 
-// Customize the service opening logic.
 #[no_mangle]
 fn service_should_handle_reopen(
     _obj: &Object,
@@ -209,9 +205,8 @@ fn service_should_handle_reopen(
     _sender: id,
     _has_visible_windows: BOOL,
 ) -> BOOL {
-    log::debug!("Invoking the main rustdesk process");
+    log::debug!("Invoking the main supportdesk process");
     std::thread::spawn(move || crate::handle_url_scheme("".to_string()));
-    // Prevent default logic.
     NO
 }
 
@@ -239,7 +234,6 @@ pub fn make_menubar(host: Rc<Host>, is_index: bool) {
             let new_item = make_menu_item("New Window", "n", RUN_ME_TAG);
             app_menu.addItem_(new_item);
         } else {
-            // When app launched without argument, is the main panel.
             let about_item = make_menu_item("About", "", SHOW_ABOUT_TAG);
             app_menu.addItem_(about_item);
             let separator = NSMenuItem::separatorItem(nil).autorelease();
@@ -255,16 +249,6 @@ pub fn make_menubar(host: Rc<Host>, is_index: bool) {
             TERMINATE_TAG,
         );
         app_menu_item.setSubmenu_(app_menu);
-        /*
-        if !enabled {
-            let () = msg_send![quit_item, setEnabled: NO];
-        }
-
-        if selected {
-            let () = msg_send![quit_item, setState: 1_isize];
-        }
-        let () = msg_send![item, setTag: id as isize];
-        */
         app_menu.addItem_(quit_item);
         NSApp().setMainMenu_(menubar);
     }

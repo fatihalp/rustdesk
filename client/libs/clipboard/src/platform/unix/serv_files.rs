@@ -18,27 +18,15 @@ use std::{
     usize,
 };
 
-// Our clients request at most this much per range: macOS 4 MiB, FUSE less, and Windows
-// splits larger reads (WF_CLIPRDR_MAX_RANGE_READ). A larger read is refused, not shortened:
-// a short response reads as end of file to IStream callers on Windows.
 const MAX_RANGE_READ: u64 = 16 * 1024 * 1024;
 
 lazy_static::lazy_static! {
-    // local files are cached, this value should not be changed when copying files
-    // Because `CliprdrFileContentsRequest` only contains the index of the file in the list.
-    // We need to keep the file list in the same order as the remote side.
-    // We may add a `FileId` field to `CliprdrFileContentsRequest` in the future.
     static ref CLIP_FILES: Arc<Mutex<ClipFiles>> = Default::default();
-    // Lists replaced by a newer copy after a peer was sent them, oldest first. The peer's
-    // streams keep reading the list they came from. Lock after `CLIP_FILES`.
     static ref RETIRED_CLIP_FILES: Mutex<VecDeque<ClipFiles>> = Default::default();
 }
 
 const MAX_RETIRED_CLIP_FILES: usize = 4;
 
-// The first descriptor's `clsid`, inside the 32 reserved bytes every peer skips. A random
-// nonce there makes each copy's list id distinct, even when two copies have identical
-// names, sizes and times (the same file in two folders).
 const LIST_NONCE: std::ops::Range<usize> = 8..24;
 
 #[derive(Debug)]
@@ -56,8 +44,6 @@ enum FileContentsRequest {
     },
 }
 
-// Cheap fingerprint of one top-level selected entry. A change in size/mtime --
-// or a directory in the selection -- forces sync_files() to rebuild (see below).
 #[derive(Debug, Default, Clone, PartialEq, Eq)]
 struct FileSig {
     size: u64,
@@ -65,7 +51,6 @@ struct FileSig {
     is_dir: bool,
 }
 
-// Stat the top-level selected paths only (no recursion), same order as `files`.
 fn fingerprint(files: &[String]) -> Vec<FileSig> {
     files
         .iter()
@@ -83,14 +68,11 @@ fn fingerprint(files: &[String]) -> Vec<FileSig> {
 #[derive(Default)]
 struct ClipFiles {
     files: Vec<String>,
-    // Fingerprint of `files` (same len/order); detects in-place edits on re-copy.
     sigs: Vec<FileSig>,
     file_list: Vec<LocalFile>,
     first_file_index: usize,
     files_pdu: Vec<u8>,
-    // `file_list_id(files_pdu)`, which peers send back as `clip_data_id`.
     id: i32,
-    // Connections that were sent `files_pdu`.
     served_to: Vec<i32>,
 }
 
@@ -139,9 +121,6 @@ impl ClipFiles {
         Ok(())
     }
 
-    // Close files that are not being read, such as the preloaded next file; `read_exact_at`
-    // reopens them on the next read. A file part-way through keeps its handle and offset, so
-    // its remaining bytes come from the same file even if its path is replaced meanwhile.
     fn release_handles(&mut self) {
         for file in self.file_list.iter_mut() {
             if file.offset.load(Ordering::Relaxed) == 0 {
@@ -150,9 +129,6 @@ impl ClipFiles {
         }
     }
 
-    // A retired list's file is reopened by path once its handle was closed, and the path may now
-    // name a replacement. Check size and modified time on the handle the read will use, and refuse
-    // a file that no longer matches the list.
     fn check_retired_file(&mut self, request: &FileContentsRequest) -> Result<(), CliprdrError> {
         let FileContentsRequest::Range { file_idx, .. } = request else {
             return Ok(());
@@ -321,10 +297,8 @@ impl ClipFiles {
         };
 
         log::debug!("file contents sent to conn: {}", conn_id);
-        // hot reload next file
         for next_file in self.file_list.iter_mut().skip(file_idx + 1) {
             if !next_file.is_dir {
-                // Best-effort: if it still cannot be opened, its own request reports that.
                 if let Err(e) = next_file.load_handle() {
                     log::trace!("failed to preload the next file: {:?}", e);
                 }
@@ -341,9 +315,6 @@ pub fn clear_files() {
     RETIRED_CLIP_FILES.lock().clear();
 }
 
-// The list a request reads from: the one its `clip_data_id` names, else the one last sent to
-// the connection. A named list that is gone yields `None`. A peer that sends no id and was
-// never sent a list reads the current one, as before.
 fn select_clip_files<'a>(
     current: &'a mut ClipFiles,
     retired: &'a mut VecDeque<ClipFiles>,
@@ -365,7 +336,6 @@ fn select_clip_files<'a>(
     }
 }
 
-// Keep a list a peer was sent, so its streams do not read the new copy at the same indexes.
 fn retire_if_served(mut replaced: ClipFiles) {
     if replaced.served_to.is_empty() {
         return;
@@ -394,9 +364,6 @@ pub fn read_file_contents(
             file_idx: list_index as usize,
         }
     } else if dw_flags == 0x2 {
-        // nPositionLow and cbRequested are UINT32s carried in i32 fields. Sign-extending
-        // them rejects offsets whose low word is >= 2 GiB and turns a negative length
-        // into a near-u64::MAX read.
         let offset = (n_position_high as u64) << 32 | n_position_low as u32 as u64;
         let length = cb_requested as u32 as u64;
 
@@ -438,8 +405,6 @@ pub fn read_file_contents(
 }
 
 pub fn sync_files(files: &[String]) -> Result<(), CliprdrError> {
-    // Dedup: skip the rebuild only when paths + sizes + mtimes match and no dir is
-    // selected (a dir's own mtime doesn't change when a file inside it is edited).
     let current = fingerprint(files);
     let mut files_lock = CLIP_FILES.lock();
     if files_lock.files == files
@@ -448,7 +413,6 @@ pub fn sync_files(files: &[String]) -> Result<(), CliprdrError> {
     {
         return Ok(());
     }
-    // Build aside, so a failure leaves the current list in place.
     let mut next = ClipFiles::default();
     next.sync_files(files, current)?;
     next.build_file_list_pdu()?;
@@ -472,7 +436,6 @@ mod sig_test {
     use std::path::PathBuf;
     use std::time::{SystemTime, UNIX_EPOCH};
 
-    // Unique temp dir under the system temp dir; removed on drop (no dev-dep).
     struct TmpDir(PathBuf);
     impl TmpDir {
         fn new(tag: &str) -> Self {
@@ -481,7 +444,7 @@ mod sig_test {
                 .map(|d| d.as_nanos())
                 .unwrap_or(0);
             let mut dir = std::env::temp_dir();
-            dir.push(format!("rustdesk_sig_test_{}_{}", tag, nanos));
+            dir.push(format!("supportdesk_sig_test_{}_{}", tag, nanos));
             fs::create_dir_all(&dir).unwrap();
             TmpDir(dir)
         }
@@ -499,7 +462,6 @@ mod sig_test {
         p.to_string_lossy().to_string()
     }
 
-    // Tests that drive the global CLIP_FILES must not interleave.
     static CLIP_FILES_TEST_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
 
     fn lock_clip_files() -> std::sync::MutexGuard<'static, ()> {
@@ -508,7 +470,6 @@ mod sig_test {
             .unwrap_or_else(|poisoned| poisoned.into_inner())
     }
 
-    // Sparse, so a multi-GiB file costs no disk space.
     fn write_at(path: &PathBuf, offset: u64, data: &[u8]) {
         use std::io::{Seek, SeekFrom, Write};
         let mut f = fs::File::create(path).unwrap();
@@ -527,11 +488,9 @@ mod sig_test {
     fn recopy_after_edit_refreshes_cached_size() {
         let tmp = TmpDir::new("recopy");
         let file = tmp.join("doc.bin");
-        fs::write(&file, b"v1").unwrap(); // 2 bytes
+        fs::write(&file, b"v1").unwrap();
         let files = vec![path_str(&file)];
 
-        // Drive the public, guarded `sync_files` over the global CLIP_FILES;
-        // reset first.
         let _guard = lock_clip_files();
         clear_files();
 
@@ -542,9 +501,7 @@ mod sig_test {
             assert_eq!(cache.file_list[idx].size, 2);
         }
 
-        // In-place edit grows the file; the re-copy must rebuild. Pre-fix the
-        // path-only guard early-returned and left the cached size stale at 2.
-        fs::write(&file, b"v2 is bigger").unwrap(); // 12 bytes
+        fs::write(&file, b"v2 is bigger").unwrap();
         sync_files(&files).unwrap();
         {
             let cache = CLIP_FILES.lock();
@@ -552,7 +509,7 @@ mod sig_test {
             assert_eq!(cache.file_list[idx].size, 12);
         }
 
-        clear_files(); // leave the global clean for other tests
+        clear_files();
     }
 
     #[test]
@@ -569,11 +526,9 @@ mod sig_test {
         let small_idx = CLIP_FILES.lock().first_file_index as i32;
         let large_idx = small_idx + 1;
 
-        // A negative cbRequested is a UINT32 length, clamped to the rest of the file.
         let res = read_file_contents(0, 0, small_idx, 0x2, 1, 0, -1, None);
         assert_eq!(range_data(res), b"123456789");
 
-        // An nPositionLow with bit 31 set is an offset past 2 GiB, not a huge one.
         let res = read_file_contents(0, 0, large_idx, 0x2, 0x8000_0000u32 as i32, 0, 4, None);
         assert_eq!(range_data(res), b"tail");
 
@@ -620,7 +575,6 @@ mod sig_test {
         let read = |offset| range_data(read_file_contents(1, 7, idx, 0x2, offset, 0, 4, None));
         assert_eq!(read(0), b"AAAA");
 
-        // Copying another file on this side must not redirect the peer's stream.
         sync_files(&[path_str(&second)]).unwrap();
         assert_eq!(read(4), b"AAAA");
 
@@ -641,8 +595,6 @@ mod sig_test {
         let first_id = file_list_id(&get_file_list_pdu(1));
         let idx = CLIP_FILES.lock().first_file_index as i32;
 
-        // The peer copies the second file on this side and pastes it while the first
-        // transfer is still reading.
         sync_files(&[path_str(&second)]).unwrap();
         let second_id = file_list_id(&get_file_list_pdu(1));
         assert_ne!(first_id, second_id);
@@ -675,9 +627,7 @@ mod sig_test {
                 Some(Err(CliprdrError::InvalidRequest { .. }))
             )
         };
-        // Retired list, asked for by a connection it was never sent to.
         assert!(refused(2, first_id));
-        // A list id this side never sent.
         assert!(refused(1, first_id ^ 1));
 
         clear_files();
@@ -703,8 +653,6 @@ mod sig_test {
         }
     }
 
-    // Preloading the file after the requested one is best-effort: a file that can no longer
-    // be opened fails its own requests, not those of the file before it.
     fn assert_only_its_own_requests_fail(clip: &mut ClipFiles, broken: &PathBuf) {
         let first_idx = clip.first_file_index;
         let broken_idx = clip
@@ -745,7 +693,6 @@ mod sig_test {
         fs::create_dir(&dir).unwrap();
         let inner = dir.join("inner.bin");
         fs::write(&inner, b"BBBBBBBB").unwrap();
-        // Listed as first.bin, dir, dir/inner.bin.
         let mut clip = list_files(&[&first, &dir]);
         let first_idx = clip.first_file_index;
         let inner_idx = clip.file_list.len() - 1;
@@ -753,7 +700,6 @@ mod sig_test {
 
         assert_eq!(read_head(&mut clip, first_idx).unwrap(), b"AAAA");
         assert!(clip.file_list[inner_idx].handle.is_some());
-        // The last file has no next file to preload.
         assert_eq!(read_head(&mut clip, inner_idx).unwrap(), b"BBBB");
     }
 }

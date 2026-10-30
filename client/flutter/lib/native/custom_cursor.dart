@@ -20,23 +20,17 @@ MouseCursor buildCursorOfCache(
   } else {
     final key = cursor.nativeKey(cache, scale);
     if (!cursor.cachedKeys.contains(key)) {
-      // data should be checked here, because it may be changed after `updateGetKey()`
       final data = cache.data;
       if (data == null) {
         cursor.restorePixels(cache.id);
         return _shownCursor(cursor);
       }
-      // Square canvases avoid clipping or stray edge pixels on Linux.
       final width = isLinux && cache.rasterWidth < cache.rasterHeight
           ? cache.rasterHeight
           : cache.rasterWidth;
       final height = isLinux ? width : cache.rasterHeight;
       debugPrint(
           "Register custom cursor with key $key (${cache.hotx},${cache.hoty})");
-      // [Safety]
-      // It's ok to call async registerCursor in current synchronous context,
-      // because activating the cursor is also an async call and will always
-      // be executed after this.
       custom_cursor_manager.CursorManager.instance
           .registerCursor(custom_cursor_manager.CursorData()
             ..name = key
@@ -56,7 +50,6 @@ MouseCursor buildCursorOfCache(
   }
 }
 
-// The last shape's cursor stays while the one in use is made, rather than the system one.
 MouseCursor _shownCursor(CursorModel cursor) {
   final key = cursor.shownKey;
   return key == null

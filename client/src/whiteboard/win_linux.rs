@@ -1,7 +1,6 @@
 use hbb_common::{bail, ResultType};
 use tiny_skia::{FillRule, Paint, PathBuilder, PixmapMut, Point, Rect, Transform};
 use ttf_parser::Face;
-// A helper struct to bridge `ttf-parser` and `tiny-skia`.
 struct PathBuilderWrapper<'a> {
     path_builder: &'a mut PathBuilder,
     transform: Transform,
@@ -44,7 +43,6 @@ impl ttf_parser::OutlineBuilder for PathBuilderWrapper<'_> {
     }
 }
 
-// Draws a string of text with the white background rectangle onto the pixmap.
 pub(super) fn draw_text(
     pixmap: &mut PixmapMut,
     face: &Face,
@@ -57,7 +55,6 @@ pub(super) fn draw_text(
     let units_per_em = face.units_per_em() as f32;
     let scale = font_size / units_per_em;
 
-    // --- 1. Calculate text dimensions for the background ---
     let mut total_width = 0.0;
     for ch in text.chars() {
         let glyph_id = face.glyph_index(ch).unwrap_or_default();
@@ -66,21 +63,17 @@ pub(super) fn draw_text(
         }
     }
 
-    // Use font metrics for a consistent background height.
     let font_height = (face.ascender() - face.descender()) as f32 * scale;
     let ascent = face.ascender() as f32 * scale;
-    // Add some padding around the text
     let padding = 3.0;
 
     let mut bg_filled = false;
-    // --- 2. Draw the white background rectangle ---
     if let Some(bg_rect) = Rect::from_xywh(
         x - padding,
         y - ascent - padding,
         total_width + 2.0 * padding,
         font_height + 2.0 * padding,
     ) {
-        // Corner radius
         let radius = 5.0;
         let path = {
             let mut pb = PathBuilder::new();
@@ -116,7 +109,6 @@ pub(super) fn draw_text(
         }
     }
 
-    // --- 3. Draw the text ---
     let transform = Transform::from_translate(x, y).pre_scale(scale, -scale);
     let mut path_builder = PathBuilder::new();
     let mut current_x = 0.0;
@@ -167,9 +159,6 @@ pub(super) fn create_font_face() -> ResultType<Face<'static>> {
     let Some((font_source, face_index)) = font_db.face_source(font_id) else {
         bail!("No face found for font!");
     };
-    // Load the font data into a static slice to satisfy `ttf-parser`'s lifetime requirements.
-    // We use `Box::leak` to leak the memory, which is acceptable here since the font data
-    // is needed for the entire lifetime of the application.
     let font_data: &'static [u8] = Box::leak(match font_source {
         fontdb::Source::File(path) => std::fs::read(path)?.into_boxed_slice(),
         fontdb::Source::Binary(data) => data.as_ref().as_ref().to_vec().into_boxed_slice(),

@@ -29,7 +29,7 @@ class DevicesTable
                     ->trueColor('success')
                     ->falseColor('gray'),
                 TextColumn::make('hostname')->label('Bilgisayar')->searchable()->weight('bold'),
-                TextColumn::make('rustdesk_id')->label('ID')->searchable()->copyable(),
+                TextColumn::make('supportdesk_id')->label('ID')->searchable()->copyable(),
                 TextColumn::make('clientApp.customer.name')->label('Müşteri')->searchable(),
                 TextColumn::make('clientApp.app_name')->label('İstemci'),
                 TextColumn::make('platform')->label('OS')->badge(),
@@ -50,14 +50,14 @@ class DevicesTable
                 Action::make('connect')
                     ->label('Komut')
                     ->icon('heroicon-o-command-line')
-                    ->modalHeading(fn (Device $r) => $r->hostname ?: $r->rustdesk_id)
+                    ->modalHeading(fn (Device $r) => $r->hostname ?: $r->supportdesk_id)
                     ->fillForm(fn (Device $r) => [
                         'command' => $r->connectCommand(),
                         'uri' => $r->connectUri(),
                     ])
                     ->schema([
                         TextInput::make('command')->label('Terminal komutu')->readOnly()->copyable(),
-                        TextInput::make('uri')->label('RustDesk bağlantısı')->readOnly()->copyable(),
+                        TextInput::make('uri')->label('SupportDesk bağlantısı')->readOnly()->copyable(),
                     ])
                     ->modalSubmitAction(false)
                     ->visible(fn (Device $r) => $r->connectCommand() !== null),

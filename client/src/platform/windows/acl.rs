@@ -1,4 +1,3 @@
-// https://learn.microsoft.com/en-us/windows/win32/secgloss/security-glossary
 
 use super::{read_token_user_buffer, wide_string, ResultType};
 use hbb_common::{anyhow::anyhow, bail};
@@ -40,8 +39,6 @@ fn apply_grant_sid_allow_ace_to_path(
     is_group: bool,
     is_dir: bool,
 ) -> ResultType<()> {
-    // Merge mode: read existing DACL and append/replace ACE via SetEntriesInAclW.
-    // https://learn.microsoft.com/en-us/windows/win32/secauthz/modifying-the-acls-of-an-object-in-c--
     let mut old_dacl: *mut ACL = std::ptr::null_mut();
     let mut security_descriptor = PSECURITY_DESCRIPTOR::default();
     let path_utf16: Vec<u16> = path
@@ -130,10 +127,6 @@ fn apply_grant_sid_allow_ace_to_path(
     Ok(())
 }
 
-/// Grants `Everyone` on `dir` recursively for helper/runtime files that must be
-/// readable/executable across user contexts.
-///
-/// `access_mask` is the Win32 file access mask to grant recursively.
 pub fn set_path_permission(dir: &Path, access_mask: u32) -> ResultType<()> {
     let metadata = fs::symlink_metadata(dir).map_err(|e| {
         anyhow!(
@@ -187,12 +180,6 @@ pub fn set_path_permission(dir: &Path, access_mask: u32) -> ResultType<()> {
     Ok(())
 }
 
-/// Returns the current process user SID as a standard SID string
-/// (for example: `S-1-5-18`).
-///
-/// Source:
-/// - Official SID-to-string API (`ConvertSidToStringSidW`):
-///   https://learn.microsoft.com/en-us/windows/win32/api/sddl/nf-sddl-convertsidtostringsidw
 pub(crate) fn current_process_user_sid_string() -> ResultType<String> {
     let mut token = HANDLE::default();
     let result = (|| -> ResultType<String> {
@@ -236,37 +223,6 @@ pub(crate) fn current_process_user_sid_string() -> ResultType<String> {
     result
 }
 
-/// Hardens ACLs for portable-service shared-memory path (directory or file).
-///
-/// Why:
-/// - Shared memory used by portable service carries runtime control/data and must not inherit
-///   broad/default ACLs.
-/// - We explicitly grant only trusted principals and remove broad groups to reduce local
-///   privilege-boundary bypass risk.
-///
-/// ACL policy applied via Win32 ACL APIs (`SetEntriesInAclW` + `SetNamedSecurityInfoW`):
-/// - common (directory + file):
-///   - `S-1-5-18` (LocalSystem): full control
-///   - `S-1-5-32-544` (Built-in Administrators): full control
-///   - `current_process_user_sid_string()` result: full control
-/// - directory (`portable_service_shmem` parent):
-///   - keep `Authenticated Users` directory-level write so other local accounts can
-///     create their own runtime shmem files after account switching
-///   - `FILE_GENERIC_WRITE + NO_INHERITANCE` means write/create on this directory itself;
-///     it is intentionally not inherited by children.
-///     Reference:
-///     - File access rights:
-///       https://learn.microsoft.com/en-us/windows/win32/fileio/file-access-rights-constants
-///     - ACE inheritance rules:
-///       https://learn.microsoft.com/en-us/windows/win32/secauthz/ace-inheritance-rules
-///   - remove `Everyone` and `Users` grants
-/// - file (`shared_memory*` flink):
-///   - remove broad grants:
-///     - `S-1-1-0` (Everyone)
-///     - `S-1-5-11` (Authenticated Users)
-///     - `S-1-5-32-545` (Users)
-///
-/// https://learn.microsoft.com/en-us/windows/win32/secauthz/well-known-sids
 pub fn set_path_permission_for_portable_service_shmem_dir(path: &Path) -> ResultType<()> {
     set_path_permission_for_portable_service_shmem_impl(path, true)
 }
@@ -296,8 +252,6 @@ impl Drop for LocalAllocGuard {
         if self.0.is_null() {
             return;
         }
-        // Buffers returned by ConvertStringSidToSidW / SetEntriesInAclW /
-        // ConvertSidToStringSidW are LocalAlloc-owned and must be LocalFree'ed.
         unsafe {
             let _ = LocalFree(Some(HLOCAL(self.0)));
         }
@@ -325,8 +279,6 @@ fn make_sid_trustee_entry(
     inheritance: ACE_FLAGS,
     is_group: bool,
 ) -> EXPLICIT_ACCESS_W {
-    // `is_group` is explicitly provided by the caller from the concrete SID semantic
-    // (e.g. Administrators/Authenticated Users => group, LocalSystem/current user => user).
     EXPLICIT_ACCESS_W {
         grfAccessPermissions: access_permissions,
         grfAccessMode: SET_ACCESS,
@@ -340,7 +292,6 @@ fn make_sid_trustee_entry(
             } else {
                 TRUSTEE_IS_USER
             },
-            // SAFETY: With TrusteeForm=TRUSTEE_IS_SID, ptstrName is interpreted as PSID.
             ptstrName: PWSTR::from_raw(sid_ptr as *mut u16),
         },
     }
@@ -396,9 +347,6 @@ fn set_path_permission_for_portable_service_shmem_impl(
                 if e.kind() == io::ErrorKind::NotFound
                     || e.kind() == io::ErrorKind::PermissionDenied =>
             {
-                // Keep going and let Win32 ACL APIs return the final OS error.
-                // `Path::exists()/is_file()` and metadata can collapse ACL-denied paths into
-                // a false "not found" signal under restricted directory ACLs.
             }
             Err(e) => {
                 bail!(
@@ -446,7 +394,6 @@ fn set_path_permission_for_portable_service_shmem_impl(
         ),
     ];
     if let Some(auth_sid) = authenticated_users_sid.as_ref() {
-        // Keep the shared parent directory multi-user writable at directory level.
         entries.push(make_sid_trustee_entry(
             auth_sid.as_sid_ptr(),
             FILE_GENERIC_WRITE.0,
@@ -455,13 +402,6 @@ fn set_path_permission_for_portable_service_shmem_impl(
         ));
     }
 
-    // Rebuild mode: build a fresh DACL (old ACL not merged) and apply as protected.
-    // This avoids carrying over broad legacy ACEs from inherited/default ACLs.
-    // Reference:
-    // - SetEntriesInAclW:
-    //   https://learn.microsoft.com/en-us/windows/win32/api/aclapi/nf-aclapi-setentriesinaclw
-    // - SetNamedSecurityInfoW (PROTECTED_DACL_SECURITY_INFORMATION):
-    //   https://learn.microsoft.com/en-us/windows/win32/api/aclapi/nf-aclapi-setnamedsecurityinfow
     let mut new_acl: *mut ACL = std::ptr::null_mut();
     let set_entries_result =
         unsafe { SetEntriesInAclW(Some(entries.as_slice()), None, &mut new_acl) };
@@ -541,7 +481,7 @@ mod tests {
 
     fn unique_acl_test_path(prefix: &str) -> PathBuf {
         std::env::temp_dir().join(format!(
-            "rustdesk_acl_{}_{}_{}",
+            "supportdesk_acl_{}_{}_{}",
             prefix,
             std::process::id(),
             hbb_common::rand::random::<u32>()

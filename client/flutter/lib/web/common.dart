@@ -1,5 +1,4 @@
 import 'dart:js' as js;
-// cycle imports, maybe we can improve this
 import 'package:flutter_hbb/consts.dart';
 
 final isAndroid_ = false;

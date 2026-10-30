@@ -58,9 +58,6 @@ declare_class!(
             }
         }
 
-        // #[method(pasteboardFinishedWithDataProvider:)]
-        // unsafe fn pasteboardFinishedWithDataProvider(&self, pasteboard: &NSPasteboard) {
-        // }
     }
 
     unsafe impl PasteboardFileUrlProvider {}

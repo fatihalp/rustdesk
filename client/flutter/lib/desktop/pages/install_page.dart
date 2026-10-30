@@ -72,7 +72,6 @@ class _InstallPageBodyState extends State<_InstallPageBody>
   final RxBool btnEnabled = true.obs;
   final RxBool cancelEnabled = true.obs;
 
-  // todo move to theme.
   final buttonStyle = OutlinedButton.styleFrom(
     textStyle: TextStyle(fontSize: 14, fontWeight: FontWeight.normal),
     padding: EdgeInsets.symmetric(vertical: 15, horizontal: 12),
@@ -131,7 +130,6 @@ class _InstallPageBodyState extends State<_InstallPageBody>
 
   InkWell Option(RxBool option, {String label = ''}) {
     return InkWell(
-      // todo mouseCursor: "SystemMouseCursors.forbidden" or no cursor on btnEnabled == false
       borderRadius: BorderRadius.circular(6),
       onTap: () => btnEnabled.value ? option.value = !option.value : null,
       child: Row(
@@ -234,7 +232,6 @@ class _InstallPageBodyState extends State<_InstallPageBody>
               Row(
                 children: [
                   Expanded(
-                    // NOT use Offstage to wrap LinearProgressIndicator
                     child: Obx(() => showProgress.value
                         ? LinearProgressIndicator().marginOnly(right: 10)
                         : Offstage()),

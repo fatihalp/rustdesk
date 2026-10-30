@@ -6,8 +6,6 @@ use tfc::{traits::*, Context as TFC_Context, Key as TFC_Key};
 pub type CustomKeyboard = Box<dyn KeyboardControllable + Send>;
 pub type CustomMouce = Box<dyn MouseControllable + Send>;
 
-/// The main struct for handling the event emitting
-// #[derive(Default)]
 pub struct Enigo {
     xdo: EnigoXdo,
     is_x11: bool,
@@ -17,39 +15,29 @@ pub struct Enigo {
 }
 
 impl Enigo {
-    /// Get delay of xdo implementation.
     pub fn delay(&self) -> u64 {
         self.xdo.delay()
     }
-    /// Set delay of xdo implementation.
     pub fn set_delay(&mut self, delay: u64) {
         self.xdo.set_delay(delay)
     }
-    /// Set custom keyboard.
     pub fn set_custom_keyboard(&mut self, custom_keyboard: CustomKeyboard) {
         self.custom_keyboard = Some(custom_keyboard)
     }
-    /// Set custom mouse.
     pub fn set_custom_mouse(&mut self, custom_mouse: CustomMouce) {
         self.custom_mouse = Some(custom_mouse)
     }
-    /// Get custom keyboard.
     pub fn get_custom_keyboard(&mut self) -> &mut Option<CustomKeyboard> {
         &mut self.custom_keyboard
     }
-    /// Get custom mouse.
     pub fn get_custom_mouse(&mut self) -> &mut Option<CustomMouce> {
         &mut self.custom_mouse
     }
 
-    /// Override the display server guessed in `Default::default`: on "x11" every method here
-    /// routes to `xdo`, and a null xdo context makes all of them silent no-ops. A caller
-    /// installing custom devices knows better than the guess.
     pub fn set_is_x11(&mut self, is_x11: bool) {
         self.is_x11 = is_x11;
     }
 
-    /// Clear remapped keycodes
     pub fn tfc_clear_remapped(&mut self) {
         if let Some(tfc) = &mut self.tfc {
             tfc.recover_remapped_keycodes();
@@ -221,7 +209,6 @@ impl MouseControllable for Enigo {
 
 fn get_led_state(key: Key) -> bool {
     let led_file = match key {
-        // FIXME: the file may be /sys/class/leds/input2 or input5 ...
         Key::CapsLock => "/sys/class/leds/input1::capslock/brightness",
         Key::NumLock => "/sys/class/leds/input1::numlock/brightness",
         _ => {
@@ -261,7 +248,6 @@ impl KeyboardControllable for Enigo {
         }
     }
 
-    /// Warning: Get 6^ in French.
     fn key_sequence(&mut self, sequence: &str) {
         if self.is_x11 {
             self.xdo.key_sequence(sequence)
@@ -307,7 +293,6 @@ impl KeyboardControllable for Enigo {
     }
     fn key_click(&mut self, key: Key) {
         if self.is_x11 {
-            // X11: try tfc first, then fallback to key_down/key_up
             if self.tfc_key_click(key).is_err() {
                 self.key_down(key).ok();
                 self.key_up(key);
@@ -391,7 +376,6 @@ fn convert_to_tfc_key(key: Key) -> Option<TFC_Key> {
     Some(key)
 }
 
-/// Both directions: the failure is silent, so a one-directional test passes against the bug.
 #[test]
 fn test_custom_mouse_dispatch_follows_is_x11() {
     use std::sync::atomic::{AtomicUsize, Ordering};
@@ -430,7 +414,6 @@ fn test_custom_mouse_dispatch_follows_is_x11() {
         "custom mouse was not reached on the non-x11 branch"
     );
 
-    // Negative control: on the x11 branch the custom device must be bypassed entirely.
     en.set_is_x11(true);
     en.mouse_move_to(30, 40);
     assert_eq!(

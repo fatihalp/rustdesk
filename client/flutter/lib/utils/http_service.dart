@@ -17,13 +17,10 @@ class HttpService {
   }) async {
     headers ??= {'Content-Type': 'application/json'};
 
-    // Use Rust HTTP implementation for non-web platforms for consistency.
     var useFlutterHttp = (isWeb || kIsWeb);
     if (!useFlutterHttp) {
       final enableFlutterHttpOnRust =
           mainGetLocalBoolOptionSync(kOptionEnableFlutterHttpOnRust);
-      // Use flutter http if:
-      // Not `enableFlutterHttpOnRust` and no proxy is set
       useFlutterHttp =
           !(enableFlutterHttpOnRust || await bind.mainGetProxyStatus());
     }
@@ -44,11 +41,6 @@ class HttpService {
     return _parseHttpResponse(resJson);
   }
 
-  // Bounds only the pure-Dart branch below, which the OS would otherwise
-  // let hang forever (e.g. a black-holed TLS handshake), see #15700.
-  // The Rust branch has its own 12s-per-attempt timeouts and must be
-  // awaited to completion: a Dart-side timeout there would race the
-  // URL-keyed ASYNC_HTTP_STATUS entry of the abandoned request.
   static const _requestTimeout = Duration(seconds: 30);
 
   Future<http.Response> _pollFlutterHttp(

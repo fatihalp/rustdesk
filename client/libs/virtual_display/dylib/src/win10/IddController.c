@@ -18,7 +18,6 @@ typedef struct DeviceCreateCallbackContext
 
 const GUID GUID_DEVINTERFACE_IDD_DRIVER_DEVICE = \
 { 0x781EF630, 0x72B2, 0x11d2, { 0xB8, 0x52,  0x00,  0xC0,  0x4E,  0xAF,  0x52,  0x72 } };
-//{781EF630-72B2-11d2-B852-00C04EAF5272}
 
 BOOL g_printMsg = TRUE;
 char g_lastMsg[1024];
@@ -31,15 +30,11 @@ CreationCallback(
     _In_opt_ PVOID pContext,
     _In_opt_ PCWSTR pszDeviceInstanceId
 );
-// https://github.com/microsoft/Windows-driver-samples/blob/9f03207ae1e8df83325f067de84494ae55ab5e97/general/DCHU/osrfx2_DCHU_base/osrfx2_DCHU_testapp/testapp.c#L88
-// Not a good way for this device, I don't not why. I'm not familiar with dirver.
 BOOLEAN GetDevicePath(
     _In_ LPCGUID InterfaceGuid,
     _Out_writes_(BufLen) PTCHAR DevicePath,
     _In_ size_t BufLen
 );
-// https://github.com/microsoft/Windows-driver-samples/blob/9f03207ae1e8df83325f067de84494ae55ab5e97/usb/umdf_fx2/exe/testapp.c#L90
-// Works good to check whether device is created before.
 BOOLEAN GetDevicePath2(
     _In_ LPCGUID InterfaceGuid,
     _Out_writes_(BufLen) PTCHAR DevicePath,
@@ -76,13 +71,11 @@ BOOL InstallUpdate(LPCWSTR fullInfPath, PBOOL rebootRequired)
 {
     SetLastMsg("Success");
 
-    // UpdateDriverForPlugAndPlayDevicesW may return FALSE while driver was successfully installed...
     if (FALSE == UpdateDriverForPlugAndPlayDevicesW(
         NULL,
-        L"RustDeskIddDriver",    // match hardware id in the inf file
+        L"RustDeskIddDriver",
         fullInfPath,
         INSTALLFLAG_FORCE
-            // | INSTALLFLAG_NONINTERACTIVE  // INSTALLFLAG_NONINTERACTIVE may cause error 0xe0000247
         ,
         rebootRequired
     ))
@@ -94,10 +87,10 @@ BOOL InstallUpdate(LPCWSTR fullInfPath, PBOOL rebootRequired)
             switch (error)
             {
             case 0x109:
-                SetLastMsg("Failed InstallUpdate UpdateDriverForPlugAndPlayDevicesW, error: 0x%x, %s  Please try: Reinstall RustDesk with the cert option.\n", error, errorString == NULL ? "(NULL)\n" : errorString);
+                SetLastMsg("Failed InstallUpdate UpdateDriverForPlugAndPlayDevicesW, error: 0x%x, %s  Please try: Reinstall SupportDesk with the cert option.\n", error, errorString == NULL ? "(NULL)\n" : errorString);
                 break;
             case 0xe0000247:
-                SetLastMsg("Failed InstallUpdate UpdateDriverForPlugAndPlayDevicesW, error: 0x%x, %s  Please try: \n1. Check the device manager and event viewer.\n2. Uninstall \"RustDeskIddDriver Device\" in device manager, then reinstall RustDesk with the cert option.\n", error, errorString == NULL ? "(NULL)\n" : errorString);
+                SetLastMsg("Failed InstallUpdate UpdateDriverForPlugAndPlayDevicesW, error: 0x%x, %s  Please try: \n1. Check the device manager and event viewer.\n2. Uninstall \"RustDeskIddDriver Device\" in device manager, then reinstall SupportDesk with the cert option.\n", error, errorString == NULL ? "(NULL)\n" : errorString);
                 break;
             default:
                 SetLastMsg("Failed InstallUpdate UpdateDriverForPlugAndPlayDevicesW, error: 0x%x, %s  Please try: Check the device manager and event viewer.\n", error, errorString == NULL ? "(NULL)\n" : errorString);
@@ -155,10 +148,10 @@ BOOL IsDeviceCreated(PBOOL created)
 
     HDEVINFO hardwareDeviceInfo = SetupDiGetClassDevs(
         &GUID_DEVINTERFACE_IDD_DRIVER_DEVICE,
-        NULL, // Define no enumerator (global)
-        NULL, // Define no
-        (DIGCF_PRESENT | // Only Devices present
-            DIGCF_DEVICEINTERFACE)); // Function class devices.
+        NULL,
+        NULL,
+        (DIGCF_PRESENT |
+            DIGCF_DEVICEINTERFACE));
     if (INVALID_HANDLE_VALUE == hardwareDeviceInfo)
     {
         DWORD error = GetLastError();
@@ -182,9 +175,9 @@ BOOL IsDeviceCreated(PBOOL created)
     do
     {
         if (TRUE == SetupDiEnumDeviceInterfaces(hardwareDeviceInfo,
-            0, // No care about specific PDOs
+            0,
             &GUID_DEVINTERFACE_IDD_DRIVER_DEVICE,
-            0, //
+            0,
             &deviceInterfaceData))
         {
             *created = TRUE;
@@ -235,15 +228,7 @@ BOOL DeviceCreateWithLifetime(SW_DEVICE_LIFETIME *lifetime, PHSWDEVICE hSwDevice
         return FALSE;
     }
 
-    // No need to check if the device is previous created.
-    // https://learn.microsoft.com/en-us/windows/win32/api/swdevice/nf-swdevice-swdevicesetlifetime
-    // When a client app calls SwDeviceCreate for a software device that was previously marked for 
-    // SwDeviceLifetimeParentPresent, SwDeviceCreate succeeds if there are no open software device handles for the device 
-    // (only one handle can be open for a device). A client app can then regain control over a persistent software device 
-    // for the purposes of updating properties and interfaces or changing the lifetime.
-    //
 
-    // create device
     HANDLE hEvent = CreateEvent(NULL, FALSE, FALSE, NULL);
     if (hEvent == INVALID_HANDLE_VALUE || hEvent == NULL)
     {
@@ -265,9 +250,8 @@ BOOL DeviceCreateWithLifetime(SW_DEVICE_LIFETIME *lifetime, PHSWDEVICE hSwDevice
     DeviceCreateCallbackContext callbackContext = { hEvent, lifetime, E_FAIL, };
 
     SW_DEVICE_CREATE_INFO createInfo = { 0 };
-    PCWSTR description = L"RustDesk Idd Driver";
+    PCWSTR description = L"SupportDesk Idd Driver";
 
-    // These match the Pnp id's in the inf file so OS will load the driver when the device is created
     PCWSTR instanceId = L"RustDeskIddDriver";
     PCWSTR hardwareIds = L"RustDeskIddDriver\0\0";
     PCWSTR compatibleIds = L"RustDeskIddDriver\0\0";
@@ -282,7 +266,6 @@ BOOL DeviceCreateWithLifetime(SW_DEVICE_LIFETIME *lifetime, PHSWDEVICE hSwDevice
         SWDeviceCapabilitiesSilentInstall |
         SWDeviceCapabilitiesDriverRequired;
 
-    // Create the device
     HRESULT hr = SwDeviceCreate(L"RustDeskIddDriver",
         L"HTREE\\ROOT\\0",
         &createInfo,
@@ -307,7 +290,6 @@ BOOL DeviceCreateWithLifetime(SW_DEVICE_LIFETIME *lifetime, PHSWDEVICE hSwDevice
         return FALSE;
     }
 
-    // Wait for callback to signal that the device has been created
     printf("Waiting for device to be created....\n");
     DWORD waitResult = WaitForSingleObject(hEvent, 10 * 1000);
     CloseHandle(hEvent);
@@ -345,7 +327,6 @@ BOOL DeviceCreateWithLifetime(SW_DEVICE_LIFETIME *lifetime, PHSWDEVICE hSwDevice
 
     if (SUCCEEDED(callbackContext.hrCreateResult))
     {
-        // printf("Device created\n\n");
         return TRUE;
     }
     else
@@ -381,7 +362,6 @@ VOID DeviceClose(HSWDEVICE hSwDevice)
         }
         else
         {
-            // Try crete sw device, and close
         }
 
         HSWDEVICE hSwDevice2 = NULL;
@@ -395,7 +375,6 @@ VOID DeviceClose(HSWDEVICE hSwDevice)
         }
         else
         {
-            //
         }
     }
 }
@@ -457,12 +436,12 @@ BOOL MonitorPlugIn(UINT index, UINT edid, INT retries)
             if (TRUE == DeviceIoControl(
                 hDevice,
                 IOCTL_CHANGER_IDD_PLUG_IN,
-                &plugIn,                    // Ptr to InBuffer
-                sizeof(CtlPlugIn),          // Length of InBuffer
-                NULL,                       // Ptr to OutBuffer
-                0,                          // Length of OutBuffer
-                &junk,                      // BytesReturned
-                0))                         // Ptr to Overlapped structure
+                &plugIn,
+                sizeof(CtlPlugIn),
+                NULL,
+                0,
+                &junk,
+                0))
             {
                 ret = TRUE;
                 break;
@@ -505,12 +484,12 @@ BOOL MonitorPlugOut(UINT index)
     if (!DeviceIoControl(
         hDevice,
         IOCTL_CHANGER_IDD_PLUG_OUT,
-        &plugOut,               // Ptr to InBuffer
-        sizeof(CtlPlugOut),     // Length of InBuffer
-        NULL,                   // Ptr to OutBuffer
-        0,                      // Length of OutBuffer
-        &junk,                  // BytesReturned
-        0))                     // Ptr to Overlapped structure
+        &plugOut,
+        sizeof(CtlPlugOut),
+        NULL,
+        0,
+        &junk,
+        0))
     {
         DWORD error = GetLastError();
         LPSTR errorString = formatErrorString(error);
@@ -569,12 +548,12 @@ BOOL MonitorModesUpdate(UINT index, UINT modeCount, PMonitorMode modes)
     if (!DeviceIoControl(
         hDevice,
         IOCTL_CHANGER_IDD_UPDATE_MONITOR_MODE,
-        pMonitorModes,               // Ptr to InBuffer
-        buflen,                     // Length of InBuffer
-        NULL,                       // Ptr to OutBuffer
-        0,                          // Length of OutBuffer
-        &junk,                      // BytesReturned
-        0))                         // Ptr to Overlapped structure
+        pMonitorModes,
+        buflen,
+        NULL,
+        0,
+        &junk,
+        0))
     {
         DWORD error = GetLastError();
         LPSTR errorString = formatErrorString(error);
@@ -620,7 +599,6 @@ CreationCallback(
                 HRESULT result = SwDeviceSetLifetime(hSwDevice, *callbackContext->lifetime);
                 if (FAILED(result))
                 {
-                    // TODO: debug log error here
                 }
             }
         }
@@ -631,7 +609,6 @@ CreationCallback(
         }
     }
 
-    // printf("Idd device %ls created\n", pszDeviceInstanceId);
 }
 
 BOOLEAN
@@ -664,7 +641,6 @@ GetDevicePath(
         goto clean0;
     }
 
-    // CAUTION: BUG here. deviceInterfaceListLength is greater than 1, even device was not created...
     if (deviceInterfaceListLength <= 1)
     {
         SetLastMsg("Error: GetDevicePath No active device interfaces found. Is the sample driver loaded?\n");
@@ -691,7 +667,6 @@ GetDevicePath(
 
     for (int i = 0; i < 3 && _tcslen(deviceInterfaceList) == 0; i++)
     {
-        // CAUTION: BUG here. deviceInterfaceList is NULL, even device was not created...
         cr = CM_Get_Device_Interface_List(
             (LPGUID)InterfaceGuid,
             NULL,
@@ -770,10 +745,10 @@ BOOLEAN GetDevicePath2(
 
     hardwareDeviceInfo = SetupDiGetClassDevs(
         InterfaceGuid,
-        NULL, // Define no enumerator (global)
-        NULL, // Define no
-        (DIGCF_PRESENT | // Only Devices present
-            DIGCF_DEVICEINTERFACE)); // Function class devices.
+        NULL,
+        NULL,
+        (DIGCF_PRESENT |
+            DIGCF_DEVICEINTERFACE));
     if (INVALID_HANDLE_VALUE == hardwareDeviceInfo)
     {
         DWORD error = GetLastError();
@@ -793,9 +768,9 @@ BOOLEAN GetDevicePath2(
     deviceInterfaceData.cbSize = sizeof(SP_DEVICE_INTERFACE_DATA);
 
     if (!SetupDiEnumDeviceInterfaces(hardwareDeviceInfo,
-        0, // No care about specific PDOs
+        0,
         InterfaceGuid,
-        0, //
+        0,
         &deviceInterfaceData))
     {
         DWORD error = GetLastError();
@@ -812,17 +787,13 @@ BOOLEAN GetDevicePath2(
         goto Clean0;
     }
 
-    //
-    // Allocate a function class device data structure to receive the
-    // information about this particular device.
-    //
     SetupDiGetDeviceInterfaceDetail(
         hardwareDeviceInfo,
         &deviceInterfaceData,
-        NULL, // probing so no output buffer yet
-        0, // probing so output buffer length of zero
+        NULL,
+        0,
         &requiredLength,
-        NULL);//not interested in the specific dev-node
+        NULL);
 
     DWORD error = GetLastError();
     if (ERROR_INSUFFICIENT_BUFFER != error)
@@ -918,12 +889,10 @@ Clean0:
     return status;
 }
 
-// https://stackoverflow.com/questions/67164846/createfile-fails-unless-i-disable-enable-my-device
 HANDLE DeviceOpenHandle()
 {
     SetLastMsg("Success");
 
-    // const int maxDevPathLen = 256;
     TCHAR devicePath[256] = { 0 };
     HANDLE hDevice = INVALID_HANDLE_VALUE;
     do
@@ -949,11 +918,10 @@ HANDLE DeviceOpenHandle()
         hDevice = CreateFile(
             devicePath,
             GENERIC_READ | GENERIC_WRITE,
-            // FILE_SHARE_READ | FILE_SHARE_WRITE,
             0,
-            NULL, // no SECURITY_ATTRIBUTES structure
-            OPEN_EXISTING, // No special create flags
-            0, // No special attributes
+            NULL,
+            OPEN_EXISTING,
+            0,
             NULL
         );
         if (hDevice == INVALID_HANDLE_VALUE || hDevice == NULL)
@@ -988,7 +956,6 @@ VOID SetPrintErrMsg(BOOL b)
     g_printMsg = (b == TRUE);
 }
 
-// Use en-us for simple, or we may need to handle wide string.
 LPSTR formatErrorString(DWORD error)
 {
     LPSTR errorString = NULL;

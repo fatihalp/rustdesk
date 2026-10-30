@@ -9,15 +9,11 @@ use std::{
 };
 
 const LAYOUT_REFRESH_INTERVAL: Duration = Duration::from_secs(1);
-// GNOME 46/Plasma 6.6 probes (200-400 initial samples): preparation p99 7-16 ms;
-// repeated refresh medians were 2-6 ms. KDE query outliers exceeded 100 ms,
-// so this limits input waiting while the background query continues.
 const LAYOUT_INPUT_WAIT: Duration = Duration::from_millis(25);
 const LAYOUT_WARNING_INTERVAL: Duration = Duration::from_secs(5);
 
 lazy_static::lazy_static! {
     static ref REFRESH: Mutex<Refresh> = Mutex::new(Refresh::default());
-    // Only the first relevant input takes the startup query's completion receiver.
     static ref PREWARM_RECEIVER: Mutex<Option<mpsc::Receiver<()>>> = Mutex::new(None);
     static ref CURRENT: RwLock<Result<Keymap, String>> =
         RwLock::new(Err("Uinput keyboard layout has not been detected".to_owned()));
@@ -27,7 +23,6 @@ lazy_static::lazy_static! {
 struct Refresh {
     checked: Option<Instant>,
     source: Option<Source>,
-    // Cover scheduling until the worker acquires REFRESH.
     running: bool,
 }
 
@@ -38,7 +33,6 @@ pub(in crate::server::uinput) fn prepare_layout(event: &KeyEvent) {
     let deadline = Instant::now() + LAYOUT_INPUT_WAIT;
     let receiver = {
         let mut prewarm = PREWARM_RECEIVER.lock().unwrap();
-        // Prefer a due refresh over an old, already-completed startup query.
         start_refresh().or(prewarm.take())
     };
     if let Some(receiver) = receiver {
@@ -47,8 +41,6 @@ pub(in crate::server::uinput) fn prepare_layout(event: &KeyEvent) {
 }
 
 pub(in crate::server::uinput) fn prewarm_layout() {
-    // Use server startup time for discovery before the first remote character.
-    // This reduces cold-start fallback; a still-pending query cannot guarantee readiness.
     let mut prewarm = PREWARM_RECEIVER.lock().unwrap();
     if let Some(receiver) = start_refresh() {
         *prewarm = Some(receiver);
@@ -56,7 +48,6 @@ pub(in crate::server::uinput) fn prewarm_layout() {
 }
 
 fn start_refresh() -> Option<mpsc::Receiver<()>> {
-    // A stalled desktop query must not block later input or spawn more workers.
     let mut refresh = match REFRESH.try_lock() {
         Ok(refresh) => refresh,
         Err(TryLockError::WouldBlock) => return None,
@@ -118,7 +109,6 @@ fn refresh_layout(completed: mpsc::Sender<()>) {
     refresh.checked = Some(Instant::now());
     refresh.running = false;
     drop(refresh);
-    // An input timeout drops its receiver but leaves this worker running.
     if completed.send(()).is_err() {
         hbb_common::log::trace!("Uinput layout refresh finished without an input waiter");
     }
@@ -145,7 +135,6 @@ impl Refresh {
     fn update(&mut self) -> ResultType<()> {
         let source = Source::read().map_err(|error| {
             if error.is::<super::source::UnreliableSource>() {
-                // Unlike a transient query failure, this invalidates the old map.
                 self.source = None;
                 *CURRENT.write().unwrap() = Err(error.to_string());
             }
@@ -157,7 +146,6 @@ impl Refresh {
         let keymap = match Keymap::load(&source) {
             Ok(keymap) => keymap,
             Err(error) => {
-                // A newly observed layout cannot use the previous layout's map.
                 self.source = None;
                 *CURRENT.write().unwrap() = Err(error.to_string());
                 return Err(error);
@@ -176,7 +164,6 @@ fn needs_layout(event: &KeyEvent) -> bool {
     }
     match &event.union {
         Some(key_event::Union::Seq(sequence)) => {
-            // Translate shortcuts use Key::Layout even for non-ASCII text.
             !sequence.is_empty()
                 && (mode == KeyboardMode::Translate || sequence.chars().all(is_ascii_printable))
         }
@@ -224,8 +211,6 @@ pub(in crate::server::uinput) fn resolve(
         }
     };
     let index = usize::from(locks.0) * CAPS_LOCK_BIT + usize::from(locks.1) * NUM_LOCK_BIT;
-    // Letter shortcuts keep their physical key even when Shift changes case.
-    // Other shortcuts prefer a symbol compatible with the caller's held Shift.
     let shifted = (shortcut_shift == Some(true) && !character.is_alphabetic())
         .then(|| keymap.maps[index | SHIFT_BIT].get(&character))
         .flatten();
@@ -239,8 +224,6 @@ pub(in crate::server::uinput) fn resolve(
 }
 
 fn legacy_shortcut(character: char) -> ResultType<LayoutKey> {
-    // Uppercase letters must not synthesize Shift for a shortcut, but shifted
-    // punctuation still needs the legacy table's modifier.
     let (key, shift) =
         super::super::service::map_key(&enigo::Key::Layout(character.to_ascii_lowercase()))?;
     hbb_common::throttled_log!(

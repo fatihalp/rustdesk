@@ -193,7 +193,6 @@ impl<'a> State<'a> {
     }
 
     fn modifier(&mut self, symbols: &[u32]) -> Option<Modifier> {
-        // Prefer physical modifier keys to XKB's synthetic <LVL3> keycode.
         let preferred = [
             evdev::Key::KEY_LEFTSHIFT,
             evdev::Key::KEY_RIGHTSHIFT,
@@ -240,7 +239,6 @@ impl<'a> State<'a> {
                 .filter(|(index, _)| combination & (1 << *index) != 0)
                 .filter_map(|(_, modifier)| *modifier)
                 .collect();
-            // Held Shift affects the symbol, but belongs to the caller.
             let mask = selected.iter().fold(
                 held_shift.map_or(0, |modifier| modifier.mask),
                 |mask, modifier| mask | modifier.mask,
@@ -248,7 +246,6 @@ impl<'a> State<'a> {
             self.set_modifiers(mask, locked);
             for keycode in self.keymap.keycodes().filter_map(supported_keycode) {
                 let symbol = self.symbol(keycode);
-                // Keypad aliases can produce the same text but different shortcuts.
                 let candidates = if (keysyms::KP_Space..=keysyms::KP_Equal).contains(&symbol) {
                     &mut keypad_mappings
                 } else {
@@ -260,8 +257,6 @@ impl<'a> State<'a> {
                 {
                     candidates.entry(character).or_insert_with(|| LayoutKey {
                         key: enigo::Key::Raw(keycode),
-                        // Press Level3 first to avoid Shift+RightAlt activating Compose.
-                        // Candidate preference still follows the original modifier order.
                         modifiers: selected
                             .iter()
                             .rev()
@@ -271,7 +266,6 @@ impl<'a> State<'a> {
                 }
             }
         }
-        // Shift must not redirect an ordinary shortcut to a keypad alias.
         if held_shift.is_none() {
             for (character, mapping) in keypad_mappings {
                 mappings.entry(character).or_insert(mapping);
@@ -290,7 +284,6 @@ impl Drop for State<'_> {
 fn supported_keycode(keycode: u32) -> Option<u16> {
     let keycode = u16::try_from(keycode).ok()?;
     let code = keycode.checked_sub(XKB_KEYCODE_OFFSET)?;
-    // Match the keys enabled by create_uinput_keyboard().
     let supported = (evdev::Key::KEY_ESC.code()..=evdev::Key::BTN_TRIGGER_HAPPY40.code())
         .contains(&code)
         && !format!("{:?}", evdev::Key::new(code)).contains("unknown");

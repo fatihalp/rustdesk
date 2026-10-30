@@ -1,4 +1,3 @@
-// https://learn.microsoft.com/en-us/windows/win32/services/installing-a-service
 
 #include "pch.h"
 
@@ -11,11 +10,10 @@ bool MyCreateServiceW(LPCWSTR serviceName, LPCWSTR displayName, LPCWSTR binaryPa
     SC_HANDLE schSCManager;
     SC_HANDLE schService;
 
-    // Get a handle to the SCM database. 
     schSCManager = OpenSCManagerW(
-        NULL,                    // local computer
-        NULL,                    // ServicesActive database 
-        SC_MANAGER_ALL_ACCESS);  // full access rights 
+        NULL,
+        NULL,
+        SC_MANAGER_ALL_ACCESS);
 
     if (NULL == schSCManager)
     {
@@ -23,21 +21,20 @@ bool MyCreateServiceW(LPCWSTR serviceName, LPCWSTR displayName, LPCWSTR binaryPa
         return false;
     }
 
-    // Create the service
     schService = CreateServiceW(
-        schSCManager,              // SCM database 
-        serviceName,               // name of service 
-        displayName,               // service name to display 
-        SERVICE_ALL_ACCESS,        // desired access 
-        SERVICE_WIN32_OWN_PROCESS, // service type 
-        SERVICE_AUTO_START,        // start type 
-        SERVICE_ERROR_NORMAL,      // error control type 
-        binaryPath,                // path to service's binary 
-        NULL,                      // no load ordering group 
-        NULL,                      // no tag identifier 
-        NULL,                      // no dependencies 
-        NULL,                      // LocalSystem account 
-        NULL);                     // no password 
+        schSCManager,
+        serviceName,
+        displayName,
+        SERVICE_ALL_ACCESS,
+        SERVICE_WIN32_OWN_PROCESS,
+        SERVICE_AUTO_START,
+        SERVICE_ERROR_NORMAL,
+        binaryPath,
+        NULL,
+        NULL,
+        NULL,
+        NULL,
+        NULL);
     if (schService == NULL)
     {
         WcaLog(LOGMSG_STANDARD, "CreateService failed (%d)\n", GetLastError());

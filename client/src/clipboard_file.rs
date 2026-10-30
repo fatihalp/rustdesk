@@ -308,7 +308,6 @@ pub mod unix_file_clip {
                     log::error!("no file descriptor format found");
                     return vec![];
                 };
-                // sync file system from peer
                 let data = ClipboardFile::FormatDataRequest {
                     requested_format_id: file_descriptor_id,
                 };
@@ -328,7 +327,6 @@ pub mod unix_file_clip {
                         format_data,
                     })];
                 }
-                // empty file list, send failure message
                 return vec![msg_resp_format_data_failure()];
             }
             #[cfg(target_os = "linux")]
@@ -429,7 +427,6 @@ pub mod unix_file_clip {
                 title,
                 text,
             } => {
-                // unreachable, but still log it
                 log::debug!(
                     "notify callback: type: {}, title: {}, text: {}",
                     r#type,
@@ -475,7 +472,6 @@ mod tests {
             clip_data_id: 0,
         }));
 
-        // Messages that carry the peer's own clipboard files must stay allowed.
         assert!(!is_request(ClipboardFile::MonitorReady));
         assert!(!is_request(ClipboardFile::FormatList {
             format_list: vec![],

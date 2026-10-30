@@ -35,7 +35,6 @@ fn main() {
     loop {
         match capturer.frame(Duration::from_millis(0)) {
             Ok(frame) => {
-                // Write the frame, removing end-of-row padding.
                 let Frame::PixelBuffer(frame) = frame else {
                     return;
                 };
@@ -47,10 +46,8 @@ fn main() {
                 }
             }
             Err(ref e) if e.kind() == WouldBlock => {
-                // Wait for the frame.
             }
             Err(_) => {
-                // We're done here.
                 break;
             }
         }

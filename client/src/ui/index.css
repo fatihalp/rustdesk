@@ -29,7 +29,6 @@ body {
     line-height: 1.4em;
 }
 
-/* Sidebar */
 .left-pane {
     width: 260px;
     height: *;
@@ -82,7 +81,6 @@ body {
     color: color(text);
 }
 
-/* Main area */
 .right-pane {
     size: *;
     background: color(bg);
@@ -155,7 +153,6 @@ body {
     color: color(accent);
 }
 
-/* Session list */
 div.recent-sessions-content {
     flow: vertical;
     margin-top: 14px;
@@ -264,7 +261,6 @@ div#myid svg#menu {
     top: -0.4em;
 }
 
-/* Status bar */
 div.connect-status {
     width: 100%;
     padding: 14px 40px;
@@ -306,7 +302,6 @@ span.connect-status0 {
     background: #ff9500;
 }
 
-/* Notice banners */
 div.install-me, div.trust-me {
     margin: 0 24px 16px 24px;
     padding: 14px 16px;

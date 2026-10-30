@@ -78,35 +78,13 @@ pub type Sender = mpsc::UnboundedSender<(Instant, Arc<Message>)>;
 mod trusted_devices;
 
 const FAILURE_IDX_ID_WHITELIST: usize = 2;
-// How long a rejection counts, so also how long a blocked address stays blocked. Longer
-// throttles enumeration harder; shorter limits collateral on whitelisted neighbours.
 const ID_WHITELIST_FAILURE_DECAY_MINUTES: i32 = 10;
 
-/// A connection not authorized within this long of starting is closed, however alive it
-/// keeps itself: a wrong password, a pending 2FA, an accept prompt or an admin-terminal
-/// credential prompt still unanswered. The controller reconnects on its own and the prompt
-/// comes back. A connection that says nothing at all goes at the 30 s idle timeout already.
 const LOGIN_GRACE: Duration = Duration::from_secs(180);
-/// Connections between accept and authorization, across every transport: the resource bound.
-/// At this many a further arrival is refused and the oldest is told to go, one at a time.
 const MAX_UNAUTHORIZED_CONNS: usize = 64;
-/// Of those, how many one address may hold at once: a quarter of the room. A fairness cap
-/// against the cheapest flood, one host with one address, not a security boundary: any pool
-/// of addresses passes it, and the bound above is what holds. Meaningful only while the
-/// address is the controller's own, which punch and relay messages carry today.
 const MAX_UNAUTHORIZED_CONNS_PER_ADDR: usize = 16;
-/// The largest message a connection may send before it authorizes. Until then a peer sends only
-/// a public key, a login request, a test delay and a close reason, none of which carries an
-/// unbounded field - a server hands the login request's avatar out as a URL, and only a custom
-/// client that inlines an image into the avatar option instead reaches this. Sized to the read
-/// buffer tungstenite allocates per WebSocket connection regardless, so there the cap costs
-/// nothing beyond a floor already paid; with MAX_UNAUTHORIZED_CONNS it holds them to 8 MiB in
-/// all, against the 1 GiB a single one could make us hold before.
 pub const MAX_UNAUTHORIZED_MESSAGE: usize = 128 * 1024;
 
-/// A place among the unauthorized connections, taken before the identity handshake and given
-/// back on drop: at authorization, or when the connection ends first. The count of live
-/// guards is the bound; an evicted one is told to go and keeps its place until it has.
 pub struct UnauthorizedID {
     id: i32,
     shared: Arc<UnauthorizedShared>,
@@ -117,11 +95,6 @@ struct UnauthorizedShared {
     notify: hbb_common::tokio::sync::Notify,
 }
 
-/// Admit a connection from `ip` among the unauthorized ones. `None` when that address already
-/// holds its share, or when the global limit is reached: then the oldest connection is told to
-/// go, unless one is on its way out already, and this one is refused rather than let in on a
-/// place that is still occupied. At most one connection is ever on its way out, so a burst of
-/// refused arrivals clears no more room than a single one. The controller retries on its own.
 pub fn admit_unauthorized(id: i32, ip: IpAddr) -> Option<UnauthorizedID> {
     let mut conns = UNAUTHORIZED_CONNS.lock().unwrap();
     if conns.iter().filter(|(_, held, _)| *held == ip).count() >= MAX_UNAUTHORIZED_CONNS_PER_ADDR {
@@ -144,12 +117,10 @@ pub fn admit_unauthorized(id: i32, ip: IpAddr) -> Option<UnauthorizedID> {
 }
 
 impl UnauthorizedID {
-    /// Whether this connection was told to go to make room for a newer one.
     pub fn is_evicted(&self) -> bool {
         self.shared.evicted.load(Ordering::Acquire)
     }
 
-    /// Resolves once this connection is told to go; at once if it already was.
     pub async fn evicted(&self) {
         if self.is_evicted() {
             return;
@@ -167,8 +138,6 @@ impl Drop for UnauthorizedID {
     }
 }
 
-/// Resolves when the connection holding `unauthorized` is evicted; never once it has
-/// authorized and given its place back.
 async fn unauthorized_evicted(unauthorized: &Option<UnauthorizedID>) {
     match unauthorized {
         Some(u) => u.evicted().await,
@@ -176,8 +145,6 @@ async fn unauthorized_evicted(unauthorized: &Option<UnauthorizedID>) {
     }
 }
 
-/// Resolves at the login deadline of a connection started at `started`; never once it has
-/// authorized.
 async fn login_deadline(authorized: bool, started: Instant) {
     if authorized {
         return std::future::pending().await;
@@ -186,11 +153,7 @@ async fn login_deadline(authorized: bool, started: Instant) {
 }
 
 lazy_static::lazy_static! {
-    // Connections between accept and authorization, oldest first; see admit_unauthorized.
     static ref UNAUTHORIZED_CONNS: Mutex<Vec<(i32, IpAddr, Arc<UnauthorizedShared>)>> = Default::default();
-    // [0] password, [1] 2FA, [2] ID whitelist.
-    // Bucket 2 is separate so its rejections do not touch the password / 2FA budgets. It is
-    // decayed in `check_id_whitelist` and cleared on auth, never on a bare id match.
     static ref LOGIN_FAILURES: [Arc::<Mutex<HashMap<String, (i32, i32, i32)>>>; 3] = Default::default();
     static ref SESSIONS: Arc::<Mutex<HashMap<SessionKey, Session>>> = Default::default();
     static ref ALIVE_CONNS: Arc::<Mutex<Vec<i32>>> = Default::default();
@@ -218,7 +181,6 @@ fn constant_time_eq(a: &[u8], b: &[u8]) -> bool {
     if a.len() != b.len() {
         return false;
     }
-    // Avoid data-dependent early exits.
     let mut x: u8 = 0;
     for i in 0..a.len() {
         x |= a[i] ^ b[i];
@@ -362,8 +324,8 @@ pub struct Connection {
     server: super::ServerPtrWeak,
     hash: Hash,
     read_jobs: Vec<fs::TransferJob>,
-    timer: crate::RustDeskInterval,
-    file_timer: crate::RustDeskInterval,
+    timer: crate::SupportDeskInterval,
+    file_timer: crate::SupportDeskInterval,
     file_transfer: Option<(String, bool)>,
     view_camera: bool,
     terminal: bool,
@@ -372,7 +334,6 @@ pub struct Connection {
     port_forward_address: String,
     tx_to_cm: mpsc::UnboundedSender<ipc::Data>,
     authorized: bool,
-    // The place among the unauthorized connections; given back at authorization.
     unauthorized_id: Option<UnauthorizedID>,
     require_2fa: Option<totp_rs::TOTP>,
     awaiting_2fa: bool,
@@ -390,32 +351,21 @@ pub struct Connection {
     network_delay: u32,
     lock_after_session_end: bool,
     show_remote_cursor: bool,
-    // by peer
     ip: String,
-    // by peer
     disable_keyboard: bool,
-    // by peer
     #[cfg(not(any(target_os = "android", target_os = "ios")))]
     show_my_cursor: bool,
-    // by peer
     disable_clipboard: bool,
-    // by peer
     disable_audio: bool,
-    // by peer
     #[cfg(any(target_os = "windows", target_os = "linux", target_os = "macos"))]
     enable_file_transfer: bool,
-    // by peer
     audio_sender: Option<MediaSender>,
-    // audio by the remote peer/client
     tx_input: std_mpsc::Sender<MessageInput>,
-    // handle input messages
     video_ack_required: bool,
     server_audit_conn: String,
     server_audit_file: String,
     controlled_context: Option<ControlledContext>,
     lr: LoginRequest,
-    // Authentication retries may update credentials, but not the requested session scope.
-    // A digest, so no peer-controlled strings are retained.
     login_scope: Option<[u8; 32]>,
     peer_argb: u32,
     session_last_recv_time: Option<Arc<Mutex<Instant>>>,
@@ -445,23 +395,13 @@ pub struct Connection {
     multi_ui_session: bool,
     tx_from_authed: mpsc::UnboundedSender<ipc::Data>,
     printer_data: Vec<(Instant, String, Vec<u8>)>,
-    // For post requests that need to be sent sequentially.
-    // eg. post_conn_audit
     tx_post_seq: mpsc::UnboundedSender<(String, Value)>,
     conn_audit_primary_auth: ConnAuditPrimaryAuth,
     conn_audit_two_factor: ConnAuditTwoFactor,
-    // Tracks read job IDs delegated to CM process.
-    // When a read job is delegated to CM (via FS::ReadFile), the job id is added here.
-    // Used to filter stale responses (FileBlockFromCM, FileReadDone, etc.) for
-    // cancelled or unknown jobs.
     cm_read_job_ids: HashSet<i32>,
     terminal_service_id: String,
     terminal_persistent: bool,
-    // Used to avoid too many repeated scope violation warnings.
     scope_violation_messages: HashSet<&'static str>,
-    // The user token must be set when terminal is enabled.
-    // 0 indicates SYSTEM user
-    // other values indicate current user
     #[cfg(not(any(target_os = "android", target_os = "ios")))]
     terminal_user_token: Option<TerminalUserToken>,
     terminal_generic_service: Option<Box<GenericService>>,
@@ -481,7 +421,6 @@ impl Subscriber for ConnInner {
 
     #[inline]
     fn send(&mut self, msg: Arc<Message>) {
-        // Send SwitchDisplay on the same channel as VideoFrame to avoid send order problems.
         let tx_by_video = match &msg.union {
             Some(message::Union::VideoFrame(_)) => true,
             Some(message::Union::Misc(misc)) => match &misc.union {
@@ -509,15 +448,11 @@ const SEND_TIMEOUT_VIDEO: u64 = 12_000;
 const SEND_TIMEOUT_OTHER: u64 = SEND_TIMEOUT_VIDEO * 10;
 const SESSION_TIMEOUT: Duration = Duration::from_secs(30);
 
-/// Whether the DRM backend can serve a Wayland login screen here.
-///
-/// A cold cache probes off-thread; admission still requires a definitive `Available` verdict.
 #[cfg(all(target_os = "linux", feature = "drm"))]
 fn drm_can_serve_login_screen() -> bool {
     super::drm_capturer::availability_cached() == super::drm_capturer::Availability::Available
 }
 
-/// Without the feature nothing can capture a Wayland greeter, so the refusal stands.
 #[cfg(all(target_os = "linux", not(feature = "drm")))]
 fn drm_can_serve_login_screen() -> bool {
     false
@@ -536,7 +471,6 @@ impl Connection {
             control_permissions,
             controlled_context,
         } = meta;
-        // Android is not supported yet, so we always set control_permissions to None.
         #[cfg(target_os = "android")]
         let control_permissions = None;
         let _raii_id = raii::ConnectionID::new(id);
@@ -549,7 +483,6 @@ impl Connection {
             ..Default::default()
         };
         let (tx_from_cm_holder, mut rx_from_cm) = mpsc::unbounded_channel::<ipc::Data>();
-        // holding tx_from_cm_holder to avoid cpu burning of rx_from_cm.recv when all sender closed
         let tx_from_cm = tx_from_cm_holder.clone();
         let (tx_to_cm, rx_to_cm) = mpsc::unbounded_channel::<ipc::Data>();
         let (tx, mut rx) = mpsc::unbounded_channel::<(Instant, Arc<Message>)>();
@@ -573,15 +506,13 @@ impl Connection {
             require_2fa: crate::auth_2fa::get_2fa(None),
             awaiting_2fa: false,
             trusted_device: None,
-            // Defer display enumeration until login succeeds. Monitor login replaces this
-            // with the primary index returned with the refreshed display snapshot.
             display_idx: 0,
             stream,
             server,
             hash,
             read_jobs: Vec::new(),
-            timer: crate::rustdesk_interval(time::interval(SEC30)),
-            file_timer: crate::rustdesk_interval(time::interval(SEC30)),
+            timer: crate::supportdesk_interval(time::interval(SEC30)),
+            file_timer: crate::supportdesk_interval(time::interval(SEC30)),
             file_transfer: None,
             view_camera: false,
             terminal: false,
@@ -594,7 +525,6 @@ impl Connection {
             keyboard: Self::permission(keys::OPTION_ENABLE_KEYBOARD, &control_permissions),
             clipboard: Self::permission(keys::OPTION_ENABLE_CLIPBOARD, &control_permissions),
             audio: Self::permission(keys::OPTION_ENABLE_AUDIO, &control_permissions),
-            // to-do: make sure is the option correct here
             file: Self::permission(keys::OPTION_ENABLE_FILE_TRANSFER, &control_permissions),
             restart: Self::permission(keys::OPTION_ENABLE_REMOTE_RESTART, &control_permissions),
             recording: Self::permission(keys::OPTION_ENABLE_RECORD_SESSION, &control_permissions),
@@ -666,7 +596,6 @@ impl Connection {
         let addr = hbb_common::try_into_v4(addr);
         if !conn.on_open(addr).await {
             conn.closed = true;
-            // sleep to ensure msg got received.
             sleep(1.).await;
             return;
         }
@@ -701,17 +630,15 @@ impl Connection {
             conn.send_permission(Permission::PrivacyMode, false).await;
         }
         let mut test_delay_timer =
-            crate::rustdesk_interval(time::interval_at(Instant::now(), TEST_DELAY_TIMEOUT));
+            crate::supportdesk_interval(time::interval_at(Instant::now(), TEST_DELAY_TIMEOUT));
         let mut last_recv_time = Instant::now();
         let started = Instant::now();
 
-        // The connection type is not known until the login request arrives;
-        // `on_message` picks the type-specific timeout then.
         conn.stream.set_send_timeout(SEND_TIMEOUT_VIDEO);
 
         #[cfg(not(any(target_os = "android", target_os = "ios")))]
         std::thread::spawn(move || Self::handle_input(_rx_input, tx_cloned));
-        let mut second_timer = crate::rustdesk_interval(time::interval(Duration::from_secs(1)));
+        let mut second_timer = crate::supportdesk_interval(time::interval(Duration::from_secs(1)));
 
         #[cfg(feature = "unix-file-copy-paste")]
         let rx_clip_holder;
@@ -737,11 +664,7 @@ impl Connection {
 
         loop {
             tokio::select! {
-                // biased; // video has higher priority // causing test_delay_timer failed while transferring big file
 
-                // Both end an unauthorized connection at once, not on the next timer tick:
-                // told to go to make room, or past the grace for its authorization. Neither
-                // fires once the connection has authorized.
                 _ = unauthorized_evicted(&conn.unauthorized_id) => {
                     conn.on_close("Timeout", true).await;
                     break;
@@ -764,27 +687,21 @@ impl Connection {
                             }
                         }
                         ipc::Data::Close => {
-                            conn.chat_unanswered = false; // seen
-                            conn.file_transferred = false; //seen
+                            conn.chat_unanswered = false;
+                            conn.file_transferred = false;
                             conn.send_close_reason_no_retry("").await;
                             conn.on_close("connection manager", true).await;
                             break;
                         }
-                        // The connection manager's window went away rather than a person
-                        // disconnecting this peer. End the session exactly as above, but do not
-                        // send the manual close reason: it is the one thing that stops the peer
-                        // from retrying, and on a logout the retry is the whole point - it is
-                        // what puts the peer back on the login screen a moment later.
                         #[cfg(target_os = "linux")]
                         ipc::Data::CmWindowClosed => {
-                            conn.chat_unanswered = false; // seen
-                            conn.file_transferred = false; //seen
+                            conn.chat_unanswered = false;
+                            conn.file_transferred = false;
                             conn.on_close("connection manager window closed", true).await;
                             break;
                         }
                         ipc::Data::CmErr(e) => {
                             if e != "expected" {
-                                // cm closed before connection
                                 conn.on_close(&format!("connection manager error: {}", e), false).await;
                                 break;
                             }
@@ -870,10 +787,6 @@ impl Connection {
                                 conn.block_input = enabled;
                                 conn.send_permission(Permission::BlockInput, enabled).await;
                             } else if &name == "privacy_mode" {
-                                // Keep permission state and runtime state consistent:
-                                // when revoking the permission, try to leave privacy mode first.
-                                // Otherwise we could end up in an inconsistent state where
-                                // permission looks disabled while privacy mode is still active.
                                 if !enabled && privacy_mode::is_in_privacy_mode() {
                                     if let Some(conn_id) = privacy_mode::get_privacy_mode_conn_id() {
                                         if conn_id == conn.inner.id() {
@@ -895,8 +808,6 @@ impl Connection {
                                                         impl_key,
                                                     );
                                                     conn.send(msg_out).await;
-                                                    // Turn-off failed, so revert CM's optimistic toggle
-                                                    // and keep the previous permission value.
                                                     conn.send_to_cm(ipc::Data::SwitchPermission {
                                                         name: "privacy_mode".to_owned(),
                                                         enabled: conn.privacy_mode,
@@ -919,7 +830,6 @@ impl Connection {
                             if !conn.is_remote() {
                                 continue;
                             }
-                            // The CM can send MonitorReady before this connection is authorized.
                             if !conn.authorized {
                                 log::debug!("Discarding file clipboard message before authorization");
                                 continue;
@@ -985,7 +895,6 @@ impl Connection {
                         ipc::Data::CloseVoiceCall(_reason) => {
                             log::debug!("Close the voice call from the ipc.");
                             conn.close_voice_call().await;
-                            // Notify the peer that we closed the voice call.
                             let msg = new_voice_call_request(false);
                             conn.send(msg).await;
                         }
@@ -1038,7 +947,6 @@ impl Connection {
                                     }
                                     if conn.port_forward_socket.is_some() && conn.authorized {
                                         log::info!("Port forward, last_test_delay is none: {}", conn.last_test_delay.is_none());
-                                        // Avoid TestDelay reply injection into rdp data stream
                                         if conn.last_test_delay.is_none() {
                                             break;
                                         }
@@ -1066,7 +974,7 @@ impl Connection {
                             }
                         }
                     } else {
-                        conn.file_timer = crate::rustdesk_interval(time::interval_at(Instant::now() + SEC30, SEC30));
+                        conn.file_timer = crate::supportdesk_interval(time::interval_at(Instant::now() + SEC30, SEC30));
                     }
                 }
                 Ok(conns) = hbbs_rx.recv() => {
@@ -1095,7 +1003,6 @@ impl Connection {
                     if latency > 1000 {
                         match &msg.union {
                             Some(message::Union::AudioFrame(_)) => {
-                                // log::info!("audio frame latency {}", instant.elapsed().as_secs_f32());
                                 continue;
                             }
                             _ => {}
@@ -1189,7 +1096,6 @@ impl Connection {
                         conn.on_close("Timeout", true).await;
                         break;
                     }
-                    // The control end will jump out of the loop after receiving LoginResponse and will not reply to the TestDelay
                     if conn.last_test_delay.is_none() && !(conn.port_forward_socket.is_some() && conn.authorized) {
                         conn.last_test_delay = Some(Instant::now());
                         let mut msg_out = Message::new();
@@ -1215,7 +1121,6 @@ impl Connection {
                         }
                     }
                     None => {
-                        //
                     }
                 },
             }
@@ -1274,7 +1179,6 @@ impl Connection {
                         );
                     }
                     MessageInput::Key((mut msg, press)) => {
-                        // Set the press state to false, use `down` only in `handle_key()`.
                         msg.press = false;
                         if press {
                             msg.down = true;
@@ -1351,9 +1255,6 @@ impl Connection {
                             ipc::Data::Close => {
                                 bail!("Close requested from connection manager");
                             }
-                            // Same end as above: a tunnel must not outlive the window either.
-                            // Only the reason differs, and a port forward carries none - the
-                            // peer sees the tunnel drop and decides for itself.
                             #[cfg(target_os = "linux")]
                             ipc::Data::CmWindowClosed => {
                                 bail!("Connection manager window closed");
@@ -1388,7 +1289,6 @@ impl Connection {
                     }
                     Ok(conns) = hbbs_rx.recv() => {
                         if conns.contains(&self.inner.id) {
-                            // todo: check reconnect
                             bail!("Closed manually by the web console");
                         }
                     }
@@ -1441,7 +1341,7 @@ impl Connection {
             self.send_login_error("Your ip is blocked by the peer")
                 .await;
             self.post_alarm_audit(
-                AlarmAuditType::IpWhitelist, //"ip whitelist",
+                AlarmAuditType::IpWhitelist,
                 json!({ "ip":addr.ip() }),
             );
             return false;
@@ -1458,9 +1358,6 @@ impl Connection {
         if id_whitelist.is_empty() {
             return true;
         }
-        // Limit before matching, or a match returning early would never touch the counter and
-        // leave enumeration unthrottled. Not cleared here: `my_id` is self-reported, so that
-        // would let anyone holding one allowed id reset the budget between probes.
         self.decay_id_whitelist_failures();
         let (failure, res) = self.check_failure(FAILURE_IDX_ID_WHITELIST).await;
         if !res {
@@ -1479,7 +1376,6 @@ impl Connection {
         false
     }
 
-    // What `check_failure` consults: the source address, plus shared IPv6 prefixes.
     fn failure_keys(&self) -> Vec<String> {
         let mut keys = vec![self.ip.clone()];
         if let Some((p64, p56, p48)) = self.get_ipv6_prefixes() {
@@ -1488,7 +1384,6 @@ impl Connection {
         keys
     }
 
-    // Only this connection's own keys, so it stays O(1) instead of scanning the map.
     fn decay_id_whitelist_failures(&self) {
         decay_stale_failures(
             &mut LOGIN_FAILURES[FAILURE_IDX_ID_WHITELIST].lock().unwrap(),
@@ -1498,8 +1393,6 @@ impl Connection {
         );
     }
 
-    // Not `update_failure(.., true, ..)`: it no-ops when the peer's own address has no entry,
-    // normal on IPv6, leaving the shared prefixes that are what actually block it.
     fn clear_id_whitelist_failures(&self) {
         clear_failures(
             &mut LOGIN_FAILURES[FAILURE_IDX_ID_WHITELIST].lock().unwrap(),
@@ -1570,7 +1463,6 @@ impl Connection {
         v["uuid"] = json!(crate::encode64(hbb_common::get_uuid()));
         v["conn_id"] = json!(self.inner.id);
         v["session_id"] = json!(self.lr.session_id);
-        // Unique per record; the api server dedups retried posts by it.
         v["nonce"] = json!(uuid::Uuid::new_v4().to_string());
         allow_err!(self.tx_post_seq.send((url, v)));
     }
@@ -1672,26 +1564,7 @@ impl Connection {
     }
 
     async fn post_audit_async(url: String, v: Value) -> ResultType<String> {
-        // Audit records are compliance evidence; retry transport errors and
-        // 5xx (e.g. a reverse proxy answering while the api server restarts)
-        // so transient failures don't silently drop them. A 4xx is a
-        // deterministic rejection and fails immediately.
-        //
-        // The delays, not the attempt count, are what cover the case this exists
-        // for: a proxy answering 502 during a restart fails fast, so without them
-        // every attempt lands within a few seconds and none outlives the restart.
-        //
-        // The window is bounded on the other side: the api server only remembers a
-        // record's nonce for five minutes, so a retry arriving after that expired
-        // would be stored a second time. Counting attempts cannot bound it - one
-        // attempt is already up to 84s (post_request_ retries the TLS handshake up
-        // to four times at 12s each, then the TCP-proxy fallback adds 36s), and a
-        // suspend between attempts stretches the wall clock without limit. So stop
-        // by elapsed time instead, early enough that the last attempt still lands
-        // inside the server's window.
         const RETRY_DEADLINE: Duration = Duration::from_secs(120);
-        // One delay per retry, so the attempt count follows from the table and the
-        // two cannot drift apart.
         const RETRY_BACKOFF_SECS: [u64; 2] = [10, 30];
         const ATTEMPTS: usize = RETRY_BACKOFF_SECS.len() + 1;
         let body = v.to_string();
@@ -1703,15 +1576,6 @@ impl Connection {
                 match crate::post_request_with_status(url.clone(), body.clone(), "").await {
                     Ok((status, text)) => {
                         if (200..300).contains(&status) {
-                            // Success is an empty body. hbbs reports handler
-                            // failures (e.g. a db write error) as 200 with an
-                            // {"error": ...} body - retryable: the server
-                            // releases the record's nonce when its write fails,
-                            // so trying again is what stores the record. Any
-                            // other nonempty body did not come from the audit
-                            // handler (a proxy interposing a 2xx maintenance
-                            // page, a malformed error) and must not be mistaken
-                            // for storage, so it is retried rather than dropped.
                             if text.trim().is_empty() {
                                 return Ok(text);
                             }
@@ -1727,10 +1591,6 @@ impl Connection {
                             (true, format!("{}: {}", label, brief))
                         } else {
                             let brief: String = text.chars().take(128).collect();
-                            // 408 and 429 are the transient 4xx: the request timed
-                            // out upstream, or a proxy is shedding load. Every other
-                            // 4xx is a deterministic rejection and retrying it would
-                            // only delay the log line.
                             let transient = status >= 500 || status == 408 || status == 429;
                             (transient, format!("status {}: {}", status, brief))
                         }
@@ -1754,10 +1614,7 @@ impl Connection {
                 ATTEMPTS,
                 err
             );
-            // In range by construction: the guard above returns at ATTEMPTS.
             time::sleep(Duration::from_secs(RETRY_BACKOFF_SECS[attempt - 1])).await;
-            // Re-checked after the delay so no attempt starts past the deadline;
-            // the check above alone would let one begin up to a backoff later.
             if started.elapsed() >= RETRY_DEADLINE {
                 log::error!(
                     "Audit post dropped (attempt {}/{}, deadline passed during backoff): {}",
@@ -1809,8 +1666,6 @@ impl Connection {
         };
         if pf.multiplex {
             crate::port_forward_mux::cap_packet_size(&mut self.stream);
-            // `inner.tx` is set for the connection's whole life; `None` here is
-            // unreachable, and refusing the login is the only honest answer.
             self.port_forward_mux = self.inner.tx.clone().map(|tx| {
                 super::port_forward_mux::PortForwardMux::new(tx, self.port_forward_address.clone())
             });
@@ -1851,8 +1706,6 @@ impl Connection {
         }
     }
 
-    // Returns whether this connection should be kept alive.
-    // `true` does not necessarily mean authorization succeeded (e.g. REQUIRE_2FA case).
     async fn send_logon_response_and_keep_alive(&mut self) -> bool {
         if self.authorized {
             return true;
@@ -1887,20 +1740,15 @@ impl Connection {
             });
             self.awaiting_2fa = true;
             self.send_login_error(crate::client::REQUIRE_2FA).await;
-            // Keep the connection alive so the client can continue with 2FA.
             return true;
         }
         self.awaiting_2fa = false;
-        // The later check also covers revocation while connection setup awaits.
         if !self.check_trusted_device().await {
             return false;
         }
         if let Some(keep_alive) = self.prepare_terminal_login_for_authorization().await {
             return keep_alive;
         }
-        // Lifted here rather than below with the rest of authorization: a multiplexed tunnel
-        // narrows it again for its own framing (`port_forward_mux::cap_packet_size`), so that
-        // call has to come after this one, not before.
         self.stream.set_max_packet_length(usize::MAX);
         if !self.connect_port_forward_if_needed().await {
             return false;
@@ -1911,12 +1759,7 @@ impl Connection {
         self.lr.trusted_device_v2_token.clear();
         self.authorized = true;
         self.unauthorized_id = None;
-        // One-time means gone once it has let a peer in, not once that peer
-        // leaves. This session's later logins come in on the password the
-        // session remembers, so they are not affected.
         password::update_temporary_password();
-        // Releases the budget `check_id_whitelist` charges against this address: only a peer
-        // that got this far proved more than a self-reported id.
         self.clear_id_whitelist_failures();
         let (conn_type, auth_conn_type) = if self.file_transfer.is_some() {
             (1, AuthConnType::FileTransfer)
@@ -2055,7 +1898,6 @@ impl Connection {
             if !crate::platform::linux::is_x11_for_drm() {
                 super::drm_capturer::settle_unknown_availability().await;
             }
-            // Refuse only while nothing can capture a Wayland greeter: the DRM path can.
             if crate::platform::linux::is_login_screen_wayland() && !drm_can_serve_login_screen() {
                 msg = crate::client::LOGIN_SCREEN_WAYLAND.to_owned()
             } else {
@@ -2086,11 +1928,9 @@ impl Connection {
         #[cfg(not(any(target_os = "android", target_os = "ios")))]
         if self.file_transfer.is_some() {
             if crate::platform::is_prelogin() {
-                // }|| self.tx_to_cm.send(ipc::Data::Test).is_err() {
                 username = "".to_owned();
             }
         }
-        // Terminal feature is supported on desktop only
         #[allow(unused_mut)]
         let mut terminal = cfg!(not(any(target_os = "android", target_os = "ios")));
         #[cfg(target_os = "windows")]
@@ -2155,13 +1995,10 @@ impl Connection {
                     res.set_error(format!("{}", err));
                 }
                 Ok((displays, primary_display_idx)) => {
-                    // For compatibility with old versions, we need to send the displays to the peer.
-                    // But the displays may be updated later, before creating the video capturer.
                     #[cfg(target_os = "macos")]
                     {
                         self.retina.set_displays(&displays);
                     }
-                    // A separate primary lookup here could race with display hot-plug.
                     self.display_idx = primary_display_idx;
                     pi.displays = displays;
                     pi.current_display = self.display_idx as _;
@@ -2182,7 +2019,6 @@ impl Connection {
 
                     #[cfg(target_os = "linux")]
                     {
-                        // use rdp_input when uinput is not available in wayland. Ex: flatpak
                         if input_service::wayland_use_rdp_input() {
                             let _ = setup_rdp_input().await;
                         }
@@ -2330,7 +2166,6 @@ impl Connection {
             "allow-remove-wallpaper",
             &Config::get_option("allow-remove-wallpaper"),
         ) {
-            // multi connections set once
             let mut wallpaper = WALLPAPER_REMOVER.lock().unwrap();
             if wallpaper.is_none() {
                 match crate::platform::WallPaperRemover::new() {
@@ -2482,16 +2317,11 @@ impl Connection {
     #[inline]
     #[cfg(not(any(target_os = "android", target_os = "ios")))]
     fn input_key(&self, msg: KeyEvent, press: bool) {
-        // to-do: if is the legacy mode, and the key is function key "LockScreen".
-        // Switch to the primary display.
         self.tx_input.send(MessageInput::Key((msg, press))).ok();
     }
 
-    // Auto Login: the password and Return the client would otherwise type itself, typed only if a
-    // check right before finds the logon or lock screen.
     #[cfg(any(target_os = "windows", target_os = "macos"))]
     async fn type_auto_login_password(&self, password: String) {
-        // A peer can send this at any rate, hence the throttled logs.
         let at_logon_screen = tokio::task::spawn_blocking(crate::platform::is_logon_screen)
             .await
             .unwrap_or_else(|e| {
@@ -2526,10 +2356,6 @@ impl Connection {
         let mut hasher2 = Sha256::new();
         hasher2.update(h1);
         hasher2.update(self.hash.challenge.as_bytes());
-        // A normal `==` on slices may short-circuit on the first mismatch, which can leak how many leading
-        // bytes matched via timing. In typical remote scenarios this is difficult to exploit due to network
-        // jitter, changing challenges, and login attempt throttling, but a constant-time comparison here is
-        // low-cost defensive programming.
         constant_time_eq(&hasher2.finalize()[..], &self.lr.password[..])
     }
 
@@ -2550,13 +2376,10 @@ impl Connection {
             return false;
         }
 
-        // Use strict decode success to detect hashed storage.
-        // If decode fails, treat as legacy plaintext storage for compatibility.
         if let Some(h1) = decode_permanent_password_h1_from_storage(storage) {
             return self.verify_h1(&h1[..]);
         }
 
-        // Legacy plaintext storage path.
         self.validate_password_plain(storage)
     }
 
@@ -2570,11 +2393,6 @@ impl Connection {
         self.verify_h1(&h1[..])
     }
 
-    // This is coarse brute-force protection for the current temporary password value.
-    // We only care whether the active temporary password itself was presented correctly,
-    // not whether later authorization steps succeed. A successful temporary-password
-    // match clears this state immediately, and the counter also resets whenever the
-    // temporary password changes or is rotated.
     fn check_update_temporary_password(&self, temporary_password_success: bool) {
         const MAX_CONSECUTIVE_FAILURES: i32 = 10;
         #[derive(Default)]
@@ -2642,8 +2460,6 @@ impl Connection {
                     log::info!("Permanent password accepted via logon-screen fallback");
                 }
             };
-            // Strictly check storage usability before auth so malformed encrypted/hash storage
-            // cannot fall back to being accepted as legacy plaintext.
             let (local_storage, local_salt) =
                 Config::get_local_permanent_password_storage_and_salt();
             if !local_storage.is_empty() {
@@ -2678,7 +2494,6 @@ impl Connection {
             .unwrap()
             .get(&self.session_key())
             .map(|s| s.to_owned());
-        // last_recv_time is a mutex variable shared with connection, can be updated lively.
         if let Some(session) = session {
             if !self.lr.password.is_empty()
                 && (tfa && session.tfa
@@ -2767,18 +2582,13 @@ impl Connection {
         self.terminal_persistent = false;
     }
 
-    // Approval and whitelist decisions must stay bound to the same controller identity and
-    // session scope across authentication retries.
     fn login_scope_digest(lr: &LoginRequest) -> [u8; 32] {
         let mut hasher = Sha256::new();
-        // Length-prefixed so adjacent fields cannot alias.
         let mut push = |bytes: &[u8]| {
             hasher.update((bytes.len() as u64).to_le_bytes());
             hasher.update(bytes);
         };
         push(lr.my_id.as_bytes());
-        // Payloads are destructured exhaustively: a new field fails to compile until it is
-        // either latched here or deliberately ignored.
         match lr.union.as_ref() {
             Some(login_request::Union::FileTransfer(ft)) => {
                 let FileTransfer {
@@ -2814,13 +2624,11 @@ impl Connection {
                 push(&port.to_le_bytes());
                 push(&[*multiplex as u8]);
             }
-            // Variants this build does not know execute as remote, so they latch as remote.
             None | Some(_) => push(b"remote"),
         }
         hasher.finalize().into()
     }
 
-    // Logging only; security decisions compare digests.
     fn login_scope_kind(lr: &LoginRequest) -> &'static str {
         match lr.union.as_ref() {
             Some(login_request::Union::FileTransfer(_)) => "file_transfer",
@@ -2835,7 +2643,6 @@ impl Connection {
         let requested = Self::login_scope_digest(lr);
         match self.login_scope {
             Some(initial) if initial != requested => {
-                // self.lr still holds the first accepted request, whose scope is the latched one.
                 log::warn!(
                     "Rejected login scope change: conn_id={}, initial={}, requested={}",
                     self.inner.id(),
@@ -2870,7 +2677,6 @@ impl Connection {
                 let tx_from_cm_clone = p.tx_from_cm.clone();
                 if let Err(err) = start_ipc(p.rx_to_cm, p.tx_from_cm).await {
                     log::warn!("ipc to connection manager exit: {}", err);
-                    // https://github.com/rustdesk/rustdesk-server-pro/discussions/382#discussioncomment-10525725, cm may start failed
                     #[cfg(windows)]
                     if !crate::platform::is_prelogin()
                         && !err.to_string().contains(crate::platform::EXPLORER_EXE)
@@ -2891,7 +2697,6 @@ impl Connection {
 
     async fn on_message(&mut self, msg: Message) -> bool {
         if let Some(message::Union::Misc(misc)) = &msg.union {
-            // Move the CloseReason forward, as this message needs to be received when unauthorized, especially for kcp.
             if let Some(misc::Union::CloseReason(s)) = &misc.union {
                 log::info!("receive close reason: {}", s);
                 self.on_close("Peer close", true).await;
@@ -2907,7 +2712,6 @@ impl Connection {
                 return self.handle_authorized_scope_violation(message).await;
             }
         }
-        // After handling CloseReason messages, proceed to process other message types
         if let Some(message::Union::LoginRequest(lr)) = msg.union {
             if !self.check_login_scope(&lr).await {
                 return false;
@@ -3020,9 +2824,6 @@ impl Connection {
                 self.try_start_cm_ipc();
             }
 
-            // https://github.com/rustdesk/rustdesk-server-pro/discussions/646
-            // `is_logon` is used to check login with `OPTION_ALLOW_LOGON_SCREEN_PASSWORD` == "Y".
-            // `is_logon_ui()` is a fallback for logon UI detection on Windows.
             #[cfg(target_os = "windows")]
             let is_logon = || {
                 crate::platform::is_prelogin() || crate::platform::is_locked() || {
@@ -3099,8 +2900,6 @@ impl Connection {
                 }
             }
         } else if let Some(message::Union::Auth2fa(tfa)) = msg.union {
-            // A 2FA response may arrive after click authorization has completed.
-            // Ignore it unless this connection is still waiting for the response.
             if !self.awaiting_2fa {
                 return true;
             }
@@ -3170,8 +2969,6 @@ impl Connection {
                             }
                             self.reset_session_scope_for_login();
                             self.handle_login_request_without_validation(&lr).await;
-                            // Switching sides authorizes without a password, so it must not bypass
-                            // the whitelist, which can be a locked policy pushed by the server.
                             if !self.check_id_whitelist().await {
                                 return false;
                             }
@@ -3342,7 +3139,6 @@ impl Connection {
                         if is_enter(&me) {
                             CLICK_TIME.store(get_time(), Ordering::SeqCst);
                         }
-                        // https://github.com/rustdesk/rustdesk/issues/8633
                         MOUSE_MOVE_TIME.store(get_time(), Ordering::SeqCst);
 
                         let key = match me.mode.enum_value() {
@@ -3360,10 +3156,6 @@ impl Connection {
                         }
                         .filter(crate::keyboard::is_modifier);
 
-                        // handle all down as press
-                        // fix unexpected repeating key on remote linux, seems also fix abnormal alt/shift, which
-                        // make sure all key are released
-                        // https://github.com/rustdesk/rustdesk/issues/6793
                         let is_press = if cfg!(target_os = "linux") {
                             (me.press || me.down) && !(crate::is_modifier(&me) || key.is_some())
                         } else {
@@ -3405,8 +3197,6 @@ impl Connection {
                     if self.should_handle_text_clipboard_message() && self.clipboard_enabled() {
                         #[cfg(not(any(target_os = "android", target_os = "ios")))]
                         update_clipboard(vec![cb], ClipboardSide::Host);
-                        // ios as the controlled side is actually not supported for now.
-                        // The following code is only used to preserve the logic of handling text clipboard on mobile.
                         #[cfg(target_os = "ios")]
                         {
                             let content = if cb.compress {
@@ -3453,7 +3243,6 @@ impl Connection {
                     } else if is_file_data_request(&clip)
                         && crate::get_builtin_option(keys::OPTION_ONE_WAY_FILE_TRANSFER) == "Y"
                     {
-                        // One-way file transfer: never serve this side's clipboard files to the peer.
                     } else if let Some(clip) = msg_2_clip(clip) {
                         #[cfg(target_os = "windows")]
                         {
@@ -3559,12 +3348,8 @@ impl Connection {
                                 return true;
                             }
                         }
-                        // Android is scoped-storage only: reject any peer supplied path that
-                        // escapes the app workspace before it reaches the filesystem.
                         #[cfg(target_os = "android")]
                         {
-                            // (path, job id, allow empty) of the peer supplied path this action
-                            // operates on.
                             let checked: Option<(&str, i32, bool)> = match &fa.union {
                                 Some(file_action::Union::ReadEmptyDirs(rd)) => {
                                     Some((rd.path.as_str(), -1, false))
@@ -3576,7 +3361,6 @@ impl Connection {
                                     Some((f.path.as_str(), f.id, false))
                                 }
                                 Some(file_action::Union::Send(s)) => {
-                                    // Printer jobs read from memory, `path` is only a lookup key.
                                     if JobType::from_proto(s.file_type) == JobType::Generic {
                                         Some((s.path.as_str(), s.id, false))
                                     } else {
@@ -3689,7 +3473,6 @@ impl Connection {
                                 }
                             }
                             Some(file_action::Union::Send(s)) => {
-                                // server to client
                                 let id = s.id;
                                 let path = s.path.clone();
                                 let job_type = JobType::from_proto(s.file_type);
@@ -3699,7 +3482,6 @@ impl Connection {
                                             get_version_number(&self.lr.version),
                                         );
                                         if crate::common::need_fs_cm_send_files() {
-                                            // Delegate file reading to CM on Windows
                                             self.cm_read_job_ids.insert(id);
                                             self.send_fs(ipc::FS::ReadFile {
                                                 path,
@@ -3710,7 +3492,6 @@ impl Connection {
                                                 overwrite_detection: od,
                                             });
                                         } else {
-                                            // Handle file reading in Connection on non-Windows
                                             let data_source =
                                                 fs::DataSource::FilePath(PathBuf::from(&path));
                                             self.create_and_start_read_job(
@@ -3721,7 +3502,7 @@ impl Connection {
                                                 s.include_hidden,
                                                 od,
                                                 path,
-                                                true, // check file count limit
+                                                true,
                                             )
                                             .await;
                                         }
@@ -3736,20 +3517,18 @@ impl Connection {
                                             let data_source = fs::DataSource::MemoryCursor(
                                                 std::io::Cursor::new(data),
                                             );
-                                            // Printer jobs don't need file count limit check
                                             self.create_and_start_read_job(
                                                 id,
                                                 job_type,
                                                 data_source,
                                                 s.file_num,
                                                 s.include_hidden,
-                                                true, // always enable overwrite detection for printer
+                                                true,
                                                 path,
-                                                false, // no file count limit for printer
+                                                false,
                                             )
                                             .await;
                                         } else {
-                                            // Ignore this message if the printer data is not found
                                             return true;
                                         }
                                     }
@@ -3757,9 +3536,6 @@ impl Connection {
                                 self.file_transferred = true;
                             }
                             Some(file_action::Union::Receive(r)) => {
-                                // client to server
-                                // note: 1.1.10 introduced identical file detection, which breaks original logic of send/recv files
-                                // whenever got send/recv request, check peer version to ensure old version of rustdesk
                                 let od = can_enable_overwrite_detection(get_version_number(
                                     &self.lr.version,
                                 ));
@@ -3835,7 +3611,6 @@ impl Connection {
                                 if let Some(job) = fs::get_job(r.id, &mut self.read_jobs) {
                                     job.confirm(&r).await;
                                 } else if self.cm_read_job_ids.contains(&r.id) {
-                                    // Forward to CM for CM-read jobs
                                     self.send_fs(ipc::FS::SendConfirmForRead {
                                         id: r.id,
                                         file_num: r.file_num,
@@ -3937,8 +3712,6 @@ impl Connection {
                     Some(misc::Union::RefreshVideo(r)) => {
                         if self.should_handle_render_broadcast_message() {
                             if r {
-                                // Refresh all videos.
-                                // Compatibility with old versions and sciter(remote).
                                 self.refresh_video_display(None);
                             }
                             self.update_auto_disconnect_timer();
@@ -3959,7 +3732,6 @@ impl Connection {
                     Some(misc::Union::RestartRemoteDevice(_)) => {
                         #[cfg(not(any(target_os = "android", target_os = "ios")))]
                         if self.restart {
-                            // force_reboot, not work on linux vm and macos 14
                             #[cfg(any(target_os = "linux", target_os = "windows"))]
                             match system_shutdown::force_reboot() {
                                 Ok(_) => log::info!("Restart by the peer"),
@@ -3988,7 +3760,6 @@ impl Connection {
                     },
                     Some(misc::Union::AudioFormat(format)) => {
                         if !self.disable_audio {
-                            // Drop the audio sender previously.
                             drop(std::mem::replace(&mut self.audio_sender, None));
                             self.audio_sender = Some(start_audio_thread());
                             self.audio_sender
@@ -4074,7 +3845,6 @@ impl Connection {
                             self.send(msg_out).await;
                         }
                     }
-                    // Only to a connection the cursor service would send the shape to.
                     #[cfg(not(any(target_os = "android", target_os = "ios")))]
                     Some(misc::Union::RequestCursorData(id)) => {
                         if self.is_remote()
@@ -4104,14 +3874,12 @@ impl Connection {
                             NonZeroI64::new(request.req_timestamp)
                                 .unwrap_or(NonZeroI64::new(get_time()).unwrap()),
                         );
-                        // Notify the connection manager.
                         self.send_to_cm(Data::VoiceCallIncoming);
                     } else {
                         self.close_voice_call().await;
                     }
                 }
                 Some(message::Union::VoiceCallResponse(_response)) => {
-                    // TODO: Maybe we can do a voice call from cm directly.
                 }
                 Some(message::Union::ScreenshotRequest(request)) => {
                     if let Some(tx) = self.inner.tx.clone() {
@@ -4147,15 +3915,8 @@ impl Connection {
         None
     }
 
-    // Try to fill user token for terminal connection.
-    // If username is empty, use the user token of the current session.
-    // If username is not empty, try to logon and check if the user is an administrator.
-    //    If the user is an administrator, use the user token of current process (SYSTEM).
-    //    If the user is not an administrator, return an error message.
-    // Note: Only local and domain users are supported, Microsoft account (online account) not supported for now.
     #[cfg(target_os = "windows")]
     fn fill_terminal_user_token(&mut self, username: &str, password: &str) -> Option<&'static str> {
-        // No need to check if the password is empty.
         if !username.is_empty() {
             return self.handle_administrator_check(username, password);
         }
@@ -4255,7 +4016,6 @@ impl Connection {
 
         let normalized_username = self.lr.os_login.username.trim().to_owned();
         let auth_mode = if should_use_terminal_os_login_scope(self.terminal, &normalized_username) {
-            // Check failure state
             let failure_scope = FailureScope::TerminalOsLogin;
             let (failure, res) = self.check_failure_with_scope(0, failure_scope).await;
             if !res {
@@ -4265,8 +4025,6 @@ impl Connection {
                     self.inner.id(),
                     failure_scope
                 );
-                // Terminal OS login is sensitive. Close this connection instead of keeping it
-                // alive for retries on the same socket after a rate-limit block.
                 return Some(false);
             }
             TerminalAuthorizationMode::OsLogin {
@@ -4288,7 +4046,6 @@ impl Connection {
         let terminal_login_error = {
             #[cfg(target_os = "windows")]
             {
-                // Concurrency gate for terminal OS login with credentials, to prevent brute-force attacks.
                 let _os_login_concurrency_guard = if is_terminal_os_login {
                     let guard = try_acquire_os_credential_login_gate();
                     if guard.is_err() {
@@ -4359,7 +4116,6 @@ impl Connection {
                         is_user,
                         has_service_token
                     );
-                    // No need to translate the following message, because it is in an abnormal case.
                     self.send_login_error("Terminal service user mismatch detected.")
                         .await;
                     sleep(1.).await;
@@ -4378,10 +4134,6 @@ impl Connection {
         None
     }
 
-    // Try to parse connection IP as IPv6 address, returning /64, /56, and /48 prefixes.
-    // Parsing an IPv4 address just returns None.
-    // note: we specifically don't use hbb_common::is_ipv6_str to avoid divergence issues
-    // between its regex and the system std::net::Ipv6Addr implementation.
     fn get_ipv6_prefixes(&self) -> Option<(String, String, String)> {
         fn mask_u128(addr: u128, prefix: u8) -> u128 {
             let mask = if prefix == 0 || prefix > 128 {
@@ -4391,7 +4143,6 @@ impl Connection {
             };
             addr & mask
         }
-        // eliminate zone-ids like "fe80::1%eth0"
         let ip_only = self.ip.split('%').next().unwrap_or(&self.ip).trim();
         let ip = Ipv6Addr::from_str(ip_only).ok()?;
 
@@ -4450,7 +4201,6 @@ impl Connection {
             }
             return;
         }
-        // Bump the prefixes, fetching existing values
         if let Some((p64, p56, p48)) = self.get_ipv6_prefixes() {
             let mut m = map_mutex.lock().unwrap();
             for key in [p64, p56, p48] {
@@ -4460,7 +4210,6 @@ impl Connection {
             let current_ip = m.get(&self.ip).copied().unwrap_or((0, 0, 0));
             m.insert(self.ip.clone(), Self::bump_failure_entry(current_ip, time));
         } else {
-            // Re-read the full IP bucket in case another failed attempt updated it.
             let mut m = map_mutex.lock().unwrap();
             let current_ip = m.get(&self.ip).copied().unwrap_or((0, 0, 0));
             m.insert(self.ip.clone(), Self::bump_failure_entry(current_ip, time));
@@ -4527,12 +4276,9 @@ impl Connection {
                     decision.login_error.as_deref().unwrap_or("")
                 );
                 if let Some(login_error) = decision.login_error {
-                    // Rare branch and currently temporary response copy; translation can be added later if needed.
                     self.send_login_error(login_error).await;
                 }
                 if let Some(audit) = decision.audit {
-                    // For OS blocked/backoff events, we currently emit one alarm report per blocked attempt.
-                    // TODO: Add unified cumulative/aggregation fields across alarm producers.
                     self.post_alarm_audit(
                         audit,
                         json!({
@@ -4547,7 +4293,6 @@ impl Connection {
             return (((0, 0, 0), time), res);
         }
 
-        // IPv6 addresses are cheap to make so we check prefix/netblock as well
         if let Some((p64, p56, p48)) = self.get_ipv6_prefixes() {
             if let Some(res) = self.check_failure_ipv6_prefix(i, time, &p64, 64, 60).await {
                 return res;
@@ -4560,7 +4305,6 @@ impl Connection {
             }
         }
 
-        // checks IPv6 and IPv4 direct addresses
         let failure = LOGIN_FAILURES[i]
             .lock()
             .unwrap()
@@ -4628,10 +4372,6 @@ impl Connection {
                 }
             }
 
-            // Send display changed message.
-            // 1. For compatibility with old versions ( < 1.2.4 ).
-            // 2. Sciter version.
-            // 3. Update `SupportedResolutions`.
             if let Some(msg_out) =
                 video_service::make_display_changed_msg(self.display_idx, None, self.video_source())
             {
@@ -4658,7 +4398,6 @@ impl Connection {
     fn switch_display_to(&mut self, display_idx: usize, server: Arc<RwLock<Server>>) -> bool {
         let source_count = Self::video_source_count(self.video_source());
         if display_idx >= source_count {
-            // Do not remap an explicit switch: its resolution belongs to the requested source.
             log::warn!(
                 "Ignore switch to invalid {:?} index {}, available source count: {}",
                 self.video_source(),
@@ -4678,8 +4417,6 @@ impl Connection {
                 display_idx,
             )));
         }
-        // For versions greater than 1.2.4, a `CaptureDisplays` message will be sent immediately.
-        // Unnecessary capturers will be removed then.
         if !crate::common::is_support_multi_ui_session(&self.lr.version) {
             lock.subscribe(&old_service_name, self.inner.clone(), false);
         }
@@ -4713,7 +4450,6 @@ impl Connection {
     async fn capture_displays(&mut self, add: &[usize], sub: &[usize], set: &[usize]) {
         let video_source = self.video_source();
         let source_count = Self::video_source_count(video_source);
-        // Only add/set can create services; sub only narrows existing subscriptions.
         let valid_add = add
             .iter()
             .copied()
@@ -4739,7 +4475,6 @@ impl Connection {
                 source_count
             );
         }
-        // Passing an invalid sub request as an empty exclude list would unsubscribe all services.
         if (!add.is_empty() && valid_add.is_empty())
             || (add.is_empty() && !sub.is_empty() && valid_sub.is_empty())
             || (add.is_empty() && sub.is_empty() && !set.is_empty() && valid_set.is_empty())
@@ -4839,7 +4574,7 @@ impl Connection {
                     let name = display.name();
                     #[cfg(windows)]
                     if let Some(_ok) =
-                        virtual_display_manager::rustdesk_idd::change_resolution_if_is_virtual_display(
+                        virtual_display_manager::supportdesk_idd::change_resolution_if_is_virtual_display(
                             &name,
                             r.width as _,
                             r.height as _,
@@ -4914,7 +4649,6 @@ impl Connection {
 
     pub async fn close_voice_call(&mut self) {
         crate::audio_service::set_voice_call_input_device(None, true);
-        // Notify the connection manager that the voice call has been closed.
         self.send_to_cm(Data::CloseVoiceCall("".to_owned()));
         self.voice_calling = false;
         if self.is_authed_view_camera_conn() {
@@ -5075,7 +4809,6 @@ impl Connection {
                 }
             }
         }
-        // For compatibility with old versions ( < 1.2.4 ).
         if hbb_common::get_version_number(&self.lr.version)
             < hbb_common::get_version_number("1.2.4")
         {
@@ -5238,9 +4971,6 @@ impl Connection {
                 Some(Err(e)) => {
                     log::error!("Failed to turn on privacy mode. {}", e);
                     if privacy_mode::is_in_privacy_mode() {
-                        // Use this connection's ID so a failed request cannot disable another
-                        // connection's privacy mode: INVALID_PRIVACY_MODE_CONN_ID would bypass
-                        // the ownership check (see `check_off_conn_id`).
                         let _ = Self::turn_off_privacy_to_msg(self.inner.id, String::new());
                     }
                     crate::common::make_privacy_mode_msg_with_details(
@@ -5263,7 +4993,6 @@ impl Connection {
         let msg_out = if !privacy_mode::is_privacy_mode_supported() {
             crate::common::make_privacy_mode_msg_with_details(
                 back_notification::PrivacyModeState::PrvNotSupported,
-                // This error message is used for magnifier. It is ok to use it here.
                 "Unsupported. 1 Multi-screen is not supported. 2 Please confirm the license is activated.".to_string(),
                 impl_key,
             )
@@ -5310,15 +5039,6 @@ impl Connection {
             return;
         }
         self.closed = true;
-        // If voice A,B -> C, and A,B has voice call
-        // B disconnects, C will reset the voice call input.
-        //
-        // It may be acceptable, because it's not a common case,
-        // and it's immediately known when the input device changes.
-        // C can change the input device manually in cm interface.
-        //
-        // We can add a (Vec<conn_id>, input device) to avoid this.
-        // But it's not necessary now and we have to consider two audio services(client, server).
         crate::audio_service::set_voice_call_input_device(None, true);
         log::info!("#{} Connection closed: {}", self.inner.id(), reason);
         if lock
@@ -5344,7 +5064,6 @@ impl Connection {
         }
     }
 
-    // The `reason` should be consistent with `check_if_retry` if not empty
     async fn send_close_reason_no_retry(&mut self, reason: &str) {
         let mut misc = Misc::new();
         if reason.is_empty() {
@@ -5365,7 +5084,6 @@ impl Connection {
         _include_hidden: bool,
         result: Result<Vec<u8>, String>,
     ) {
-        // Check if this response is still expected (not stale/cancelled)
         if !self.cm_read_job_ids.contains(&id) {
             log::warn!(
                 "Received ReadJobInitResult for unknown or stale job id={}, ignoring",
@@ -5380,7 +5098,6 @@ impl Connection {
                 self.send(fs::new_error(id, error, 0)).await;
             }
             Ok(dir_bytes) => {
-                // Deserialize FileDirectory from protobuf bytes
                 let dir = match FileDirectory::parse_from_bytes(&dir_bytes) {
                     Ok(d) => d,
                     Err(e) => {
@@ -5395,11 +5112,9 @@ impl Connection {
                 let path_str = dir.path.clone();
                 let file_entries: Vec<FileEntry> = dir.entries.into();
 
-                // Send file directory to client
                 self.send(fs::new_dir(id, path_str.clone(), file_entries.clone()))
                     .await;
 
-                // Post audit for file transfer
                 self.post_file_audit(
                     FileAuditType::RemoteSend,
                     &path_str,
@@ -5407,7 +5122,6 @@ impl Connection {
                     json!({}),
                 );
 
-                // CM will handle the actual file reading and send blocks via IPC
                 self.file_transferred = true;
             }
         }
@@ -5420,7 +5134,6 @@ impl Connection {
         data: bytes::Bytes,
         compressed: bool,
     ) {
-        // Check if the job is still valid (not cancelled)
         if !self.cm_read_job_ids.contains(&id) {
             log::debug!(
                 "Dropping file block for cancelled/unknown job id={}, file_num={}",
@@ -5430,7 +5143,6 @@ impl Connection {
             return;
         }
 
-        // Forward file block to client
         let mut block = FileTransferBlock::new();
         block.id = id;
         block.file_num = file_num;
@@ -5445,7 +5157,6 @@ impl Connection {
     }
 
     async fn handle_file_read_done(&mut self, id: i32, file_num: i32) {
-        // Drop stale completions for cancelled/unknown jobs
         if !self.cm_read_job_ids.remove(&id) {
             log::debug!(
                 "Dropping FileReadDone for cancelled/unknown job id={}, file_num={}",
@@ -5455,7 +5166,6 @@ impl Connection {
             return;
         }
 
-        // Forward done message to client
         let mut done = FileTransferDone::new();
         done.id = id;
         done.file_num = file_num;
@@ -5468,7 +5178,6 @@ impl Connection {
     }
 
     async fn handle_file_read_error(&mut self, id: i32, file_num: i32, err: String) {
-        // Drop stale errors for cancelled/unknown jobs
         if !self.cm_read_job_ids.remove(&id) {
             log::debug!(
                 "Dropping FileReadError for cancelled/unknown job id={}, file_num={}",
@@ -5478,7 +5187,6 @@ impl Connection {
             return;
         }
 
-        // Forward error to client
         self.send(fs::new_error(id, err, file_num)).await;
     }
 
@@ -5490,7 +5198,6 @@ impl Connection {
         file_size: u64,
         is_resume: bool,
     ) {
-        // Check if the job is still valid (not cancelled)
         if !self.cm_read_job_ids.contains(&id) {
             log::debug!(
                 "Dropping digest for cancelled/unknown job id={}, file_num={}",
@@ -5500,13 +5207,12 @@ impl Connection {
             return;
         }
 
-        // Forward digest to client for overwrite detection
         let mut digest = FileTransferDigest::new();
         digest.id = id;
         digest.file_num = file_num;
         digest.last_modified = last_modified;
         digest.file_size = file_size;
-        digest.is_upload = false; // Server sending to client
+        digest.is_upload = false;
         digest.is_resume = is_resume;
 
         let mut msg = Message::new();
@@ -5524,7 +5230,7 @@ impl Connection {
         job.is_remote = true;
         job.conn_id = self.inner.id();
         self.read_jobs.push(job);
-        self.file_timer = crate::rustdesk_interval(time::interval(MILLI1));
+        self.file_timer = crate::supportdesk_interval(time::interval(MILLI1));
         let audit_path = if job_type == fs::JobType::Printer {
             "Remote print".to_owned()
         } else {
@@ -5549,7 +5255,6 @@ impl Connection {
                 self.send(fs::new_error(id, err, -1)).await;
             }
             Ok(bytes) => {
-                // Deserialize FileDirectory from protobuf bytes and send as FileResponse
                 match FileDirectory::parse_from_bytes(&bytes) {
                     Ok(fd) => {
                         let mut msg = Message::new();
@@ -5587,19 +5292,6 @@ impl Connection {
         });
     }
 
-    /// Create a new read job and start processing it (Connection-side).
-    ///
-    /// This is a generic Connection-side read job creation helper used for:
-    /// - Generic file transfers on non-Windows platforms
-    /// - Printer jobs on all platforms (including Windows)
-    ///
-    /// On Windows, generic file reads are delegated to CM via `start_read_job()` in
-    /// `src/ui_cm_interface.rs` for elevated access. Printer jobs bypass this delegation
-    /// since they read from in-memory data (`MemoryCursor`), not the filesystem.
-    ///
-    /// Both Connection-side and CM-side implementations use `TransferJob::new_read()`
-    /// with similar parameters. When modifying job creation logic, ensure both paths
-    /// stay in sync.
     async fn create_and_start_read_job(
         &mut self,
         id: i32,
@@ -5894,7 +5586,6 @@ impl Connection {
             return;
         };
         let Some(conn_type) = self.authed_conn_type() else {
-            // Unreachable, but just in case, we drop the options if the connection type is unknown.
             log::warn!(
                 "Dropping scoped login options because authorized connection type is unknown"
             );
@@ -5951,9 +5642,6 @@ impl Connection {
         if Self::is_connection_housekeeping_message(msg) {
             return None;
         }
-        // Legacy clients can broadcast render-refresh messages to all opened sessions.
-        // Clipboard messages may also be broadcast to FileTransfer/Terminal sessions while
-        // the client still considers text clipboard sync required, and handlers ignore them.
         let noop_compat = match conn_type {
             AuthConnType::FileTransfer | AuthConnType::Terminal => {
                 Self::is_render_broadcast_noop_compat_message(msg)
@@ -6074,8 +5762,6 @@ impl Connection {
         match msg.union.as_ref() {
             Some(message::Union::ScreenshotRequest(_)) => true,
             Some(message::Union::Misc(misc)) => Self::is_view_camera_scoped_misc(misc),
-            // Legacy clients may send auto-login input during view-camera connect.
-            // The handlers intentionally ignore these messages for view-camera sessions.
             Some(message::Union::MouseEvent(_))
             | Some(message::Union::PointerDeviceEvent(_))
             | Some(message::Union::KeyEvent(_)) => true,
@@ -6096,8 +5782,6 @@ impl Connection {
             | Some(misc::Union::ChatMessage(_))
             | Some(misc::Union::AudioFormat(_))
             | Some(misc::Union::ClientRecordStatus(_))
-            // Though these messages are not expected in normal view-camera sessions,
-            // keep them allowed to avoid breaking existing clients that may send them.
             | Some(misc::Union::MessageQuery(_))
             | Some(misc::Union::TogglePrivacyMode(_))
             | Some(misc::Union::ToggleVirtualDisplay(_))
@@ -6114,8 +5798,6 @@ impl Connection {
         Self::scoped_view_camera_option(option).1.is_none()
     }
 
-    // Keep these OptionMessage field lists in sync with message.proto and update_options().
-    // New fields must be classified here before limited session types can receive them.
     fn scoped_view_camera_option(
         option: &OptionMessage,
     ) -> (Option<OptionMessage>, Option<&'static str>) {
@@ -6243,15 +5925,10 @@ impl Connection {
             stop, is_stopping_allowed, file_transfer_enabled);
         if !stop {
             use base::config::keys::OPTION_ONE_WAY_FILE_TRANSFER;
-            // Note: Code will not reach here if `crate::get_builtin_option(OPTION_ONE_WAY_FILE_TRANSFER) == "Y"` is true.
-            // Because `file-clipboard` service will not be subscribed.
-            // But we still check it here to keep the same logic to windows version in `ui_cm_interface.rs`.
             if clip.is_beginning_message()
                 && crate::get_builtin_option(OPTION_ONE_WAY_FILE_TRANSFER) == "Y"
             {
-                // If one way file transfer is enabled, don't send clipboard file to client
             } else {
-                // Maybe we should end the connection, because copy&paste files causes everything to wait.
                 allow_err!(
                     self.stream
                         .send(&crate::clipboard_file::clip_2_msg(clip))
@@ -6269,8 +5946,7 @@ impl Connection {
 
     #[cfg(all(target_os = "windows", feature = "flutter"))]
     async fn send_printer_request(&mut self, data: Vec<u8>) {
-        // This path is only used to identify the printer job.
-        let path = format!("RustDesk://FsJob//Printer/{}", get_time());
+        let path = format!("SupportDesk://FsJob//Printer/{}", get_time());
 
         let msg = fs::new_send(0, fs::JobType::Printer, path.clone(), 1, false);
         self.send(msg).await;
@@ -6303,7 +5979,6 @@ impl Connection {
     async fn init_terminal_service(&mut self) {
         debug_assert!(self.terminal_user_token.is_some());
         let Some(user_token) = self.terminal_user_token.clone() else {
-            // unreachable, but keep it for safety
             log::error!("Terminal user token is not set.");
             return;
         };
@@ -6323,7 +5998,6 @@ impl Connection {
     async fn handle_terminal_action(&mut self, action: TerminalAction) -> ResultType<()> {
         debug_assert!(self.terminal_user_token.is_some());
         let Some(user_token) = self.terminal_user_token.clone() else {
-            // unreacheable, but keep it for safety
             bail!("Terminal user token is not set.");
         };
         let mut proxy = terminal_service::TerminalServiceProxy::new(
@@ -6339,7 +6013,6 @@ impl Connection {
                 self.send(msg_out).await;
             }
             Ok(None) => {
-                // No response needed
             }
             Err(err) => {
                 let mut response = TerminalResponse::new();
@@ -6393,7 +6066,6 @@ pub fn has_pending_switch_sides_uuid(id: &str, uuid: &uuid::Uuid) -> bool {
 pub fn claim_pending_switch_sides_uuid(id: &str, uuid: &uuid::Uuid) -> bool {
     let mut uuids = PENDING_SWITCH_SIDES_UUID.lock().unwrap();
     uuids.retain(|_, (instant, _, _)| instant.elapsed() < SWITCH_SIDES_UUID_TTL);
-    // Keep claimed entries until expiry so replaying a request cannot launch another connection.
     if let Some((_, stored_uuid, claimed)) = uuids.get_mut(id) {
         if stored_uuid == uuid && !*claimed {
             *claimed = true;
@@ -6404,8 +6076,6 @@ pub fn claim_pending_switch_sides_uuid(id: &str, uuid: &uuid::Uuid) -> bool {
 }
 
 #[cfg(not(any(target_os = "android", target_os = "ios")))]
-// IPC bootstrap summary:
-// - Start CM when missing, then bridge bidirectional messages between this task and CM IPC.
 async fn start_ipc(
     mut rx_to_cm: mpsc::UnboundedReceiver<ipc::Data>,
     tx_from_cm: mpsc::UnboundedSender<ipc::Data>,
@@ -6485,13 +6155,6 @@ async fn start_ipc(
                                 let data = ipc::Data::ClickTime(ct);
                                 stream.send(&data).await?;
                             }
-                            // FileBlockFromCM: data is always sent separately via send_raw.
-                            // The data field has #[serde(skip)], so it's empty after deserialization.
-                            // Read the raw data bytes following this message.
-                            //
-                            // Note: Empty data (for empty files) is correctly handled. BytesCodec with
-                            // raw=false adds a length prefix, so next_raw() returns empty BytesMut for
-                            // zero-length frames. This mirrors the WriteBlock pattern below.
                             ipc::Data::FileBlockFromCM { id, file_num, data: _, compressed, conn_id } => {
                                 let raw_data = stream.next_raw().await?;
                                 tx_from_cm.send(ipc::Data::FileBlockFromCM {
@@ -6532,7 +6195,6 @@ async fn start_ipc(
     }
 }
 
-// in case screen is sleep and blank, here to activate it
 fn try_activate_screen() {
     #[cfg(windows)]
     std::thread::spawn(|| {
@@ -6547,9 +6209,6 @@ pub enum AlarmAuditType {
     IpWhitelist = 0,
     ExceedThirtyAttempts = 1,
     SixAttemptsWithinOneMinute = 2,
-    // ExceedThirtyLoginAttempts = 3,
-    // MultipleLoginsAttemptsWithinOneMinute = 4,
-    // MultipleLoginsAttemptsWithinOneHour = 5,
     ExceedIPv6PrefixAttempts = 6,
     TerminalOsLoginBackoff = 7,
     TerminalOsLoginConcurrency = 8,
@@ -6679,7 +6338,6 @@ impl FileRemoveLogControl {
 }
 
 fn start_wakelock_thread() -> std::sync::mpsc::Sender<(usize, usize)> {
-    // Check if we should keep awake during incoming sessions
     use crate::platform::{get_wakelock, WakeLock};
     let (tx, rx) = std::sync::mpsc::channel::<(usize, usize)>();
     std::thread::spawn(move || {
@@ -6784,8 +6442,6 @@ impl Drop for Connection {
 }
 
 extern "C" fn connection_shutdown_hook() {
-    // https://stackoverflow.com/questions/35980148/why-does-an-atexit-handler-panic-when-it-accesses-stdout
-    // Please make sure there is no print in the call stack
     #[cfg(any(target_os = "windows", target_os = "linux"))]
     {
         *WALLPAPER_REMOVER.lock().unwrap() = None;
@@ -6808,8 +6464,6 @@ impl Retina {
     #[inline]
     fn on_mouse_event(&mut self, e: &mut MouseEvent, current: usize) {
         let evt_type = e.mask & crate::input::MOUSE_TYPE_MASK;
-        // Delta-based events do not contain absolute coordinates.
-        // Avoid applying Retina coordinate scaling to them.
         if evt_type == crate::input::MOUSE_TYPE_WHEEL
             || evt_type == crate::input::MOUSE_TYPE_TRACKPAD
             || evt_type == crate::input::MOUSE_TYPE_MOVE_RELATIVE
@@ -6849,8 +6503,6 @@ impl Retina {
     }
 }
 
-/// Get control permission state from CONTROL_PERMISSIONS_ARRAY.
-/// Returns: Some(false) if any disable, Some(true) if any enable (and no disable), None if not set.
 pub fn get_control_permission_state(
     permission: hbb_common::rendezvous_proto::control_permissions::Permission,
     disable_if_has_disabled: bool,
@@ -6893,9 +6545,6 @@ pub struct AuthedConn {
 }
 
 mod raii {
-    // ALIVE_CONNS: all connections, including unauthorized connections
-    // AUTHED_CONNS: all authorized connections
-    // CONTROL_PERMISSIONS_ARRAY: all non-None control permissions
 
     use super::*;
     pub struct ConnectionID(i32);
@@ -6921,10 +6570,6 @@ mod raii {
             c.conn_id > id && c.conn_type == AuthConnType::Remote && &c.session_key == key
         }
 
-        /// Whether a newer remote control connection of this session has replaced this one. A
-        /// controlling peer whose link dies reconnects while the connection it left behind runs
-        /// on here until its own timeout; locking for that one would lock a session that has
-        /// already resumed on its replacement.
         pub fn session_reconnected(id: i32, key: &SessionKey) -> bool {
             let conns = AUTHED_CONNS.lock().unwrap();
             conns
@@ -7001,16 +6646,11 @@ mod raii {
             let mut lock = SESSIONS.lock().unwrap();
             let contains = lock.contains_key(&key);
             if contains {
-                // No two remote connections with the same session key, just for ensure.
                 let is_remote = AUTHED_CONNS
                     .lock()
                     .unwrap()
                     .iter()
                     .any(|c| c.conn_id == conn_id && c.conn_type == AuthConnType::Remote);
-                // If there are 2 connections with the same peer_id and session_id, a remote connection and a file transfer or port forward connection,
-                // If any of the connections is closed allowing retry, this will not be called;
-                // If the file transfer/port forward connection is closed with no retry, the session should be kept for remote control menu action;
-                // If the remote connection is closed with no retry, keep the session is not reasonable in case there is a retry button in the remote side, and ignore network fluctuations.
                 let another_remote = AUTHED_CONNS.lock().unwrap().iter().any(|c| {
                     c.conn_id != conn_id
                         && c.session_key == key
@@ -7020,7 +6660,6 @@ mod raii {
                     lock.remove(&key);
                     log::info!("remove session");
                 } else {
-                    // Keep the session if there is another remote connection with same peer_id and session_id.
                     log::info!("skip remove session");
                 }
             }
@@ -7083,7 +6722,6 @@ mod raii {
                     .unwrap()
                     .on_connection_close(self.0);
             }
-            // Clear per-connection state to avoid stale behavior if conn ids are reused.
             #[cfg(not(any(target_os = "android", target_os = "ios")))]
             clear_relative_mouse_active(self.0);
             AUTHED_CONNS.lock().unwrap().retain(|c| c.conn_id != self.0);
@@ -7145,12 +6783,6 @@ mod raii {
     }
 }
 
-// An empty whitelist allows everyone.
-//
-// A peer connecting across servers reports `<its id>@<its own server>` (see
-// `create_login_msg`), so the bare id is matched as well. That suffix is self-asserted and
-// unsigned, so matching only the full form would reject the honest cross-server peer while
-// an attacker just reports the bare id: it can produce false rejects but no true ones.
 fn id_whitelist_allows(id_whitelist: &[String], my_id: &str) -> bool {
     if id_whitelist.is_empty() {
         return true;
@@ -7161,8 +6793,6 @@ fn id_whitelist_allows(id_whitelist: &[String], my_id: &str) -> bool {
         .any(|x| wildcard_match(x, my_id) || wildcard_match(x, bare_id))
 }
 
-// Drop `keys` whose last failure (`.0`, in minutes) is at least `window` old. A backwards
-// clock gives a negative age and keeps the entry, so it never widens access.
 fn decay_stale_failures(
     failures: &mut HashMap<String, (i32, i32, i32)>,
     keys: &[String],
@@ -7179,16 +6809,12 @@ fn decay_stale_failures(
     }
 }
 
-// Unconditionally forget `keys`, unlike `update_failure`'s remove path which requires the
-// per-address entry to exist.
 fn clear_failures(failures: &mut HashMap<String, (i32, i32, i32)>, keys: &[String]) {
     for key in keys {
         failures.remove(key);
     }
 }
 
-// Simple glob matching for the ID whitelist: '*' matches any sequence of characters
-// (including the empty one), '?' matches exactly one character. Case-insensitive.
 fn wildcard_match(pattern: &str, text: &str) -> bool {
     let p: Vec<char> = pattern.trim().to_lowercase().chars().collect();
     let t: Vec<char> = text.trim().to_lowercase().chars().collect();
@@ -7220,8 +6846,6 @@ mod test {
     #[allow(unused)]
     use super::*;
 
-    // The registry is process-global and the harness runs tests in parallel threads, so every
-    // test that admits connections holds this first; a poisoned lock is still a lock.
     static UNAUTHORIZED_TESTS: std::sync::Mutex<()> = std::sync::Mutex::new(());
 
     fn unauthorized_count() -> usize {
@@ -7247,8 +6871,6 @@ mod test {
         assert!(admit_unauthorized(1_000_102, a).is_some());
     }
 
-    /// A loopback TCP connection as create_tcp_connection sees it, and the controller's end,
-    /// which never speaks: the connection stalls in the identity handshake.
     async fn stalled_incoming() -> (Stream, Stream, SocketAddr) {
         let listener = hbb_common::tcp::new_listener("127.0.0.1:0", false)
             .await
@@ -7262,9 +6884,6 @@ mod test {
         (served, controller, addr)
     }
 
-    // Live connections, not bookkeeping: with the limit reached by connections stalled in the
-    // handshake, one more arrival is refused and the oldest handshake is ended at once, not on
-    // a timer tick, so the live count never exceeds the limit and a place opens only then.
     #[tokio::test]
     async fn test_unauthorized_limit_bounds_live_handshakes() {
         let _serial = UNAUTHORIZED_TESTS.lock().unwrap_or_else(|e| e.into_inner());
@@ -7274,7 +6893,6 @@ mod test {
         for i in 0..MAX_UNAUTHORIZED_CONNS {
             let (served, controller, _) = stalled_incoming().await;
             controllers.push(controller);
-            // Each from an address of its own, so only the global limit is in play.
             let addr: SocketAddr = format!("192.0.2.{}:1", i + 1).parse().unwrap();
             let server = server.clone();
             handshakes.push(tokio::spawn(async move {
@@ -7323,9 +6941,6 @@ mod test {
         assert_eq!(unauthorized_count(), 0, "no handshake outlives the test");
     }
 
-    // The cap is on before the identity handshake reads. A header declaring one byte over it,
-    // written to the wire as the codec would read it, ends the handshake on the header alone -
-    // the payload is neither waited for nor read - and releases the place the connection held.
     #[tokio::test]
     async fn test_unauthorized_frame_is_refused_on_its_header() {
         use hbb_common::tokio::io::AsyncWriteExt;
@@ -7393,7 +7008,6 @@ mod test {
         let first = port_forward("localhost");
         let scope = |lr: &LoginRequest| Connection::login_scope_digest(lr);
 
-        // A retry may carry new credentials, profile data, options, and unknown fields.
         let mut retry = port_forward("localhost");
         retry.password = "secret".into();
         retry.hwid = "hwid".into();
@@ -7410,7 +7024,6 @@ mod test {
             .add_varint(9999, 1);
         assert_eq!(scope(&first), scope(&retry));
 
-        // It may not change the controller identity, move the target, or switch type.
         let mut rotated_id = first.clone();
         rotated_id.my_id = "rotated-id".to_owned();
         assert_ne!(scope(&first), scope(&rotated_id));
@@ -7433,14 +7046,11 @@ mod test {
 
     #[test]
     fn test_wildcard_match() {
-        // Exact match.
         assert!(wildcard_match("123456789", "123456789"));
         assert!(!wildcard_match("123456789", "123456780"));
         assert!(!wildcard_match("12345678", "123456789"));
         assert!(!wildcard_match("123456789", "12345678"));
-        // Case-insensitive.
         assert!(wildcard_match("MyCustomId", "mycustomid"));
-        // '*' matches any sequence.
         assert!(wildcard_match("*", "123456789"));
         assert!(wildcard_match("*", ""));
         assert!(wildcard_match("*", "*abc"));
@@ -7453,12 +7063,10 @@ mod test {
         assert!(wildcard_match("1*4*9", "123456789"));
         assert!(!wildcard_match("1*4*9", "123456780"));
         assert!(wildcard_match("*456*", "123456789"));
-        // '?' matches exactly one character.
         assert!(wildcard_match("12345678?", "123456789"));
         assert!(!wildcard_match("123456789?", "123456789"));
         assert!(wildcard_match("???456???", "123456789"));
         assert!(wildcard_match("1?3*7?9", "123456789"));
-        // Whitespace around entries is ignored.
         assert!(wildcard_match(" 123456789 ", "123456789"));
     }
 
@@ -7466,30 +7074,24 @@ mod test {
     fn test_id_whitelist_allows() {
         let list = |v: &[&str]| v.iter().map(|x| x.to_string()).collect::<Vec<_>>();
 
-        // An empty whitelist allows everyone.
         assert!(id_whitelist_allows(&[], "123456789"));
 
-        // Same server: the peer reports a bare id.
         assert!(id_whitelist_allows(&list(&["123456789"]), "123456789"));
         assert!(!id_whitelist_allows(&list(&["123456789"]), "987654321"));
 
-        // Cross server: the peer appends its own server, which must not reject it.
         assert!(id_whitelist_allows(
             &list(&["123456789"]),
             "123456789@example.com:21116"
         ));
-        // Cross server from web, whose server is a WebSocket URI.
         assert!(id_whitelist_allows(
             &list(&["123456789"]),
             "123456789@wss://example.com:21118/ws/id"
         ));
-        // A different id is still rejected, suffix or not.
         assert!(!id_whitelist_allows(
             &list(&["123456789"]),
             "987654321@example.com:21116"
         ));
 
-        // An entry pinned to one server keeps matching that exact form.
         assert!(id_whitelist_allows(
             &list(&["123456789@example.com:21116"]),
             "123456789@example.com:21116"
@@ -7498,13 +7100,11 @@ mod test {
             &list(&["123456789@example.com:21116"]),
             "123456789@other.com:21116"
         ));
-        // ... and no longer matches the bare id, which is the point of pinning.
         assert!(!id_whitelist_allows(
             &list(&["123456789@example.com:21116"]),
             "123456789"
         ));
 
-        // Wildcards keep working on both forms.
         assert!(id_whitelist_allows(&list(&["abc*"]), "abcdef"));
         assert!(id_whitelist_allows(
             &list(&["abc*"]),
@@ -7515,7 +7115,6 @@ mod test {
             "123456789@example.com:21116"
         ));
 
-        // Any entry of the list is enough.
         assert!(id_whitelist_allows(
             &list(&["111111111", "123456789", "222222222"]),
             "123456789@example.com:21116"
@@ -7859,17 +7458,13 @@ mod test {
         let remote = AuthConnType::Remote;
 
         assert!(replaced_by(&conn(3, remote, mine.clone()), 2, &mine));
-        // An older one, and itself: of connections ending at once only the last still locks.
         assert!(!replaced_by(&conn(1, remote, mine.clone()), 2, &mine));
         assert!(!replaced_by(&conn(2, remote, mine.clone()), 2, &mine));
-        // A kind that keeps no screen in use.
         assert!(!replaced_by(
             &conn(3, AuthConnType::Terminal, mine.clone()),
             2,
             &mine
         ));
-        // Another session of this peer, and another peer on the same session id: `SessionKey`
-        // is all three fields, and either of those is someone else's screen to lock.
         assert!(!replaced_by(&conn(3, remote, key(8, "peer")), 2, &mine));
         assert!(!replaced_by(&conn(3, remote, key(7, "other")), 2, &mine));
     }

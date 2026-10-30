@@ -1,8 +1,3 @@
-/// Url handler based on dbus
-///
-/// Note:
-/// On linux, we use dbus to communicate between multiple rustdesk processes.
-/// [Flutter]: handle uni links for linux
 use dbus::blocking::Connection;
 use dbus_crossroads::{Crossroads, IfaceBuilder};
 use hbb_common::log;
@@ -10,7 +5,7 @@ use hbb_common::log;
 use std::collections::HashMap;
 use std::{error::Error, fmt, time::Duration};
 
-const DBUS_NAME: &str = "org.rustdesk.rustdesk";
+const DBUS_NAME: &str = "org.supportdesk.supportdesk";
 const DBUS_PREFIX: &str = "/dbus";
 const DBUS_METHOD_NEW_CONNECTION: &str = "NewConnection";
 const DBUS_METHOD_NEW_CONNECTION_ID: &str = "id";
@@ -23,18 +18,12 @@ struct DbusError(String);
 
 impl fmt::Display for DbusError {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        write!(f, "RustDesk DBus Error: {}", self.0)
+        write!(f, "SupportDesk DBus Error: {}", self.0)
     }
 }
 
 impl Error for DbusError {}
 
-/// invoke new connection from dbus
-///
-/// [Tips]:
-/// How to test by CLI:
-/// - use dbus-send command:
-/// `dbus-send --session --print-reply --dest=org.rustdesk.rustdesk /dbus org.rustdesk.rustdesk.NewConnection string:'PEER_ID'`
 pub fn invoke_new_connection(uni_links: String) -> Result<(), Box<dyn Error>> {
     log::info!("Starting dbus service for uni");
     let conn = Connection::new_session()?;
@@ -48,11 +37,6 @@ pub fn invoke_new_connection(uni_links: String) -> Result<(), Box<dyn Error>> {
     Ok(())
 }
 
-/// start dbus server
-///
-/// [Blocking]:
-/// The function will block current thread to serve dbus server.
-/// So it's suitable to spawn a new thread dedicated to dbus server.
 pub fn start_dbus_server() -> Result<(), Box<dyn Error>> {
     let conn: Connection = Connection::new_session()?;
     let _ = conn.request_name(DBUS_NAME, false, true, false)?;
@@ -64,7 +48,6 @@ pub fn start_dbus_server() -> Result<(), Box<dyn Error>> {
 }
 
 fn handle_client_message(builder: &mut IfaceBuilder<()>) {
-    // register new connection dbus
     builder.method(
         DBUS_METHOD_NEW_CONNECTION,
         (DBUS_METHOD_NEW_CONNECTION_ID,),

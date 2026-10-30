@@ -56,7 +56,7 @@ pub struct HwRamEncoder {
     encoder: Encoder,
     pub format: DataFormat,
     pub pixfmt: AVPixelFormat,
-    bitrate: u32, //kbs
+    bitrate: u32,
     config: HwRamEncoderConfig,
 }
 
@@ -85,7 +85,7 @@ impl EncoderApi for HwRamEncoder {
                     quality: DEFAULT_HW_QUALITY,
                     rc,
                     q: -1,
-                    thread_count: codec_thread_num(16) as _, // ffmpeg's thread_count is used for cpu
+                    thread_count: codec_thread_num(16) as _,
                 };
                 let format = match Encoder::format_from_name(config.name.clone()) {
                     Ok(format) => format,
@@ -258,9 +258,8 @@ impl HwRamEncoder {
     pub fn calc_bitrate(width: usize, height: usize, ratio: f32, h264: bool) -> u32 {
         let base = base_bitrate(width as _, height as _) as f32 * ratio;
         let threshold = 2000.0;
-        let decay_rate = 0.001; // 1000 * 0.001 = 1
+        let decay_rate = 0.001;
         let factor: f32 = if cfg!(target_os = "android") {
-            // https://stackoverflow.com/questions/26110337/what-are-valid-bit-rates-to-set-for-mediacodec?rq=3
             if base > threshold {
                 1.0 + 4.0 / (1.0 + (base - threshold) * decay_rate)
             } else {
@@ -380,7 +379,6 @@ pub struct HwRamDecoderImage<'a> {
 }
 
 impl HwRamDecoderImage<'_> {
-    // rgb [in/out] fmt and stride must be set in ImageRgb
     pub fn to_fmt(&self, rgb: &mut ImageRgb, i420: &mut Vec<u8>) -> ResultType<()> {
         let frame = self.frame;
         let width = frame.width;
@@ -392,7 +390,6 @@ impl HwRamDecoderImage<'_> {
         rgb.raw.resize(rgb.h * bytes_per_row, 0);
         match frame.pixfmt {
             AVPixelFormat::AV_PIX_FMT_NV12 => {
-                // I420ToARGB is much faster than NV12ToARGB in tests on Windows
                 if cfg!(windows) {
                     let Ok((linesize_i420, offset_i420, len_i420)) = ffmpeg_linesize_offset_length(
                         AVPixelFormat::AV_PIX_FMT_YUV420P,
@@ -506,19 +503,12 @@ pub struct HwCodecConfig {
     pub vram_decode: Vec<hwcodec::vram::DecodeContext>,
 }
 
-// HwCodecConfig2 is used to store the config in json format,
-// confy can't serde HwCodecConfig successfully if the non-first struct Vec is empty due to old toml version.
-// struct T { a: Vec<A>, b: Vec<String>} will fail if b is empty, but struct T { a: Vec<String>, b: Vec<String>} is ok.
 #[derive(Debug, Default, Serialize, Deserialize, Clone)]
 struct HwCodecConfig2 {
     #[serde(default)]
     pub config: String,
 }
 
-// ipc server process start check process once, other process get from ipc server once
-// install: --server start check process, check process send to --server,  ui get from --server
-// portable: ui start check process, check process send to ui
-// sciter and unilink: get from ipc server
 impl HwCodecConfig {
     #[cfg(not(any(target_os = "android", target_os = "ios")))]
     pub fn set(config: String) {
@@ -565,7 +555,7 @@ impl HwCodecConfig {
                             c.is_encoder
                                 && c.mime_type.as_str() == get_mime_type(t.data_format)
                                 && c.nv12
-                                && c.hw == Some(true) //only use hardware codec
+                                && c.hw == Some(true)
                         })
                         .collect();
                     let screen_wh = std::cmp::max(info.w, info.h);
@@ -576,7 +566,6 @@ impl HwCodecConfig {
                     {
                         best = Some(codec.name.clone());
                     } else {
-                        // find the max resolution
                         let mut max_area = 0;
                         for codec in codecs.iter() {
                             if codec.max_width * codec.max_height > max_area {
@@ -731,7 +720,6 @@ pub fn start_check_process() {
                 if let Ok(mut child) = std::process::Command::new(exe).arg(arg).spawn() {
                     #[cfg(windows)]
                     hwcodec::common::child_exit_when_parent_exit(child.id());
-                    // wait up to 30 seconds, it maybe slow on windows startup for poorly performing machines
                     for _ in 0..30 {
                         std::thread::sleep(std::time::Duration::from_secs(1));
                         if let Ok(Some(_)) = child.try_wait() {

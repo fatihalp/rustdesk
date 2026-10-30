@@ -53,7 +53,6 @@ Future<void> handleUpdate(String releasePageUrl) async {
             onCanceled.value();
             await bind.mainSetCommon(
                 key: 'cancel-downloader', value: downloadId.value);
-            // Wait for the downloader to be removed.
             for (int i = 0; i < 10; i++) {
               await Future.delayed(const Duration(milliseconds: 300));
               final isCanceled = 'error:Downloader not found' ==
@@ -161,7 +160,6 @@ class UpdateProgressState extends State<UpdateProgress> {
       if (evt.containsKey('error')) {
         _onError(evt['error'] as String);
       } else {
-        // unreachable
         _onError('$evt');
       }
     }

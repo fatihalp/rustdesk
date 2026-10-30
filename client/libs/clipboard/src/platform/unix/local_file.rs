@@ -102,7 +102,6 @@ impl LocalFile {
             .trim_start_matches('/')
             .replace('/', "\\");
 
-        // NOTE: open files lazily
         let handle = None;
         let offset = AtomicU64::new(0);
 
@@ -176,29 +175,16 @@ impl LocalFile {
             | FLAGS_FD_PROGRESSUI
             | FLAGS_FD_UNIX_MODE;
 
-        // flags, 4 bytes
         buf.put_u32_le(flags);
-        // 32 bytes reserved
         buf.put(&[0u8; 32][..]);
-        // file attributes, 4 bytes
         buf.put_u32_le(file_attributes);
 
-        // NOTE: this is not used in windows
-        // in the specification, this is 16 bytes reserved
-        // lets use the last 4 bytes to store the file mode
-        //
-        // 12 bytes reserved
         buf.put(&[0u8; 12][..]);
-        // file permissions, 4 bytes
         buf.put_u32_le(self.perm);
 
-        // last write time, 8 bytes
         buf.put_u64_le(win32_time);
-        // file size (high)
         buf.put_u32_le(size_high);
-        // file size (low)
         buf.put_u32_le(size_low);
-        // Put the null-terminated name and padding into the fixed-size field.
         self.put_descriptor_name(&mut buf)?;
 
         Ok(buf.to_vec())
@@ -244,7 +230,6 @@ impl LocalFile {
         let new_offset = offset + (buf.len() as u64);
         self.offset.store(new_offset, Ordering::Relaxed);
 
-        // gc file handle
         if new_offset >= self.size {
             self.offset.store(0, Ordering::Relaxed);
             self.handle = None;
@@ -270,7 +255,6 @@ pub(super) fn construct_file_list(paths: &[PathBuf]) -> Result<Vec<LocalFile>, C
         file_list: &mut Vec<LocalFile>,
         visited: &mut HashSet<PathBuf>,
     ) -> Result<(), CliprdrError> {
-        // prevent fs loop
         if visited.contains(path) {
             return Ok(());
         }
@@ -334,11 +318,6 @@ mod file_list_test {
 
     #[inline]
     fn generate_tree(prefix: &str) -> Vec<LocalFile> {
-        // generate a tree of local files, no handles
-        // - /
-        // |- a.txt
-        // |- b
-        //    |- c.txt
         #[inline]
         fn generate_file(path: &str, name: &str, is_dir: bool) -> LocalFile {
             LocalFile {
@@ -482,13 +461,10 @@ mod file_list_test {
 
     #[test]
     fn encodes_last_write_time_as_windows_filetime() -> Result<(), CliprdrError> {
-        // 2023-11-14 22:13:20 UTC
         let time = SystemTime::UNIX_EPOCH + Duration::from_secs(1_700_000_000);
         assert_eq!(encoded_last_write_time(time)?, 133_444_736_000_000_000);
-        // 3000-01-01 00:00:00 UTC
         let time = SystemTime::UNIX_EPOCH + Duration::from_secs(32_503_680_000);
         assert_eq!(encoded_last_write_time(time)?, 441_481_536_000_000_000);
-        // Times before 1970 are sent as 1970-01-01 00:00:00 UTC.
         let time = SystemTime::UNIX_EPOCH - Duration::from_secs(1);
         assert_eq!(encoded_last_write_time(time)?, 116_444_736_000_000_000);
         Ok(())

@@ -17,7 +17,6 @@ def check_response(response):
         print(f"Error: HTTP {response.status_code}: {response.text}")
         exit(1)
     
-    # Check for {"error": "xxx"} in response
     if response.text and response.text.strip():
         try:
             json_data = response.json()
@@ -35,7 +34,6 @@ def headers_with(token):
     return {"Authorization": f"Bearer {token}", "Content-Type": "application/json"}
 
 
-# ---------- User Group APIs ----------
 
 def list_groups(url, token, name=None, page_size=50):
     headers = headers_with(token)
@@ -119,23 +117,19 @@ def delete_groups(url, token, names):
     return "Success"
 
 
-# ---------- User management in group ----------
 
 def view_users(url, token, group_name=None, name=None, page_size=50):
     """View users in a user group with filters"""
     headers = headers_with(token)
     
-    # Separate exact match and fuzzy match params
     params = {}
     fuzzy_params = {
         "name": name,
     }
     
-    # Add group_name without wildcard (exact match)
     if group_name:
         params["group_name"] = group_name
     
-    # Add wildcard for fuzzy search to other params
     for k, v in fuzzy_params.items():
         if v is not None:
             params[k] = "%" + v + "%" if (v != "-" and "%" not in v) else v
@@ -164,19 +158,16 @@ def add_users(url, token, group_name, user_names):
     if isinstance(user_names, str):
         user_names = [user_names]
     
-    # Get the user group guid
     g = get_group_by_name(url, token, group_name)
     if not g:
         print(f"Error: Group '{group_name}' not found")
         exit(1)
     guid = g.get("guid")
     
-    # Get user GUIDs
     user_guids = []
     errors = []
     
     for user_name in user_names:
-        # Get user by exact name match
         params = {"name": user_name, "pageSize": 50}
         r = requests.get(f"{url}/api/users", headers=headers, params=params)
         if r.status_code != 200:
@@ -204,7 +195,6 @@ def add_users(url, token, group_name, user_names):
         print(msg)
         exit(1)
     
-    # Add users to group using POST /api/user-groups/:guid
     r = requests.post(f"{url}/api/user-groups/{guid}", headers=headers, json=user_guids)
     check_response(r)
     
@@ -220,7 +210,6 @@ def parse_rules(s):
     try:
         v = json.loads(s)
         if isinstance(v, list):
-            # expect list of {"type": number, "name": string}
             return v
     except Exception:
         pass
@@ -249,7 +238,6 @@ def main():
 
     parser.add_argument("--users", help="Comma separated usernames for add-users")
     
-    # Filters for view-users command
     parser.add_argument("--user-name", help="User name filter (for view-users, supports fuzzy search)")
 
     args = parser.parse_args()

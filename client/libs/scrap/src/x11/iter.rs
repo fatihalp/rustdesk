@@ -8,11 +8,9 @@ use hbb_common::libc;
 use super::ffi::*;
 use super::{Display, Rect, Server};
 
-//TODO: Do I have to free the displays?
 
 pub struct DisplayIter {
     outer: xcb_screen_iterator_t,
-    // The monitor iterator points into the reply, so the reply is freed only when moving on.
     inner: Option<(
         xcb_randr_monitor_info_iterator_t,
         xcb_window_t,
@@ -50,7 +48,7 @@ impl DisplayIter {
             let cookie = xcb_randr_get_monitors_unchecked(
                 server.raw(),
                 root,
-                1, //TODO: I don't know if this should be true or false.
+                1,
             );
 
             let response = xcb_randr_get_monitors_reply(server.raw(), cookie, ptr::null_mut());
@@ -78,7 +76,6 @@ impl Iterator for DisplayIter {
     fn next(&mut self) -> Option<Display> {
         loop {
             if let Some((ref mut inner, root, _)) = self.inner {
-                // If there is something in the current screen, return that.
                 if inner.rem != 0 {
                     unsafe {
                         let data = &*inner.data;
@@ -103,11 +100,9 @@ impl Iterator for DisplayIter {
                     }
                 }
             } else {
-                // If there is no current screen, the screen iterator is empty.
                 return None;
             }
 
-            // The current screen was empty, so try the next screen.
             self.free_reply();
             self.inner = Self::next_screen(&mut self.outer, &self.server);
         }
@@ -151,8 +146,6 @@ unsafe fn get_pixfmt(conn: *mut xcb_connection_t, root: xcb_window_t) -> Option<
     }
     let depth = (*geo).depth;
     libc::free(geo as _);
-    // now only support little endian
-    // https://github.com/FFmpeg/FFmpeg/blob/a9c05eb657d0d05f3ac79fe9973581a41b265a5e/libavdevice/xcbgrab.c#L519
     match depth {
         16 => Some(Pixfmt::RGB565LE),
         32 => Some(Pixfmt::BGRA),

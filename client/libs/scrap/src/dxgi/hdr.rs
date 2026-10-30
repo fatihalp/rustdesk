@@ -1,30 +1,3 @@
-//! HDR desktop -> SDR normalization for Desktop Duplication frames.
-//!
-//! With HDR enabled Windows composes the desktop as linear scRGB in
-//! R16G16B16A16_FLOAT, and SDR "white" sits at the user's SDR content
-//! brightness (DISPLAYCONFIG_SDR_WHITE_LEVEL) rather than at 1.0. The legacy
-//! DuplicateOutput converts that to BGRA8 by clipping, which is the washed-out
-//! picture reported for HDR hosts. This pass divides by the SDR white level,
-//! clamps, and applies the sRGB transfer, so SDR content comes out exactly as
-//! it would from an SDR desktop.
-//!
-//! It is a normalization, not a tone map: anything brighter than SDR white
-//! (HDR video, HDR games) clips to white on the SDR viewer, where the local
-//! HDR display would show it brighter than white. A roll-off would have to
-//! move SDR white below 1.0 to make headroom, trading the accuracy of the SDR
-//! content this pass exists for, so it is deliberately not done.
-//!
-//! Windows 11 22H2 also composes Advanced Color SDR (WCG) desktops in FP16,
-//! but there 1.0 is the display's reference white rather than 80 nits and no
-//! SDR white level applies. IDXGIOutput6 tells the two apart, and for a
-//! non-HDR output the pass only applies the scRGB -> sRGB transfer.
-//!
-//! The conversion is automatic and stays on the controlled side on purpose:
-//! the controller renders through Flutter external textures, which are 8-bit
-//! on every desktop platform, so there is nothing to gain from sending HDR.
-//! Real HDR pass-through, if the renderer ever supports it, should follow the
-//! Sunshine/Moonlight pattern instead: an `hdr` capability bit advertised by
-//! the controller behind an explicit user toggle, negotiated like i444.
 
 use super::ComPtr;
 use hbb_common::log;
@@ -60,14 +33,8 @@ use winapi::{
     },
 };
 
-/// Set once the tone-map can never work in this process (no d3dcompiler, the
-/// shaders do not compile). Capturers then stop asking DXGI for float frames.
-/// Device-specific failures are not recorded here; the capturer that hit one
-/// re-duplicates without the tone-map on its own.
 pub static UNAVAILABLE: AtomicBool = AtomicBool::new(false);
 
-/// Failures no capturer on this machine can recover from, as opposed to
-/// device-specific ones that a recreated capturer may not hit again.
 pub fn is_permanent(err: &io::Error) -> bool {
     err.kind() == io::ErrorKind::Unsupported
 }
@@ -99,19 +66,13 @@ pub struct HdrToSdr {
     target: ComPtr<ID3D11Texture2D>,
     rtv: ComPtr<ID3D11RenderTargetView>,
     srv: ComPtr<ID3D11ShaderResourceView>,
-    // Texture `srv` was created for. The view keeps it alive, so the address
-    // cannot be recycled behind our back.
     srv_source: *mut ID3D11Texture2D,
     width: u32,
     height: u32,
     device_name: [WCHAR; 32],
-    // Advanced Color state is read from `output6`, which is re-enumerated from a
-    // fresh factory whenever `factory` stops being current.
     factory: ComPtr<IDXGIFactory1>,
     output6: ComPtr<IDXGIOutput6>,
     is_hdr: bool,
-    // DISPLAYCONFIG units (1000 == 80 nits == scRGB 1.0). `None` when it could
-    // not be read, in which case 80 nits is assumed until it can.
     sdr_white_level: Option<u32>,
     queried_at: Instant,
 }
@@ -158,14 +119,10 @@ impl HdrToSdr {
             )?;
             let ps = ComPtr(ps);
 
-            // Not found leaves the factory null, so the first refresh enumerates
-            // again instead of trusting the capturer's possibly stale output.
             let (factory, mut output6) = enumerate_output6(device_name);
             if output6.is_null() {
                 output6 = query_output6(output as *mut IUnknown);
             }
-            // Float frames are only requested where IDXGIOutput6 exists, so an
-            // unreadable description still comes from an HDR-capable stack.
             let is_hdr = output_is_hdr(output6.0).unwrap_or(true);
             let sdr_white_level = if is_hdr {
                 query_sdr_white_level(device_name)
@@ -224,9 +181,6 @@ impl HdrToSdr {
         }
     }
 
-    /// Renders `source` (R16G16B16A16_FLOAT) into an owned B8G8R8A8_UNORM
-    /// texture of the same size and returns it. The texture stays valid until
-    /// the next call.
     pub fn convert(
         &mut self,
         source: *mut ID3D11Texture2D,
@@ -261,9 +215,6 @@ impl HdrToSdr {
             (*ctx).PSSetConstantBuffers(0, 1, &params);
             (*ctx).PSSetShaderResources(0, 1, &srv);
             (*ctx).Draw(3, 0);
-            // Unbind so the next frame's copy and the encoder never see the
-            // target as a live render target or the desktop image as a bound
-            // shader input.
             let no_srv: *mut ID3D11ShaderResourceView = ptr::null_mut();
             (*ctx).PSSetShaderResources(0, 1, &no_srv);
             (*ctx).OMSetRenderTargets(0, ptr::null(), ptr::null_mut());
@@ -322,11 +273,6 @@ impl HdrToSdr {
         Ok(())
     }
 
-    // Advanced Color state is dynamic: HDR can be switched on or off, or a WCG
-    // desktop can turn into an HDR one, without the duplication being lost. An
-    // output's description is a snapshot, so once the factory is no longer
-    // current a new factory and output are needed to see the new state, as the
-    // GetDesc1 docs require.
     unsafe fn refresh_output_state(&mut self) {
         if self.queried_at.elapsed() < OUTPUT_STATE_REFRESH {
             return;
@@ -338,7 +284,6 @@ impl HdrToSdr {
                 self.factory = factory;
                 self.output6 = output6;
             } else {
-                // Keep reading the old output, but enumerate again next time.
                 self.factory = ComPtr(ptr::null_mut());
             }
         }
@@ -348,7 +293,6 @@ impl HdrToSdr {
         } else {
             None
         };
-        // A transiently unreadable level keeps the last known one.
         if is_hdr == self.is_hdr && (level.is_none() || level == self.sdr_white_level) {
             return;
         }
@@ -376,8 +320,6 @@ impl HdrToSdr {
     }
 }
 
-// `None` is either a non-HDR (WCG) output, where 1.0 already is the display's
-// reference white, or an HDR output whose level is unknown; both use 1.0.
 fn params_data(sdr_white_level: Option<u32>) -> [f32; 4] {
     [
         1000.0 / sdr_white_level.unwrap_or(1000) as f32,
@@ -387,10 +329,6 @@ fn params_data(sdr_white_level: Option<u32>) -> [f32; 4] {
     ]
 }
 
-// FP16 desktop composition means either HDR (scene-referred, 1.0 == 80 nits)
-// or, since Windows 11 22H2, Advanced Color SDR (display-referred), and only
-// IDXGIOutput6 (Windows 10 1703) tells them apart. `None` when it cannot be
-// read right now.
 unsafe fn output_is_hdr(output6: *mut IDXGIOutput6) -> Option<bool> {
     if output6.is_null() {
         return None;
@@ -413,10 +351,6 @@ unsafe fn query_output6(object: *mut IUnknown) -> ComPtr<IDXGIOutput6> {
     ComPtr(output6)
 }
 
-// A fresh factory sees the current display configuration; the output is found
-// by its GDI name because the outputs of a stale factory keep stale descriptions.
-// Returns both or neither: a non-null factory guarantees the output came from
-// its topology, so a caller that sees a null factory knows to enumerate again.
 unsafe fn enumerate_output6(
     device_name: &[WCHAR; 32],
 ) -> (ComPtr<IDXGIFactory1>, ComPtr<IDXGIOutput6>) {
@@ -466,8 +400,6 @@ fn check(hr: HRESULT, what: &str) -> io::Result<()> {
     }
 }
 
-// D3DCompile(pSrcData, SrcDataSize, pSourceName, pDefines, pInclude,
-//            pEntrypoint, pTarget, Flags1, Flags2, ppCode, ppErrorMsgs)
 type D3DCompileFn = unsafe extern "system" fn(
     LPCVOID,
     SIZE_T,
@@ -484,8 +416,6 @@ type D3DCompileFn = unsafe extern "system" fn(
 
 static D3D_COMPILE: OnceLock<Result<D3DCompileFn, String>> = OnceLock::new();
 
-// Loaded once per process and kept: the compiler DLL is only needed on HDR
-// desktops, and an import-time link would make every install depend on it.
 fn load_d3d_compile() -> io::Result<D3DCompileFn> {
     D3D_COMPILE
         .get_or_init(|| unsafe { find_d3d_compile() })
@@ -576,9 +506,6 @@ extern "system" {
     fn DisplayConfigGetDeviceInfo(requestPacket: *mut DISPLAYCONFIG_DEVICE_INFO_HEADER) -> LONG;
 }
 
-/// SDR white level of the output whose GDI name is `device_name`
-/// (e.g. `\\.\DISPLAY1`), in DISPLAYCONFIG units (1000 == 80 nits). `None`
-/// when the query fails (before Windows 10 1709) or reports 0.
 fn query_sdr_white_level(device_name: &[WCHAR; 32]) -> Option<u32> {
     unsafe {
         let mut n_paths = 0u32;

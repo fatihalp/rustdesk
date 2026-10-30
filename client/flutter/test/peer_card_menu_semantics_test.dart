@@ -9,8 +9,6 @@ import 'package:flutter_test/flutter_test.dart';
 void main() {
   const doubleClickInterval = Duration(milliseconds: 75);
   const dragOffset = Offset(150, 0);
-  // Keep pointer cases semantics-off to cover parent/child gesture competition.
-  // VM taps bypass browser click-to-semantics conversion; verify that in a browser.
   for (final action in ['physical clicks', 'semantic tap', 'keyboard']) {
     testWidgets('More $action opens once without connecting the card',
         (tester) async {

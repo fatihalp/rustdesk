@@ -1,7 +1,6 @@
 #[cfg(any(test, not(target_os = "linux")))]
 mod audio_resampler;
 mod keyboard;
-/// cbindgen:ignore
 pub mod platform;
 #[cfg(not(any(target_os = "android", target_os = "ios")))]
 pub use platform::{
@@ -9,7 +8,6 @@ pub use platform::{
     set_cursor_pos, start_os_service,
 };
 #[cfg(not(any(target_os = "ios")))]
-/// cbindgen:ignore
 mod server;
 #[cfg(not(any(target_os = "ios")))]
 pub use self::server::*;
@@ -19,7 +17,6 @@ mod lan;
 mod rendezvous_mediator;
 #[cfg(not(any(target_os = "ios")))]
 pub use self::rendezvous_mediator::*;
-/// cbindgen:ignore
 pub mod common;
 #[cfg(not(any(target_os = "ios")))]
 pub mod ipc;

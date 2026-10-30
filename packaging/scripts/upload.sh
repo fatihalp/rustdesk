@@ -1,5 +1,4 @@
 #!/usr/bin/env bash
-# Uploads work/$(cat artifact.txt) to the panel, which marks the build as ready.
 set -euo pipefail
 cd work
 curl -fsS -H "Authorization: Bearer $PANEL_BUILD_SECRET" \

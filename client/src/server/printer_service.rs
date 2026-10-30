@@ -10,14 +10,9 @@ pub const NAME: &'static str = "remote-printer";
 
 const LIB_NAME_PRINTER_DRIVER_ADAPTER: &str = "printer_driver_adapter";
 
-// Return 0 if success, otherwise return error code.
 pub type Init = fn(tag_name: *const i8) -> i32;
 pub type Uninit = fn();
-// dur_mills: Get the file generated in the last `dur_mills` milliseconds.
-// data: The raw prn data, xps format.
-// data_len: The length of the raw prn data.
 pub type GetPrnData = fn(dur_mills: u32, data: *mut *mut i8, data_len: *mut u32);
-// Free the prn data allocated by GetPrnData().
 pub type FreePrnData = fn(data: *mut i8);
 
 macro_rules! make_lib_wrapper {

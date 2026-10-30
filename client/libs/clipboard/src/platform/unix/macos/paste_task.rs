@@ -44,8 +44,6 @@ pub struct FileContentsResponse {
 
 #[derive(Debug)]
 struct PasteTaskProgress {
-    // Use list index to identify the file
-    // `list_index` is also used as the stream id
     list_index: i32,
     offset: u64,
     total_size: u64,
@@ -127,8 +125,6 @@ impl PasteTask {
             target_dir,
             files,
         };
-        // Path validation and creation are not atomic. Local filesystem changes can
-        // invalidate checked paths, and entries created before an error are not rolled back.
         if let Err(error) = task_handle
             .validate_paths()
             .and_then(|_| task_handle.update_next(0))
@@ -178,7 +174,6 @@ impl PasteTask {
                         }
 
                         if file_contents.stream_id != task_handle.progress.list_index {
-                            // ignore invalid stream id
                             continue;
                         } else if file_contents.msg_flags != 0x01 {
                             retry_count += 1;
@@ -195,8 +190,6 @@ impl PasteTask {
                             let resp_list_index = file_contents.stream_id;
                             let Some(file) = &task_handle.files.get(resp_list_index as usize)
                             else {
-                                // unreachable
-                                // Because `task_handle.progress.list_index >= task_handle.files.len()` should always be false
                                 log::warn!(
                                     "Invalid response list index: {}, file length: {}",
                                     resp_list_index,
@@ -205,8 +198,6 @@ impl PasteTask {
                                 continue;
                             };
                             if file.conn_id != file_contents.conn_id {
-                                // unreachable
-                                // We still add log here to make sure we can see the error message when it happens.
                                 log::error!(
                                     "Invalid response conn id: {}, expected: {}",
                                     file_contents.conn_id,
@@ -316,7 +307,6 @@ impl PasteTaskHandle {
                         })?;
                     }
                     FileType::Symlink => {
-                        // to-do: handle symlink
                     }
                 }
             }
@@ -341,7 +331,6 @@ impl PasteTaskHandle {
         };
 
         let total_bytes = finder_progress_byte_count(self.progress.download_file_size)?;
-        // Finder can retain the legacy timestamp/xattr indicator after a single-chunk transfer.
         autoreleasepool(|_| unsafe {
             let progress = NSProgress::discreteProgressWithTotalUnitCount(total_bytes);
             let url =
@@ -463,7 +452,6 @@ impl PasteTaskHandle {
                     }
                     FileType::Directory => format!("{} ({})", path, i),
                     FileType::Symlink => {
-                        // to-do: handle symlink
                         return None;
                     }
                 };
@@ -472,7 +460,6 @@ impl PasteTaskHandle {
                 }
             }
         }
-        // unreachable
         None
     }
 
@@ -553,14 +540,10 @@ impl PasteTaskHandle {
             log::error!("Failed to flush file: {:?}", e);
         }
         self.progress.file_handle = None;
-        // Updating or unpublishing after rename can leave stale Finder/Dock progress.
-        // https://crbug.com/40217637
-        // https://chromium.googlesource.com/chromium/src/+/refs/heads/main/chrome/browser/download/download_status_updater_mac.mm
         self.update_progress_completed(Some(self.progress.download_file_size))?;
         self.remove_progress_completed();
 
         let Some(file_desc) = self.files.get(self.progress.download_file_index as usize) else {
-            // unreachable
             log::error!(
                 "Failed to get file description: {}",
                 self.progress.download_file_index
@@ -626,7 +609,6 @@ impl PasteTaskHandle {
         let stream_id = self.progress.list_index;
         let list_index = self.progress.list_index;
         let Some(file) = &self.files.get(list_index as usize) else {
-            // unreachable
             return Err(CliprdrError::InvalidRequest {
                 description: format!("Invalid file index: {}", list_index),
             });

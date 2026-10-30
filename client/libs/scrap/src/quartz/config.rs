@@ -4,22 +4,14 @@ use hbb_common::libc::c_void;
 
 use super::ffi::*;
 
-//TODO: Color space, YCbCr matrix.
 pub struct Config {
-    /// Whether the cursor is visible.
     pub cursor: bool,
-    /// Whether it should letterbox or stretch.
     pub letterbox: bool,
-    /// Minimum seconds per frame.
     pub throttle: f64,
-    /// How many frames are allocated.
-    /// 3 is the recommended value.
-    /// 8 is the maximum value.
     pub queue_length: i8,
 }
 
 impl Config {
-    /// Don't forget to CFRelease this!
     pub fn build(self) -> CFDictionaryRef {
         unsafe {
             let throttle = CFNumberCreate(

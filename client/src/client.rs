@@ -107,7 +107,6 @@ pub mod screenshot;
 
 pub const MILLI1: Duration = Duration::from_millis(1);
 pub const SEC30: Duration = Duration::from_secs(30);
-// Empirical restart reconnect grace window.
 const RESTART_REMOTE_DEVICE_GRACE: Duration = Duration::from_secs(5 * 60);
 pub const VIDEO_QUEUE_SIZE: usize = 120;
 const MAX_DECODE_FAIL_COUNTER: usize = 3;
@@ -146,7 +145,6 @@ pub(crate) struct ClientClipboardContext {
     pub is_file_supported: bool,
 }
 
-/// Client of the remote desktop.
 pub struct Client;
 
 #[cfg(not(target_os = "ios"))]
@@ -185,9 +183,6 @@ pub fn get_key_state(key: enigo::Key) -> bool {
     ENIGO.lock().unwrap().get_key_state(key)
 }
 
-/// Closes an unadopted WebRTC offerer's pc on drop. Without an answer it stays in ICE `New`
-/// forever, so its state handler never fires to self-remove it from `SESSIONS`; this covers the
-/// early returns and cancelled races that would leak it. `into_inner` disarms on adoption.
 struct OffererGuard(Option<WebRTCStream>);
 
 impl OffererGuard {
@@ -212,12 +207,6 @@ impl Drop for OffererGuard {
     }
 }
 
-/// Race WebRTC against the other transports, preferring P2P: `select_ok` would always pick the
-/// relay, whose TCP connect beats ICE + DTLS + SCTP by an order of magnitude. An `is_p2p` result
-/// wins outright; a relayed one — from either side, since `webrtc_fut` is a whole punch attempt
-/// that can also end in a relay — is held for `window_ms` to give the other side a chance.
-///
-/// `others` must be non-empty (`select_ok` requires it).
 async fn race_transports_prefer_webrtc<'a, T: 'a>(
     webrtc_fut: BoxFuture<'a, ResultType<T>>,
     others: Vec<BoxFuture<'a, ResultType<T>>>,
@@ -242,13 +231,7 @@ async fn race_transports_prefer_webrtc<'a, T: 'a>(
             }, if webrtc_fut.is_some() => {
                 webrtc_fut = None;
                 match res {
-                    // A direct connection is the outcome this race exists to protect: commit it
-                    // outright, and a held relay conn just drops.
                     Ok(conn) if is_p2p(&conn) || others_fut.is_none() => return Ok(conn),
-                    // `webrtc_fut` is a whole punch attempt, not just the WebRTC connect, so it
-                    // can end in a relay of its own. Committing that immediately would preempt a
-                    // direct punch still in flight on the other branch — the exact inversion this
-                    // function exists to prevent — so hold it on the same terms as any relay.
                     Ok(conn) => {
                         if held.is_none() {
                             held = Some(conn);
@@ -259,17 +242,12 @@ async fn race_transports_prefer_webrtc<'a, T: 'a>(
                         }
                     }
                     Err(e) => {
-                        // Commit a held relay only when nothing direct is still racing; otherwise
-                        // keep it and let the survivor (or the window) decide.
                         if others_fut.is_none() {
                             if let Some(conn) = held.take() {
                                 return Ok(conn);
                             }
                         }
                         match others_err.take() {
-                            // Report one error, as `select_ok` does: the UI matches and translates
-                            // the text whole (e.g. the offline auto-retry), and both legs often
-                            // carry the same rendezvous refusal anyway.
                             Some(oe) => {
                                 log::warn!("fallback leg also failed: {}", oe);
                                 return Err(e);
@@ -292,9 +270,6 @@ async fn race_transports_prefer_webrtc<'a, T: 'a>(
                         if is_p2p(&conn) {
                             return Ok(conn);
                         }
-                        // Relayed: commit now only if nothing direct can still arrive. If a
-                        // direct attempt is still in flight (here or in `unfinished`), hold it
-                        // and keep racing for the preference window instead of discarding them.
                         if webrtc_fut.is_none() && unfinished.is_empty() {
                             return Ok(conn);
                         }
@@ -310,8 +285,6 @@ async fn race_transports_prefer_webrtc<'a, T: 'a>(
                         }
                     }
                     Err(e) => match webrtc_err.take() {
-                        // Nothing more can win, but a parked relay is still a valid outcome — take
-                        // it before failing the connection.
                         Some(we) => match held.take() {
                             Some(conn) => return Ok(conn),
                             None => {
@@ -337,9 +310,6 @@ async fn race_transports_prefer_webrtc<'a, T: 'a>(
     }
 }
 
-// A peer decides how many ICE candidates it sends, and the rendezvous route that carries them is
-// reachable without a prior punch, so these sites would otherwise let someone else set how much
-// this machine writes to its log file. One line a minute each, carrying the suppressed count.
 use hbb_common::log_throttle::LogThrottle;
 const ICE_LOG_INTERVAL: Duration = Duration::from_secs(60);
 static REJECTED_ICE_LOG: LogThrottle = LogThrottle::new(ICE_LOG_INTERVAL);
@@ -348,16 +318,9 @@ static UNEXPECTED_ICE_LOG: LogThrottle = LogThrottle::new(ICE_LOG_INTERVAL);
 static PENDING_ICE_FULL_LOG: LogThrottle = LogThrottle::new(ICE_LOG_INTERVAL);
 
 fn request_allows_tcp_punch(webrtc_sdp_offer: &str) -> bool {
-    // WebRTC trickle ICE retains the rendezvous socket as its signaling bridge. Only a request
-    // without an offer may close that socket and reuse its local address for TCP punching.
     webrtc_sdp_offer.is_empty()
 }
 
-/// TCP punch is a user option like the other direct transports, but it is also the backstop:
-/// with every direct transport switched off there would be nothing left to punch with, so it
-/// runs regardless. Only the switches decide that — a transport that is enabled but fails to
-/// materialize (no public v6 address, offerer setup error) leaves this alone, because the
-/// relay fallback already covers a round that ends up with no usable direct transport.
 fn tcp_punch_allowed() -> bool {
     crate::get_tcp_punch_enabled()
         || !(crate::get_udp_punch_enabled()
@@ -368,7 +331,6 @@ fn tcp_punch_allowed() -> bool {
 impl Client {
     const CLIENT_CLIPBOARD_NAME: &'static str = "client-clipboard";
 
-    /// Start a new connection.
     pub async fn start(
         peer: &str,
         key: &str,
@@ -398,7 +360,6 @@ impl Client {
                 }
             }
             Ok(x) => {
-                // Set x.2 to true only in the connect() function to indicate that direct_failures needs to be updated; everywhere else it should be set to false.
                 if x.2 {
                     let direct_failures = interface.get_lch().read().unwrap().direct_failures;
                     let direct = x.0 .1;
@@ -413,7 +374,6 @@ impl Client {
         }
     }
 
-    /// Start a new connection.
     async fn _start(
         peer: &str,
         key: &str,
@@ -434,7 +394,6 @@ impl Client {
         if config::is_incoming_only() && !is_switch_sides_back(conn_type, &interface).await {
             bail!("Incoming only mode");
         }
-        // to-do: remember the port for each peer, so that we can retry easier
         if hbb_common::is_ip_str(peer) {
             return Ok((
                 (
@@ -449,7 +408,6 @@ impl Client {
                 false,
             ));
         }
-        // Allow connect to {domain}:{port}
         if hbb_common::is_domain_port_str(peer) {
             return Ok((
                 (
@@ -487,16 +445,12 @@ impl Client {
             }
         };
 
-        // Same relay gate as the v6 socket below: under any forced relay the v6 punch cannot
-        // be used, so probing v6 reachability is wasted work on every such connection.
         if crate::get_ipv6_punch_enabled() && !interface.is_force_relay() {
             crate::test_ipv6().await;
         }
 
         let (stop_udp_tx, stop_udp_rx) = oneshot::channel::<()>();
         let udp =
-        // no need to care about multiple rendezvous servers case, since it is acutally not used any more.
-        // Shared state for UDP NAT test result
         if crate::get_udp_punch_enabled() && !interface.is_force_relay() {
             if let Ok((socket, addr)) = new_direct_udp_for_unverified(&rendezvous_server).await {
                 let udp_port = Arc::new(Mutex::new(0));
@@ -513,20 +467,12 @@ impl Client {
         } else {
             (None, None)
         };
-        // Under force-relay a direct IPv6 path is not allowed, so don't bind the v6 socket;
-        // the controlled side likewise skips v6 when relaying.
         let ipv6 = if crate::get_ipv6_punch_enabled() && !interface.is_force_relay() {
             crate::get_ipv6_socket().await
         } else {
             None
         };
-        // WebRTC uses its own ICE sockets and does not depend on the legacy UDP punch socket.
-        // When this request carries an offer, `_start_inner` keeps its rendezvous socket solely
-        // for trickle signaling; a separate offer-less request owns any TCP punch attempt.
         let webrtc_offerer = if Self::should_create_webrtc_offerer(&interface) {
-            // ICE policy follows relay-by-POLICY, not force_relay: under WebSocket the
-            // latter is set for the classic paths, but ICE opens its own sockets and may
-            // still go direct - that is the only P2P path ws deployments have.
             match WebRTCStream::new("", interface.is_policy_relay(), CONNECT_TIMEOUT).await {
                 Ok(stream) => Some(stream),
                 Err(err) => {
@@ -552,9 +498,6 @@ impl Client {
             servers.clone(),
             contained,
         );
-        // The fallback request exists only to carry a TCP punch, so it is pointless once TCP
-        // punch is off — it would reach `connect()` with nothing to try and just open a second
-        // relay.
         if interface.is_force_relay()
             || (udp.0.is_none() && !has_webrtc_offerer)
             || !tcp_punch_allowed()
@@ -562,10 +505,6 @@ impl Client {
             return fut.await;
         }
         let preferred_fut = fut.boxed();
-        // This is deliberately a pure TCP punch request: its WebRTC argument must stay `None`.
-        // TCP punching closes the rendezvous socket before binding a new connection to the same
-        // local address; a WebRTC ICE bridge would retain that socket and break the port reuse.
-        // The preferred request retains its own socket for WebRTC signaling.
         let fallback_fut = Self::_start_inner(
             peer.to_owned(),
             key.to_owned(),
@@ -601,12 +540,6 @@ impl Client {
         !session_key.is_empty() && ice.session_key == session_key && !ice.candidate.is_empty()
     }
 
-    /// Whether to build a WebRTC offerer for this connection.
-    ///
-    /// A SOCKS proxy rules it out: ICE binds its own UDP sockets and speaks STUN directly, past
-    /// the proxy and with the real IP. Relay-by-policy without TURN rules it out too, since
-    /// Relay-only ICE can then gather nothing. WebSocket does not: it tunnels only the signaling
-    /// and relay legs, so the offer keeps full ICE and direct is exactly what it is there for.
     fn should_create_webrtc_offerer(interface: &impl Interface) -> bool {
         if !crate::get_webrtc_enabled() {
             return false;
@@ -620,24 +553,10 @@ impl Client {
         true
     }
 
-    /// Max ICE candidates buffered during the punch window before the answer is applied.
-    /// Bounds memory if a misbehaving rendezvous floods candidates. On overflow the oldest is
-    /// evicted: gathering order is host, then srflx, then relay, so the newest arrivals are the
-    /// ones that traverse NAT.
     const MAX_PENDING_WEBRTC_ICE: usize = 64;
 
-    /// Default relay fallback delay: how long an already-established relay result is held back
-    /// while a WebRTC attempt is still in flight, and the floor for a punch-path WebRTC attempt
-    /// whose race timeout is tuned for a raw TCP SYN. Long enough for candidate trickle + ICE
-    /// checks + DTLS on high-latency links; short enough that UDP-blocked networks settle on
-    /// relay without a noticeable wait. The same role RFC 8305 calls a connection attempt delay.
     const RELAY_FALLBACK_DELAY_MS: u64 = 2500;
 
-    /// The delay as the user configured it, falling back to `RELAY_FALLBACK_DELAY_MS`. The
-    /// settings field holds seconds, which is what a user reasons about; everything here is
-    /// milliseconds. Unparseable, zero or negative all mean "unset", so clearing the field
-    /// restores the default instead of collapsing the delay and handing every race to the
-    /// relay.
     fn relay_fallback_delay_ms() -> u64 {
         match LocalConfig::get_option(keys::OPTION_RELAY_FALLBACK_DELAY)
             .trim()
@@ -648,39 +567,12 @@ impl Client {
         }
     }
 
-    /// UDP-NAT-test wait when the TCP clock is implausible (see TCP_RTT_PLAUSIBLE_MIN). The
-    /// normal bound is `rtt / 2`: the test has been running since before the TCP connect, so on
-    /// a network where TCP RTT ~ UDP RTT its response has already landed. A transparent TCP
-    /// proxy — a TUN-mode VPN on the host, or a redirect-mode proxy on the LAN gateway (soft
-    /// router), which fakes the handshake for every device behind it — breaks that by answering
-    /// in ~3ms while the real UDP round trip is hundreds of ms: the window collapsed to ~1.5ms,
-    /// udp_port stayed 0, and UDP punch never ran on such networks. The wait still exits the instant the port
-    /// arrives, so a genuinely nearby server (LAN hbbs) pays nothing; only UDP-dead networks
-    /// wait out the full grace, and only on this round — the pure-TCP fallback round never
-    /// waits. Sized as a ceiling on real-world rendezvous RTTs plus one 20ms retransmit
-    /// (intercontinental ~300ms); paths slower than that lose UDP punch under a proxy, which
-    /// is today's behavior, not a regression.
     const UDP_NAT_TEST_GRACE: Duration = Duration::from_millis(400);
 
-    /// Below this, the measured TCP connect time is not a believable WAN round trip — it was
-    /// answered inside the LAN (host TUN proxy, gateway transparent proxy, or a genuinely local
-    /// server) — and must not be used to size the UDP window.
-    /// Generous on purpose: over-triggering costs nothing (the wait exits on arrival, and a
-    /// UDP-dead round loses to the racing fallback anyway), while a tight bound would let a
-    /// busy proxy's occasional ~80ms handshake slip through and silently drop UDP punch.
     const TCP_RTT_PLAUSIBLE_MIN: Duration = Duration::from_millis(100);
 
-    /// Delay before re-sending an ICE candidate over the rendezvous route once. The hop to the
-    /// peer can be UDP (the controlled side's mediator channel), so a candidate can be lost in
-    /// flight; the remote ICE agent dedups repeats, so the second copy is free.
     const WEBRTC_ICE_RESEND_DELAY: Duration = Duration::from_millis(400);
 
-    /// Bridge local ICE candidates to the peer over the punch socket, and feed the peer's back
-    /// into the pc.
-    ///
-    /// Never reconnect this socket: its address *is* the return route (the server mangles it into
-    /// `PunchHole.socket_addr` and resolves the echo through `tcp_punch`), so a new address is one
-    /// nothing points at. Once it dies, both directions are dead — abandon WebRTC, do not retry.
     fn spawn_webrtc_ice_bridge(
         mut socket: Stream,
         mut local_ice_rx: Option<UnboundedReceiver<String>>,
@@ -708,8 +600,6 @@ impl Client {
                                     candidate,
                                     ..Default::default()
                                 });
-                                // Bound the send so a stalled rendezvous socket cannot block the
-                                // bridge past its stop signal.
                                 match timeout(3000, socket.send(&msg)).await {
                                     Ok(Ok(())) => {}
                                     Ok(Err(err)) => {
@@ -732,8 +622,6 @@ impl Client {
                     }
                 }
 
-                // Re-send each candidate once after a short delay: the rendezvous hop to the peer
-                // can be UDP, so the first copy may be lost; the remote ICE agent dedups repeats.
                 let mut i = 0;
                 while i < pending_resend.len() {
                     if pending_resend[i].0.elapsed() >= Self::WEBRTC_ICE_RESEND_DELAY {
@@ -754,11 +642,6 @@ impl Client {
                     }
                 }
 
-                // Read one incoming message, blocking up to the poll window. Distinguish a real
-                // timeout (keep looping to drain outbound candidates) from stream EOF/error: the
-                // rendezvous server closes the punch connection after the response, and an
-                // unrecognized-message server closes it on the first candidate we send. Without
-                // this, the collapsed None-on-EOF made the loop hot-spin a core until stop.
                 match timeout(100, socket.next()).await {
                     Err(_) => {}
                     Ok(None) => break,
@@ -816,9 +699,6 @@ impl Client {
         (i32, String),
         bool,
     )> {
-        // Wrap the offerer so any early return below (?/bail) or cancellation of this future by
-        // the outer select_ok closes its pc instead of leaking it in SESSIONS. Disarmed via
-        // into_inner() once the stream is adopted into a connection attempt.
         let mut webrtc_offerer = webrtc_offerer.map(OffererGuard::new);
         let mut start = Instant::now();
         let mut socket = connect_tcp(&*rendezvous_server, CONNECT_TIMEOUT).await;
@@ -859,17 +739,9 @@ impl Client {
         let switch_code = interface.get_switch_code();
         let legacy_secure = !key.is_empty() && (!token.is_empty() || !switch_code.is_empty());
         let carries_offer = webrtc_offerer.as_ref().and_then(|g| g.stream()).is_some();
-        // Counted from before the key exchange, so the exchange spends the UDP NAT test's own
-        // wait rather than replacing it: the test runs beside both.
         let udp_nat_wait_from = Instant::now();
         let mut exchanged = false;
         if carries_offer {
-            // An offer puts both sides' ICE candidates, every interface address of both
-            // machines, on this socket, so it goes out only once the server's key exchange has
-            // encrypted it. When the server does not complete one, an hbbs from before the
-            // exchange, the offer is dropped and this becomes a punch without WebRTC, on a fresh
-            // socket since the failed exchange may have consumed a message on this one. Degrade
-            // to no WebRTC, never to WebRTC signalling in the clear.
             match secure_tcp_required(&mut socket, &key).await {
                 Ok(()) => exchanged = true,
                 Err(err) => {
@@ -889,15 +761,8 @@ impl Client {
                 .await
                 .map_err(|e| anyhow!("Failed to secure tcp: {}", e))?;
         }
-        // A token or switch code has always taken this socket straight to the punch without
-        // waiting for the UDP NAT test. The WebRTC exchange does not replace that wait, it only
-        // spends part of the same budget, so what is left of it is waited out here and a result
-        // that has already arrived is taken at once.
         if let Some(udp) = udp.1.as_ref().filter(|_| !legacy_secure) {
             let tm = udp_nat_wait_from;
-            // rtt is the TCP connect time. When it is too short to be a real WAN round trip it
-            // says nothing about the UDP path (a TUN VPN or the LAN gateway answered the
-            // handshake, not the server), so fall back to the flat grace; otherwise trust it.
             let udp_nat_wait = if rtt < Self::TCP_RTT_PLAUSIBLE_MIN {
                 Self::UDP_NAT_TEST_GRACE
             } else {
@@ -914,7 +779,6 @@ impl Client {
                 hbb_common::sleep(0.001).await;
             }
         }
-        // Stop UDP NAT test task if still running
         stop_udp_tx.map(|tx| tx.send(()));
         let mut msg_out = RendezvousMessage::new();
         let mut ipv6 = ipv6
@@ -928,10 +792,6 @@ impl Client {
             .map(|stream| stream.local_endpoint().to_owned())
             .unwrap_or_default();
         let allow_tcp_punch = tcp_punch_allowed() && request_allows_tcp_punch(&webrtc_sdp_offer);
-        // Every direct transport this round carries, not one of them: a round can carry several
-        // at once (a NAT port and an offer and a v6 address), and since the TCP punch became a
-        // switch it can carry none — a single name had to misreport both. `relay` is not a punch,
-        // it is what a round with nothing to punch with can still end as.
         let mut transports = Vec::new();
         if udp_nat_port > 0 {
             transports.push("UDP");
@@ -961,9 +821,6 @@ impl Client {
             force_relay: interface.is_force_relay(),
             socket_addr_v6: ipv6.1.unwrap_or_default(),
             switch_code,
-            // The offer's envelope itself declares its ICE policy (`ice_policy: "all"` under
-            // pure ws), telling the controlled side its answer may gather every candidate
-            // type despite force_relay instead of requiring TURN.
             webrtc_sdp_offer,
             ..Default::default()
         });
@@ -983,7 +840,6 @@ impl Client {
                 peer
             );
             socket.send(&msg_out).await?;
-            // below timeout should not bigger than hbbs's connection timeout.
             let attempt_deadline = Instant::now() + Duration::from_millis((i * 3000) as u64);
             loop {
                 let remaining = attempt_deadline.saturating_duration_since(Instant::now());
@@ -1076,9 +932,6 @@ impl Client {
                         let mut webrtc_for_connect = None;
                         if !rr.webrtc_sdp_answer.is_empty() {
                             if let Some(guard) = webrtc_offerer.take() {
-                                // Run the awaited setup on the guard's borrowed stream so a
-                                // cancellation during these awaits still closes the pc via the
-                                // guard's drop; take ownership only at the synchronous handoff.
                                 let setup_ok = if let Some(webrtc) = guard.stream() {
                                     if let Err(err) =
                                         webrtc.set_remote_endpoint(&rr.webrtc_sdp_answer).await
@@ -1114,15 +967,9 @@ impl Client {
                                     ));
                                     webrtc_for_connect = Some(webrtc);
                                 }
-                                // If setup failed, `guard` drops here and closes the pc.
                             }
                         }
-                        // An offerer not adopted into the relay race (empty answer) is closed by
-                        // the guard's drop here.
                         drop(webrtc_offerer.take());
-                        // Keep relay_server for a WebRTC secure-failure fallback: request_relay
-                        // coordinates a FRESH uuid via the rendezvous server, so it works even if
-                        // the raced create_relay already consumed the original uuid pairing.
                         let relay_server_rr = rr.relay_server.clone();
                         let fut = Self::create_relay(
                             &peer,
@@ -1144,37 +991,20 @@ impl Client {
                             }
                             .boxed(),
                         );
-                        // Keep the adopted offerer in a guard that stays armed across the race AND
-                        // secure_connection, so cancellation of this future by the outer race (or a
-                        // secure-handshake failure) closes the pc instead of leaking it. It is
-                        // disarmed only once WebRTC is confirmed the winning, secured transport.
                         let mut webrtc_guard = None;
                         let race_result = if let Some(webrtc) = webrtc_for_connect {
                             webrtc_guard = Some(OffererGuard::new(webrtc.clone()));
                             let mut raced = webrtc;
                             let webrtc_fut = async move {
                                 raced.wait_connected(CONNECT_TIMEOUT).await?;
-                                // Resolve relayed-ness here, not from the label: WebRTC is only a
-                                // P2P path when ICE nominated a non-TURN pair, and the race has to
-                                // know which it got. Committing a TURN pair as if it were direct
-                                // cancels a genuine direct attempt still in flight — the same
-                                // inversion the preference window exists to prevent, one level up.
                                 let relayed = raced.is_relayed().await.unwrap_or(true);
                                 Ok((Stream::WebRTC(raced), None, "WebRTC", !relayed))
                             }
                             .boxed();
                             if interface.is_policy_relay() {
-                                // Relay-only WebRTC can use only TURN, so it has no P2P advantage
-                                // over the RustDesk relay. Take the first successful relay instead
-                                // of delaying an already-ready result for the preference window.
-                                // Policy, not force_relay: under ws the offer is full ICE and a
-                                // direct path is exactly what the preference window exists for.
                                 connect_futures.push(webrtc_fut);
                                 select_ok(connect_futures).await.map(|r| r.0)
                             } else {
-                                // The peer answered WebRTC: prefer P2P. The relay result is held
-                                // for the preference window so WebRTC can win even though a relay
-                                // TCP connect completes much faster than ICE + DTLS setup.
                                 race_transports_prefer_webrtc(
                                     webrtc_fut,
                                     connect_futures,
@@ -1184,14 +1014,11 @@ impl Client {
                                 .await
                             }
                         } else {
-                            // Run all connection attempts concurrently, take the first success.
                             select_ok(connect_futures).await.map(|r| r.0)
                         };
                         if let Some(stop) = webrtc_bridge_stop {
                             let _ = stop.send(());
                         }
-                        // The ? / secure_connection failures below return early; webrtc_guard stays
-                        // in scope and closes the offerer on any such exit (loss, error, cancellation).
                         let (mut conn, kcp, mut typ, mut direct) = race_result?;
                         feedback = rr.feedback;
                         log::info!("{:?} used to establish {typ} connection", start.elapsed());
@@ -1205,11 +1032,6 @@ impl Client {
                         {
                             Ok(pk) => pk,
                             Err(e) if typ == "WebRTC" => {
-                                // WebRTC won the race but identity/DTLS binding failed. Fall back
-                                // to a freshly-coordinated relay (request_relay negotiates a new
-                                // uuid, immune to the raced create_relay having consumed the
-                                // original pairing) so a bad WebRTC handshake does not kill the
-                                // whole session when relay is available.
                                 log::warn!(
                                     "WebRTC secure handshake failed ({}), falling back to relay",
                                     e
@@ -1242,17 +1064,11 @@ impl Client {
                                 .await?;
                                 conn = relay_conn;
                                 typ = if use_ws() { "WebSocket" } else { "Relay" };
-                                // The transport is now a relay: the WebRTC win it replaced must
-                                // not carry its direct flag into the return, or the relay is
-                                // reported P2P and the outer race treats it as one.
                                 direct = false;
                                 pk
                             }
                             Err(e) => return Err(e),
                         };
-                        // `direct` came from the winning future, which resolved it while the pc was
-                        // definitely alive — the race needed it to pick a winner at all.
-                        // Secured and WebRTC won: disarm so the returned conn keeps the pc alive.
                         if typ == "WebRTC" {
                             if let Some(guard) = webrtc_guard.take() {
                                 let _ = guard.into_inner();
@@ -1266,10 +1082,6 @@ impl Client {
                     }
                     Some(rendezvous_message::Union::IceCandidate(ice)) => {
                         if Self::is_expected_webrtc_ice_candidate(&ice, &webrtc_session_key) {
-                            // Evict the oldest, not the newest. Candidates arrive in gathering
-                            // order — host first, then srflx, then relay — so dropping arrivals
-                            // would discard exactly the ones that traverse NAT and keep the
-                            // host ones that only work on a shared LAN.
                             if pending_webrtc_ice.len() >= Self::MAX_PENDING_WEBRTC_ICE {
                                 if let Some(n) = PENDING_ICE_FULL_LOG.due() {
                                     log::warn!(
@@ -1299,9 +1111,6 @@ impl Client {
         let mut webrtc_for_connect = None;
         if !webrtc_sdp_answer.is_empty() {
             if let Some(guard) = webrtc_offerer.take() {
-                // Run the awaited setup on the guard's borrowed stream so a cancellation during
-                // these awaits still closes the pc via the guard's drop; take ownership only at
-                // the synchronous handoff below.
                 let setup_ok = if let Some(webrtc) = guard.stream() {
                     if let Err(err) = webrtc.set_remote_endpoint(&webrtc_sdp_answer).await {
                         log::warn!("failed to set WebRTC answer: {}", err);
@@ -1329,7 +1138,6 @@ impl Client {
                     ));
                     webrtc_for_connect = Some(webrtc);
                 } else {
-                    // setup failed (guard dropped -> pc closed) or no stream: release the socket.
                     drop(socket);
                 }
             } else {
@@ -1338,12 +1146,8 @@ impl Client {
         } else {
             drop(socket);
         }
-        // An offerer never adopted into a connection attempt (e.g. the peer returned no WebRTC
-        // answer) is closed by the guard's drop here, so its pc does not linger in SESSIONS.
         drop(webrtc_offerer.take());
         if peer_addr.port() == 0 {
-            // Bailing before connect(): an offerer already adopted into webrtc_for_connect was
-            // disarmed out of its guard, so close it (and stop its bridge) explicitly here.
             if let Some(webrtc) = webrtc_for_connect.take() {
                 webrtc.close_detached();
             }
@@ -1393,7 +1197,6 @@ impl Client {
         ))
     }
 
-    /// Connect to the peer.
     async fn connect(
         local_addr: SocketAddr,
         peer: SocketAddr,
@@ -1422,9 +1225,6 @@ impl Client {
         Option<KcpStream>,
         &'static str,
     )> {
-        // Guard the offerer for the whole of connect(): any early return — cancellation during the
-        // awaits below, the relay override, or a secure_connection failure — closes its pc via the
-        // guard's drop. Disarmed only once WebRTC is the confirmed winning, secured transport.
         let mut webrtc_guard = webrtc_offerer.map(OffererGuard::new);
         let direct_failures = interface.get_lch().read().unwrap().direct_failures;
         let mut connect_timeout = 0;
@@ -1461,8 +1261,6 @@ impl Client {
         log::info!("peer address: {}, timeout: {}", peer, connect_timeout);
         let start = std::time::Instant::now();
 
-        // Each attempt carries whether its path is direct (4th field). TCP/UDP/IPv6 punch are
-        // always direct; WebRTC is direct only when ICE nominated a non-TURN pair.
         let mut direct_futures = Vec::new();
         if allow_tcp_punch {
             let fut = connect_tcp_local(peer, Some(local_addr), connect_timeout);
@@ -1494,31 +1292,19 @@ impl Client {
                 .boxed(),
             );
         }
-        // Race a clone of the offerer; the guard retains its own clone so a losing/cancelled race
-        // still closes the pc (select_ok drops the future's clone without closing).
         let webrtc_fut = webrtc_guard
             .as_ref()
             .and_then(|g| g.stream())
             .map(|stream| {
                 let mut raced = stream.clone();
-                // The punch-tuned timeout can be as low as 1s — enough for a raw TCP SYN but not
-                // for candidate trickle + ICE checks + DTLS. Give WebRTC its own floor (prefer-P2P)
-                // so a viable P2P path is not abandoned before it can complete; TCP/UDP keep the
-                // tighter timeout, so a working direct connection still wins immediately, and the
-                // relay fallback only waits the extra time when direct attempts all failed.
                 let webrtc_timeout = connect_timeout.max(Self::relay_fallback_delay_ms());
                 async move {
                     raced.wait_connected(webrtc_timeout).await?;
-                    // Resolve the pair here: a TURN win is relayed, not direct, and must be held
-                    // behind still-racing direct attempts rather than committed as P2P.
                     let relayed = raced.is_relayed().await.unwrap_or(true);
                     Ok((Stream::WebRTC(raced), None, "WebRTC", !relayed))
                 }
                 .boxed()
             });
-        // Prefer P2P: a direct result wins outright, a relayed WebRTC (TURN) is held for the
-        // window so a direct punch can still land. Falls back to plain select_ok when only one
-        // kind is present.
         let direct_result = match (webrtc_fut, direct_futures.is_empty()) {
             (Some(webrtc_fut), false) => {
                 race_transports_prefer_webrtc(
@@ -1540,13 +1326,7 @@ impl Client {
         if let Some(stop) = webrtc_bridge_stop {
             let _ = stop.send(());
         }
-        // webrtc_guard stays armed across the relay override and secure_connection below; it is
-        // disarmed only at the successful return when WebRTC is the kept transport.
 
-        // Keep a WebRTC win instead of replacing it with the RustDesk relay: under relay-by-
-        // policy the pc was built with Relay-only ICE (TURN configured), which already honors
-        // the relay requirement, and under ws-forced relay a direct full-ICE connection is the
-        // preferred outcome, not a violation.
         if (interface.is_force_relay() && typ != "WebRTC") || conn.is_err() {
             if !relay_server.is_empty() {
                 let switch_code = interface.get_switch_code();
@@ -1562,7 +1342,6 @@ impl Client {
                 )
                 .await;
                 if let Err(e) = conn {
-                    // this direct is mainly used by on_establish_connection_error, so we update it here before bail
                     interface.update_direct(Some(false));
                     bail!("Failed to connect via relay server: {}", e);
                 }
@@ -1582,9 +1361,6 @@ impl Client {
         let pk: Option<Vec<u8>> = match res {
             Ok(pk) => pk,
             Err(e) if typ == "WebRTC" && !relay_server.is_empty() => {
-                // WebRTC won the race but identity/DTLS binding failed; fall back to a freshly
-                // coordinated relay instead of failing the whole attempt. The guard is dropped
-                // first so the bad pc is closed promptly.
                 log::warn!("WebRTC secure handshake failed ({}), falling back to relay", e);
                 drop(webrtc_guard.take());
                 match Self::request_relay(
@@ -1626,21 +1402,14 @@ impl Client {
                 }
             }
             Err(e) => {
-                // this direct is mainly used by on_establish_connection_error, so we update it here before bail
                 interface.update_direct(Some(direct));
-                // webrtc_guard is still armed here, so a WebRTC winner whose secure handshake
-                // failed is closed by the guard's drop as we bail (no explicit close needed).
                 bail!(e);
             }
         };
         if typ == "WebRTC" {
-            // WebRTC through a TURN server (force_relay, or a TURN pair winning under All
-            // policy) is relayed traffic; report the direct flag accordingly. An unknown answer
-            // counts as relayed — claiming a P2P path needs evidence of one.
             if conn.webrtc_relayed().await.unwrap_or(true) {
                 direct = false;
             }
-            // Secured: disarm so the returned conn keeps the pc alive.
             if let Some(guard) = webrtc_guard.take() {
                 let _ = guard.into_inner();
             }
@@ -1649,7 +1418,6 @@ impl Client {
         Ok((conn, direct, pk, kcp, typ))
     }
 
-    /// Establish secure connection with the server.
     async fn secure_connection(
         peer_id: &str,
         signed_id_pk: Vec<u8>,
@@ -1661,14 +1429,6 @@ impl Client {
         } else {
             key
         });
-        // A WebRTC channel is peer-authenticated only once its DTLS fingerprint is bound to the
-        // verified peer identity below. Once a trusted identity IS established, every binding
-        // failure fails closed: any peer able to answer WebRTC also signs its fingerprint, so a
-        // mismatch is concrete evidence of a rendezvous/relay MITM (not a legacy peer), and
-        // callers fall back to a fresh relay connection rather than proceeding on that channel.
-        // Without a trusted identity (absent, or unverifiable under our configured root) no
-        // binding is possible at all; WebRTC then proceeds like TCP's non-secure fallback —
-        // DTLS-encrypted but reported unsecured. TCP/UDP/relay keep their existing behavior.
         let is_webrtc = conn.is_webrtc();
         let mut sign_pk = None;
         let mut option_pk = None;
@@ -1688,11 +1448,6 @@ impl Client {
         let sign_pk = match sign_pk {
             Some(v) => v,
             None => {
-                // No trusted peer identity (key-less deployment, or a blob that does not verify
-                // under our root), so no fingerprint binding is possible. Fall through like TCP's
-                // non-secure path with is_secured() false: bailing would only move the session to
-                // a relay that fails the same check and then runs in plaintext.
-                // send an empty message out in case server is setting up secure and waiting for first message
                 conn.send(&Message::new()).await?;
                 return Ok(option_pk);
             }
@@ -1706,10 +1461,6 @@ impl Client {
                             decode_id_pk_dtls(&si.id, &sign_pk)
                         {
                             if id == peer_id {
-                                // WebRTC only: bind the DTLS channel to the verified peer identity.
-                                // webrtc-rs already bound the certificate to the remote SDP, so
-                                // requiring the peer to have SIGNED that fingerprint defeats a
-                                // rendezvous/relay MITM that swaps SDPs. Fail closed.
                                 if is_webrtc {
                                     let actual_fp = conn.dtls_fingerprint(false).await.ok_or_else(
                                         || anyhow!("WebRTC DTLS fingerprint unavailable"),
@@ -1720,8 +1471,6 @@ impl Client {
                                 }
                                 let (asymmetric_value, symmetric_value, key) =
                                     create_symmetric_key_msg(their_pk_b);
-                                // A WebRTC stream is encrypted by DTLS and takes no stream
-                                // key of its own, split or not, so the pick says what runs: 0.
                                 let picked = if is_webrtc {
                                     0
                                 } else {
@@ -1756,7 +1505,6 @@ impl Client {
                             if is_webrtc {
                                 bail!("WebRTC peer identity could not be verified (refusing unbound channel)");
                             }
-                            // fall back to non-secure connection in case pk mismatch
                             log::info!("pk mismatch, fall back to non-secure");
                             let mut msg_out = Message::new();
                             msg_out.set_public_key(PublicKey::new());
@@ -1784,7 +1532,6 @@ impl Client {
         Ok(option_pk)
     }
 
-    /// Request a relay connection to the server.
     async fn request_relay(
         peer: &str,
         relay_server: String,
@@ -1800,7 +1547,6 @@ impl Client {
         let mut ipv4 = true;
 
         for i in 1..=3 {
-            // use different socket due to current hbbs implementation requiring different nat address for each attempt
             let mut socket = connect_tcp(rendezvous_server, CONNECT_TIMEOUT)
                 .await
                 .with_context(|| "Failed to connect to rendezvous server")?;
@@ -1849,7 +1595,6 @@ impl Client {
         Self::create_relay(peer, uuid, relay_server, key, conn_type, ipv4).await
     }
 
-    /// Create a relay connection to the server.
     async fn create_relay(
         peer: &str,
         uuid: String,
@@ -1858,7 +1603,6 @@ impl Client {
         conn_type: ConnType,
         ipv4: bool,
     ) -> ResultType<Stream> {
-        // The proxy's address family does not constrain the relay target.
         let relay_server = check_port(relay_server, RELAY_PORT);
         let use_ws_proxy = Config::is_proxy() && is_ws_endpoint(&check_ws(&relay_server));
         let mut conn = connect_tcp(
@@ -1894,8 +1638,6 @@ impl Client {
 
     #[cfg(not(target_os = "ios"))]
     fn try_stop_clipboard() {
-        // Disconnected Flutter sessions may keep UI handlers alive, so only connected sessions
-        // should block clipboard cleanup.
         #[cfg(feature = "flutter")]
         if crate::flutter::sessions::has_connected_sessions_running(ConnType::DEFAULT_CONN) {
             return;
@@ -1914,11 +1656,6 @@ impl Client {
         clipboard::platform::unix::fuse::uninit_fuse_context(true);
     }
 
-    // `try_start_clipboard` is called by all session when connection is established. (When handling peer info).
-    // This function only create one thread with a loop, the loop is shared by all sessions.
-    // After all sessions are end, the loop exists.
-    //
-    // If clipboard update is detected, the text will be sent to all sessions by `send_clipboard_msg`.
     #[cfg(not(any(target_os = "android", target_os = "ios")))]
     fn try_start_clipboard(
         _client_clip_ctx: Option<ClientClipboardContext>,
@@ -1958,7 +1695,6 @@ impl Client {
                     }
                     #[cfg(all(target_os = "linux", feature = "unix-file-copy-paste"))]
                     Ok(ClipboardEvent::InitialSelection) => {
-                        // Preserve file startup sync without bypassing text initial-sync settings.
                         handler.check_clipboard(false);
                     }
                     Ok(ClipboardEvent::Stop) => {
@@ -2074,7 +1810,7 @@ impl ClientClipboardHandler {
                 if let Some(urls) = check_clipboard_files(&mut self.ctx, ClipboardSide::Client, false) {
                     if !urls.is_empty() {
                         #[cfg(target_os = "macos")]
-                        if crate::clipboard::is_file_url_set_by_rustdesk(&urls) {
+                        if crate::clipboard::is_file_url_set_by_supportdesk(&urls) {
                             return;
                         }
                         match clipboard::platform::unix::serv_files::sync_files(&urls) {
@@ -2136,7 +1872,6 @@ impl ClientClipboardHandler {
     }
 }
 
-/// Audio handler for the [`Client`].
 #[derive(Default)]
 pub struct AudioHandler {
     audio_decoder: Option<(AudioDecoder, Vec<f32>)>,
@@ -2219,7 +1954,7 @@ impl Default for AudioBuffer {
     fn default() -> Self {
         Self(
             Arc::new(std::sync::Mutex::new(
-                ringbuf::HeapRb::<f32>::new(48000 * 2 * AUDIO_BUFFER_MS / 1000), // 48000hz, 2 channel
+                ringbuf::HeapRb::<f32>::new(48000 * 2 * AUDIO_BUFFER_MS / 1000),
             )),
             48000 * 2,
             [0; 30],
@@ -2263,9 +1998,7 @@ impl AudioBuffer {
             tms = dt;
         }
 
-        // the safer water mark to drop
         let mut zero = 0;
-        // the water mark taking most of time
         let mut max = 0;
         for i in 0..30 {
             if self.2[i] == 0 && zero == i {
@@ -2281,9 +2014,6 @@ impl AudioBuffer {
         }
         zero = zero * 2 / 3;
 
-        // how many data can be dropped:
-        // 1. will not drop if buffered data is less than 600ms
-        // 2. choose based on min(zero, max)
         const N: usize = 4;
         self.2[max] = 0;
         if max < 6 {
@@ -2304,16 +2034,12 @@ impl AudioBuffer {
         }
     }
 
-    /// The caller must hold the PCM buffer lock while signaling the discard.
     fn signal_discontinuity(&self) -> usize {
         self.3
             .fetch_add(1, std::sync::atomic::Ordering::Relaxed)
             .wrapping_add(1)
     }
 
-    /// append pcm to audio buffer, if buffered data
-    /// exceeds AUDIO_BUFFER_MS,  only AUDIO_BUFFER_MS
-    /// will be kept.
     fn append_pcm2(&self, buffer: &[f32]) -> usize {
         let mut lock = self.0.lock().unwrap();
         let cap = lock.capacity();
@@ -2332,9 +2058,6 @@ impl AudioBuffer {
         occupied
     }
 
-    /// append pcm to audio buffer, trying to drop data
-    /// when data is too much (per 12 seconds) based
-    /// statistics.
     pub fn append_pcm(&mut self, buffer: &[f32]) {
         let having = self.append_pcm2(buffer);
         self.try_shrink(having);
@@ -2358,20 +2081,19 @@ impl AudioHandler {
         }
 
         self.simple = Some(Simple::new(
-            None,                   // Use the default server
-            &crate::get_app_name(), // Our application’s name
-            Direction::Playback,    // We want a playback stream
-            None,                   // Use the default device
-            "playback",             // Description of our stream
-            &spec,                  // Our sample format
-            None,                   // Use default channel map
-            None,                   // Use default buffering attributes
+            None,
+            &crate::get_app_name(),
+            Direction::Playback,
+            None,
+            "playback",
+            &spec,
+            None,
+            None,
         )?);
         self.sample_rate = (format0.sample_rate, format0.sample_rate);
         Ok(())
     }
 
-    /// Start the audio playback.
     #[cfg(not(target_os = "linux"))]
     fn start_audio(&mut self, format0: AudioFormat) -> ResultType<()> {
         let device = AUDIO_HOST
@@ -2389,7 +2111,6 @@ impl AudioHandler {
         let mut config: StreamConfig = config.into();
         #[cfg(not(any(target_os = "android", target_os = "ios")))]
         {
-            // this makes ios and android audio output not work
             config.buffer_size = cpal::BufferSize::Fixed(64);
         }
 
@@ -2426,7 +2147,6 @@ impl AudioHandler {
         Ok(())
     }
 
-    /// Handle audio format and create an audio decoder.
     pub fn handle_format(&mut self, f: AudioFormat) {
         self.handle_format_with_start(f, Self::start_audio);
     }
@@ -2466,7 +2186,6 @@ impl AudioHandler {
                     && !previous.playback_recovery.report_pending();
                 #[cfg(not(target_os = "linux"))]
                 if result.is_err() && keep_existing_stream {
-                    // The restarted capture has new Opus history even when output startup fails.
                     previous.audio_decoder = self.audio_decoder.take();
                     *self = previous;
                     self.handle_audio_start_result(result, true);
@@ -2496,7 +2215,6 @@ impl AudioHandler {
         }
     }
 
-    /// Handle audio frame and play it.
     #[inline]
     pub fn handle_frame(&mut self, frame: AudioFrame) {
         #[cfg(not(target_os = "linux"))]
@@ -2554,7 +2272,6 @@ impl AudioHandler {
         });
     }
 
-    /// Build audio output stream for current device.
     #[cfg(not(target_os = "linux"))]
     fn build_output_stream<T: cpal::Sample + cpal::SizedSample + cpal::FromSample<f32>>(
         &mut self,
@@ -2566,7 +2283,6 @@ impl AudioHandler {
         let err_fn = self.playback_recovery.new_error_callback();
         #[cfg(not(target_os = "windows"))]
         let err_fn = move |err| {
-            // too many errors, will improve later
             log::trace!("an error occurred on stream: {}", err);
         };
         self.audio_buffer
@@ -2636,14 +2352,13 @@ mod audio_format_tests {
     }
 }
 
-/// Video handler for the [`Client`].
 pub struct VideoHandler {
     decoder: Decoder,
     pub rgb: ImageRgb,
     pub texture: ImageTexture,
     recorder: Arc<Mutex<Option<Recorder>>>,
     record: bool,
-    _display: usize, // useful for debug
+    _display: usize,
     fail_counter: usize,
     first_frame: bool,
 }
@@ -2659,7 +2374,6 @@ impl VideoHandler {
         None
     }
 
-    /// Create a new video handler.
     pub fn new(format: CodecFormat, _display: usize) -> Self {
         let luid = Self::get_adapter_luid();
         log::info!("new video handler for display #{_display}, format: {format:?}, luid: {luid:?}");
@@ -2681,7 +2395,6 @@ impl VideoHandler {
         }
     }
 
-    /// Handle a new video frame.
     #[inline]
     pub fn handle_frame(
         &mut self,
@@ -2735,7 +2448,6 @@ impl VideoHandler {
         }
     }
 
-    /// Reset the decoder, change format if it is Some
     pub fn reset(&mut self, format: Option<CodecFormat>) {
         log::info!(
             "reset video handler for display #{}, format: {format:?}",
@@ -2750,7 +2462,6 @@ impl VideoHandler {
         self.first_frame = true;
     }
 
-    /// Start or stop screen record.
     pub fn record_screen(&mut self, start: bool, id: String, display_idx: usize, camera: bool) {
         self.record = false;
         if start {
@@ -2771,7 +2482,6 @@ impl VideoHandler {
     }
 }
 
-// The source of sent password
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 enum PasswordSource {
     PersonalAb(Vec<u8>),
@@ -2786,7 +2496,6 @@ impl Default for PasswordSource {
 }
 
 impl PasswordSource {
-    // Whether the password is personal ab password
     pub fn is_personal_ab(&self, password: &[u8]) -> bool {
         if password.is_empty() {
             return false;
@@ -2797,7 +2506,6 @@ impl PasswordSource {
         }
     }
 
-    // Whether the password is shared ab password
     pub fn is_shared_ab(&self, password: &[u8], hash: &Hash) -> bool {
         if password.is_empty() {
             return false;
@@ -2808,7 +2516,6 @@ impl PasswordSource {
         }
     }
 
-    //  Whether the password equals to the connected password
     fn equal(password: &str, connected_password: &[u8], hash: &Hash) -> bool {
         let mut hasher = Sha256::new();
         hasher.update(password);
@@ -2825,43 +2532,27 @@ struct ConnToken {
     session_id: u64,
 }
 
-/// Login config handler for [`Client`].
 #[derive(Default)]
 pub struct LoginConfigHandler {
     id: String,
     pub conn_type: ConnType,
     pub is_terminal_admin: bool,
     hash: Hash,
-    password: Vec<u8>, // remember password for reconnect
+    password: Vec<u8>,
     pub remember: bool,
     config: PeerConfig,
     pub port_forward: (String, i32),
-    /// This login's `multiplex`, filled with `port_forward` under the turn
-    /// lock. `port_forward_mux` says whether a mapping probes for the tunnel;
-    /// one the probe latched to the raw pipe logs in without asking, so an
-    /// upgraded peer keeps giving it the raw pipe.
     pub(crate) port_forward_multiplex: bool,
-    /// Set once per window, before its mappings start: every accept's claim
-    /// reads it.
     pub(crate) port_forward_mux: bool,
-    /// Held by a port-forward mapping from filling `port_forward` and `hash`
-    /// until its login is built from them; a window's mappings log in
-    /// concurrently.
     pub(crate) port_forward_login_turn: Arc<hbb_common::tokio::sync::Mutex<()>>,
     pub version: i64,
     features: Option<Features>,
-    pub session_id: u64, // used for local <-> server communication
+    pub session_id: u64,
     pub supported_encoding: SupportedEncoding,
     restarting_remote_device: bool,
-    // Start time of the restart grace window. On Windows the peer may briefly
-    // reconnect before the real reboot disconnect.
     restart_remote_device_at: Option<Instant>,
     pub force_relay: bool,
-    // force_relay minus the WebSocket transport. ws forces relay for classic punching but says
-    // nothing about ICE, so every WebRTC decision keys off this: policy means Relay-only ICE,
-    // transport may still go direct.
     pub policy_relay: bool,
-    // The peer-scoped part of it, and the only part that may be written back to the peer.
     pub peer_relay: bool,
     pub direct: Option<bool>,
     pub received: bool,
@@ -2869,15 +2560,15 @@ pub struct LoginConfigHandler {
     #[cfg(feature = "flutter")]
     #[cfg(not(any(target_os = "android", target_os = "ios")))]
     switch_back_allowed: bool,
-    pub save_ab_password_to_recent: bool, // true: connected with ab password
+    pub save_ab_password_to_recent: bool,
     pub other_server: Option<(String, String, String)>,
     pub custom_fps: Arc<Mutex<Option<usize>>>,
     pub adapter_luid: Option<i64>,
     pub mark_unsupported: Vec<CodecFormat>,
     pub selected_windows_session_id: Option<u32>,
     pub peer_info: Option<PeerInfo>,
-    password_source: PasswordSource, // where the sent password comes from
-    shared_password: Option<String>, // Store the shared password
+    password_source: PasswordSource,
+    shared_password: Option<String>,
     pub enable_trusted_devices: bool,
     pub record_state: bool,
     pub record_permission: bool,
@@ -2896,12 +2587,6 @@ impl LoginConfigHandler {
         self.hash = hash;
     }
 
-    /// Initialize the login config handler.
-    ///
-    /// # Arguments
-    ///
-    /// * `id` - id of peer
-    /// * `conn_type` - Connection type enum.
     pub fn initialize(
         &mut self,
         id: String,
@@ -2934,7 +2619,6 @@ impl LoginConfigHandler {
                 key.to_owned()
             };
 
-            // here we can check <id>/r@server
             let real_id = crate::ui_interface::handle_relay_id(raw_id).to_string();
             if real_id != raw_id {
                 force_relay = true;
@@ -2961,22 +2645,18 @@ impl LoginConfigHandler {
         let mut sid = 0;
         if let Some(token) = conn_token {
             sid = token.session_id;
-            self.password = token.password; // use as last password
+            self.password = token.password;
             self.password_source = token.password_source;
         }
         if sid == 0 {
             sid = rand::random();
             if sid == 0 {
-                // you won the lottery
                 sid = 1;
             }
         }
         self.session_id = sid;
         self.supported_encoding = Default::default();
         self.clear_restarting_remote_device();
-        // Three scopes: what was decided about this PEER, what this CLIENT is set up as (proxy),
-        // and what its TRANSPORT forces (ws). Only the first may be written back to the peer's
-        // config — persisting the others would make a local setup a permanent peer property.
         self.peer_relay =
             config::option2bool("force-always-relay", &self.get_option("force-always-relay"))
                 || force_relay;
@@ -3003,7 +2683,6 @@ impl LoginConfigHandler {
         self.record_state = false;
         self.record_permission = true;
 
-        // `std::env::remove_var("IS_TERMINAL_ADMIN");` is called in `session_add_sync()` - `flutter_ffi.rs`.
         let is_terminal_admin = conn_type == ConnType::TERMINAL
             && std::env::var("IS_TERMINAL_ADMIN").map_or(false, |v| v == "Y");
         self.is_terminal_admin = is_terminal_admin;
@@ -3026,8 +2705,6 @@ impl LoginConfigHandler {
         }
     }
 
-    /// Check if the client should auto login.
-    /// Return password if the client should auto login, otherwise return empty string.
     pub fn should_auto_login(&self) -> String {
         let l = self.lock_after_session_end.v;
         let a = !self.get_option("auto-login").is_empty();
@@ -3039,28 +2716,16 @@ impl LoginConfigHandler {
         }
     }
 
-    /// Load [`PeerConfig`].
     pub fn load_config(&self) -> PeerConfig {
         debug_assert!(self.id.len() > 0);
         PeerConfig::load(&self.id)
     }
 
-    /// Save a [`PeerConfig`] into the handler.
-    ///
-    /// # Arguments
-    ///
-    /// * `config` - [`PeerConfig`] to save.
     pub fn save_config(&mut self, config: PeerConfig) {
         config.store(&self.id);
         self.config = config;
     }
 
-    /// Set an option for handler's [`PeerConfig`].
-    ///
-    /// # Arguments
-    ///
-    /// * `k` - key of option
-    /// * `v` - value of option
     pub fn set_option(&mut self, k: String, v: String) {
         let mut config = self.load_config();
         if v == self.get_option(&k) {
@@ -3070,91 +2735,49 @@ impl LoginConfigHandler {
         self.save_config(config);
     }
 
-    //to-do: too many dup code below.
 
-    /// Save view style to the current config.
-    ///
-    /// # Arguments
-    ///
-    /// * `value` - The view style to be saved.
     pub fn save_view_style(&mut self, value: String) {
         let mut config = self.load_config();
         config.view_style = value;
         self.save_config(config);
     }
 
-    /// Save keyboard mode to the current config.
-    ///
-    /// # Arguments
-    ///
-    /// * `value` - The view style to be saved.
     pub fn save_keyboard_mode(&mut self, value: String) {
         let mut config = self.load_config();
         config.keyboard_mode = value;
         self.save_config(config);
     }
 
-    /// Save reverse mouse wheel ("", "Y") to the current config.
-    ///
-    /// # Arguments
-    ///
-    /// * `value` - The reverse mouse wheel ("", "Y").
     pub fn save_reverse_mouse_wheel(&mut self, value: String) {
         let mut config = self.load_config();
         config.reverse_mouse_wheel = value;
         self.save_config(config);
     }
 
-    /// Save "displays_as_individual_windows" ("", "Y") to the current config.
-    ///
-    /// # Arguments
-    ///
-    /// * `value` - The "displays_as_individual_windows" value ("", "Y").
     pub fn save_displays_as_individual_windows(&mut self, value: String) {
         let mut config = self.load_config();
         config.displays_as_individual_windows = value;
         self.save_config(config);
     }
 
-    /// Save "use_all_my_displays_for_the_remote_session" ("", "Y") to the current config.
-    ///
-    /// # Arguments
-    ///
-    /// * `value` - The "use_all_my_displays_for_the_remote_session" value ("", "Y").
     pub fn save_use_all_my_displays_for_the_remote_session(&mut self, value: String) {
         let mut config = self.load_config();
         config.use_all_my_displays_for_the_remote_session = value;
         self.save_config(config);
     }
 
-    /// Save scroll style to the current config.
-    ///
-    /// # Arguments
-    ///
-    /// * `value` - The scroll style to be saved.
     pub fn save_scroll_style(&mut self, value: String) {
         let mut config = self.load_config();
         config.scroll_style = value;
         self.save_config(config);
     }
 
-    /// Save edge scroll edge thickness to the current config.
-    ///
-    /// # Arguments
-    ///
-    /// * `value` - The edge thickness to be saved.
     pub fn save_edge_scroll_edge_thickness(&mut self, value: i32) {
         let mut config = self.load_config();
         config.edge_scroll_edge_thickness = value;
         self.save_config(config);
     }
 
-    /// Set a ui config of flutter for handler's [`PeerConfig`].
-    ///
-    /// # Arguments
-    ///
-    /// * `k` - key of option
-    /// * `v` - value of option
     pub fn save_ui_flutter(&mut self, k: String, v: String) {
         let mut config = self.load_config();
         if v.is_empty() {
@@ -3171,12 +2794,6 @@ impl LoginConfigHandler {
         self.save_config(config);
     }
 
-    /// Get a ui config of flutter for handler's [`PeerConfig`].
-    /// Return String if the option is found, otherwise return "".
-    ///
-    /// # Arguments
-    ///
-    /// * `k` - key of option
     pub fn get_ui_flutter(&self, k: &str) -> String {
         if let Some(v) = self.config.ui_flutter.get(k) {
             v.clone()
@@ -3185,15 +2802,6 @@ impl LoginConfigHandler {
         }
     }
 
-    /// Toggle an option in the handler.
-    ///
-    /// # Arguments
-    ///
-    /// * `name` - The name of the option to toggle.
-    ///
-    // It's Ok to check the option empty in this function.
-    // `toggle_option()` is only called in a session.
-    // Custom client advanced settings will not effect this function.
     pub fn toggle_option(&mut self, name: String) -> Option<Message> {
         let mut option = OptionMessage::default();
         let mut config = self.load_config();
@@ -3254,7 +2862,6 @@ impl LoginConfigHandler {
             })
             .into();
         } else if name == "privacy-mode" {
-            // try toggle privacy mode
             option.privacy_mode = (if config.privacy_mode.v {
                 BoolOption::No
             } else {
@@ -3341,19 +2948,10 @@ impl LoginConfigHandler {
         Some(msg_out)
     }
 
-    /// Get [`PeerConfig`] of the current [`LoginConfigHandler`].
-    ///
-    /// # Arguments
     pub fn get_config(&mut self) -> &mut PeerConfig {
         &mut self.config
     }
 
-    /// Get [`OptionMessage`] of the current [`LoginConfigHandler`].
-    /// Return `None` if there's no option, for example, when the session is only for file transfer.
-    ///
-    /// # Arguments
-    ///
-    /// * `ignore_default` - If `true`, ignore the default value of the option.
     fn get_option_message(&self, ignore_default: bool) -> Option<OptionMessage> {
         if self.conn_type.eq(&ConnType::PORT_FORWARD)
             || self.conn_type.eq(&ConnType::RDP)
@@ -3437,13 +3035,6 @@ impl LoginConfigHandler {
         )
     }
 
-    /// Parse the image quality option.
-    /// Return [`ImageQuality`] if the option is valid, otherwise return `None`.
-    ///
-    /// # Arguments
-    ///
-    /// * `q` - The image quality option.
-    /// * `ignore_default` - Ignore the default value.
     fn get_image_quality_enum(&self, q: &str, ignore_default: bool) -> Option<ImageQuality> {
         if q == "low" {
             Some(ImageQuality::Low)
@@ -3460,15 +3051,6 @@ impl LoginConfigHandler {
         }
     }
 
-    /// Get the status of a toggle option.
-    ///
-    /// # Arguments
-    ///
-    /// * `name` - The name of the toggle option.
-    ///
-    // It's Ok to check the option empty in this function.
-    // `get_toggle_option()` is only called in a session.
-    // Custom client advanced settings will not effect this function.
     pub fn get_toggle_option(&self, name: &str) -> bool {
         if name == "show-remote-cursor" {
             self.config.show_remote_cursor.v
@@ -3509,7 +3091,6 @@ impl LoginConfigHandler {
         }
     }
 
-    /// Create a [`Message`] for refreshing video.
     pub fn refresh() -> Message {
         let mut misc = Misc::new();
         misc.set_refresh_video(true);
@@ -3518,7 +3099,6 @@ impl LoginConfigHandler {
         msg_out
     }
 
-    /// Create a [`Message`] for refreshing video.
     pub fn refresh_display(display: usize) -> Message {
         let mut misc = Misc::new();
         misc.set_refresh_video_display(display as _);
@@ -3527,12 +3107,6 @@ impl LoginConfigHandler {
         msg_out
     }
 
-    /// Create a [`Message`] for saving custom image quality.
-    ///
-    /// # Arguments
-    ///
-    /// * `bitrate` - The given bitrate.
-    /// * `quantizer` - The given quantizer.
     pub fn save_custom_image_quality(&mut self, image_quality: i32) -> Message {
         let mut misc = Misc::new();
         misc.set_option(OptionMessage {
@@ -3548,11 +3122,6 @@ impl LoginConfigHandler {
         msg_out
     }
 
-    /// Save the given image quality to the config.
-    /// Return a [`Message`] that contains image quality, or `None` if the image quality is not valid.
-    /// # Arguments
-    ///
-    /// * `value` - The image quality.
     pub fn save_image_quality(&mut self, value: String) -> Option<Message> {
         let mut res = None;
         if let Some(q) = self.get_image_quality_enum(&value, false) {
@@ -3577,12 +3146,6 @@ impl LoginConfigHandler {
         self.save_config(config);
     }
 
-    /// Create a [`Message`] for saving custom fps.
-    ///
-    /// # Arguments
-    ///
-    /// * `fps` - The given fps.
-    /// * `save_config` - Save the config.
     pub fn set_custom_fps(&mut self, fps: i32, save_config: bool) -> Message {
         let mut misc = Misc::new();
         misc.set_option(OptionMessage {
@@ -3635,12 +3198,6 @@ impl LoginConfigHandler {
         self.save_config(config);
     }
 
-    /// Get user name.
-    /// Return the name of the given peer. If the peer has no name, return the name in the config.
-    ///
-    /// # Arguments
-    ///
-    /// * `pi` - peer info.
     pub fn get_username(&self, pi: &PeerInfo) -> String {
         return if pi.username.is_empty() {
             self.info.username.clone()
@@ -3649,12 +3206,6 @@ impl LoginConfigHandler {
         };
     }
 
-    /// Handle peer info.
-    ///
-    /// # Arguments
-    ///
-    /// * `username` - The name of the peer.
-    /// * `pi` - The peer info.
     pub fn handle_peer_info(&mut self, pi: &PeerInfo) {
         if !pi.version.is_empty() {
             self.version = hbb_common::get_version_number(&pi.version);
@@ -3672,8 +3223,6 @@ impl LoginConfigHandler {
         let remember = self.remember;
         let hash = self.hash.clone();
         if remember {
-            // remember is true: use PeerConfig password or ui login
-            // not sync shared password to recent
             if !password.is_empty()
                 && password != password0
                 && !self.password_source.is_shared_ab(&password, &hash)
@@ -3683,7 +3232,6 @@ impl LoginConfigHandler {
             }
         } else {
             if self.password_source.is_personal_ab(&password) {
-                // sync personal ab password to recent automatically
                 config.password = password.clone();
                 log::debug!("save ab password of {} to recent", self.id);
             } else if !password0.is_empty() {
@@ -3698,8 +3246,6 @@ impl LoginConfigHandler {
                     .insert("other-server-key".to_owned(), c.clone());
             }
         }
-        // peer_relay only — see `initialize`: neither the proxy nor the WebSocket transport is a
-        // fact about this peer, and writing one here makes it permanent.
         if self.peer_relay {
             config
                 .options
@@ -3707,7 +3253,6 @@ impl LoginConfigHandler {
         }
         #[cfg(feature = "flutter")]
         {
-            // sync connected password to personal ab automatically if it is not shared password
             if !config.password.is_empty()
                 && !self.password_source.is_shared_ab(&password, &hash)
                 && !self.password_source.is_personal_ab(&password)
@@ -3740,7 +3285,6 @@ impl LoginConfigHandler {
                 config.keyboard_mode = KeyboardMode::Legacy.to_string();
             }
         }
-        // no matter if change, for update file time
         self.save_config(config);
         self.supported_encoding = pi.encoding.clone().unwrap_or_default();
         log::info!("peer info supported_encoding:{:?}", self.supported_encoding);
@@ -3765,7 +3309,6 @@ impl LoginConfigHandler {
         serde_json::to_string::<HashMap<String, String>>(&x).unwrap_or_default()
     }
 
-    /// Create a [`Message`] for login.
     fn create_login_msg(
         &self,
         os_username: String,
@@ -3925,11 +3468,6 @@ impl LoginConfigHandler {
         if !self.restarting_remote_device {
             return false;
         }
-        // Keep this flag alive for a short grace window instead of clearing it on
-        // connection_ready or the first peer bytes. During OS restart the peer can
-        // briefly reconnect before the real reboot disconnect, and clearing it too
-        // early would let the next disconnect escape the restart flow and fall back
-        // to the normal error dialog / manual reconnect path.
         self.restart_remote_device_at
             .map(|started_at| started_at.elapsed() < RESTART_REMOTE_DEVICE_GRACE)
             .unwrap_or(false)
@@ -3960,7 +3498,6 @@ impl LoginConfigHandler {
     }
 }
 
-/// Media data.
 pub enum MediaData {
     VideoQueue,
     VideoFrame(Box<VideoFrame>),
@@ -3972,11 +3509,6 @@ pub enum MediaData {
 
 pub type MediaSender = mpsc::Sender<MediaData>;
 
-/// Start video thread.
-///
-/// # Arguments
-///
-/// * `video_callback` - The callback for video frame. Being called when a video frame is ready.
 pub fn start_video_thread<F, T>(
     session: Session<T>,
     display: usize,
@@ -4022,7 +3554,6 @@ pub fn start_video_thread<F, T>(
                                 }
                             }
                             _ => {
-                                // unreachable!();
                                 continue;
                             }
                         };
@@ -4052,13 +3583,11 @@ pub fn start_video_thread<F, T>(
                                         pixelbuffer,
                                     );
 
-                                    // chroma
                                     if tmp_chroma.is_some() && last_chroma != tmp_chroma {
                                         last_chroma = tmp_chroma;
                                         *chroma.write().unwrap() = tmp_chroma;
                                     }
 
-                                    // fps calculation
                                     fps_calculate(
                                         &mut skip_beginning,
                                         &fps,
@@ -4069,17 +3598,6 @@ pub fn start_video_thread<F, T>(
                                     );
                                 }
                                 Err(e) => {
-                                    // This is a simple workaround.
-                                    //
-                                    // I only see the following error:
-                                    // FailedCall("errcode=1 scrap::common::vpxcodec:libs\\scrap\\src\\common\\vpxcodec.rs:433:9")
-                                    // When switching from all displays to one display, the error occurs.
-                                    // eg:
-                                    // 1. Connect to a device with two displays (A and B).
-                                    // 2. Switch to display A. The error occurs.
-                                    // 3. If the error does not occur. Switch from A to display B. The error occurs.
-                                    //
-                                    // to-do: fix the error
                                     log::error!("handle video frame error, {}", e);
                                     session.refresh_video(display as _);
                                 }
@@ -4087,7 +3605,6 @@ pub fn start_video_thread<F, T>(
                             }
                         }
 
-                        // check invalid decoders
                         let mut should_update_supported = false;
                         if let Some(handler) = video_handler.as_mut() {
                             if !handler.decoder.valid()
@@ -4129,8 +3646,6 @@ pub fn start_video_thread<F, T>(
     });
 }
 
-/// Start an audio thread
-/// Return a audio [`MediaSender`]
 pub fn start_audio_thread() -> MediaSender {
     let (audio_sender, audio_receiver) = mpsc::channel::<MediaData>();
     std::thread::spawn(move || {
@@ -4174,7 +3689,6 @@ fn fps_calculate(
         *duration = std::time::Duration::ZERO;
         *skip_beginning = 0;
     }
-    // // The first frame will be very slow
     if *skip_beginning < 3 {
         *skip_beginning += 1;
         return;
@@ -4185,7 +3699,6 @@ fn fps_calculate(
     if *count % 10 == 0 && ms > 0 {
         *fps.write().unwrap() = Some((*count as usize) * 1000 / (ms as usize));
     }
-    // Clear to get real-time fps
     if *count >= 30 {
         *count = 0;
         *duration = Duration::ZERO;
@@ -4193,7 +3706,6 @@ fn fps_calculate(
 }
 
 fn get_hwcodec_config() {
-    // for sciter and unilink
     #[cfg(feature = "hwcodec")]
     #[cfg(any(target_os = "windows", target_os = "linux"))]
     {
@@ -4246,12 +3758,6 @@ async fn do_sync_cpu_usage() {
     log::info!("{:?} used to sync cpu usage", start.elapsed());
 }
 
-/// Handle latency test.
-///
-/// # Arguments
-///
-/// * `t` - The latency test message.
-/// * `peer` - The peer.
 pub async fn handle_test_delay(t: TestDelay, peer: &mut Stream) {
     if !t.from_client {
         let mut msg_out = Message::new();
@@ -4260,11 +3766,9 @@ pub async fn handle_test_delay(t: TestDelay, peer: &mut Stream) {
     }
 }
 
-/// Whether is track pad scrolling.
 #[inline]
 #[cfg(all(target_os = "macos", not(feature = "flutter")))]
 fn check_scroll_on_mac(mask: i32, x: i32, y: i32) -> bool {
-    // flutter version we set mask type bit to 4 when track pad scrolling.
     if mask & 7 == crate::input::MOUSE_TYPE_TRACKPAD {
         return true;
     }
@@ -4277,28 +3781,12 @@ fn check_scroll_on_mac(mask: i32, x: i32, y: i32) -> bool {
     } else if y == 1 {
         btn != 0x78 && btn != 0x780000
     } else if x != 0 {
-        // No mouse support horizontal scrolling.
         true
     } else {
         false
     }
 }
 
-/// Send mouse data.
-///
-/// # Arguments
-///
-/// * `mask` - Mouse event.
-///     * mask = buttons << 3 | type
-///     * type, 1: down, 2: up, 3: wheel, 4: trackpad
-///     * buttons, 1: left, 2: right, 4: middle
-/// * `x` - X coordinate.
-/// * `y` - Y coordinate.
-/// * `alt` - Whether the alt key is pressed.
-/// * `ctrl` - Whether the ctrl key is pressed.
-/// * `shift` - Whether the shift key is pressed.
-/// * `command` - Whether the command key is pressed.
-/// * `interface` - The interface for sending data.
 #[inline]
 pub fn send_mouse(
     mask: i32,
@@ -4367,12 +3855,6 @@ pub fn send_pointer_device_event(
     interface.send(Data::Message(msg_out));
 }
 
-/// Activate OS by sending mouse movement.
-///
-/// # Arguments
-///
-/// * `interface` - The interface for sending data.
-/// * `send_left_click` - Whether to send a click event.
 fn activate_os(interface: &impl Interface, send_left_click: bool) {
     let left_down = MOUSE_BUTTON_LEFT << 3 | MOUSE_TYPE_DOWN;
     let left_up = MOUSE_BUTTON_LEFT << 3 | MOUSE_TYPE_UP;
@@ -4391,41 +3873,17 @@ fn activate_os(interface: &impl Interface, send_left_click: bool) {
     std::thread::sleep(Duration::from_millis(50));
     send_mouse(click_down, 0, 0, false, false, false, false, interface);
     send_mouse(click_up, 0, 0, false, false, false, false, interface);
-    /*
-    let mut key_event = KeyEvent::new();
-    // do not use Esc, which has problem with Linux
-    key_event.set_control_key(ControlKey::RightArrow);
-    key_event.press = true;
-    let mut msg_out = Message::new();
-    msg_out.set_key_event(key_event.clone());
-    interface.send(Data::Message(msg_out.clone()));
-    */
 }
 
-/// Input the OS's password.
-///
-/// # Arguments
-///
-/// * `p` - The password.
-/// * `activate` - Whether to activate OS.
-/// * `interface` - The interface for sending data.
 pub fn input_os_password(p: String, activate: bool, interface: impl Interface) {
     std::thread::spawn(move || {
         _input_os_password(p, activate, interface);
     });
 }
 
-/// Input the OS's password.
-///
-/// # Arguments
-///
-/// * `p` - The password.
-/// * `activate` - Whether to activate OS.
-/// * `interface` - The interface for sending data.
 fn _input_os_password(p: String, activate: bool, interface: impl Interface) {
     let input_password = !p.is_empty();
     if activate {
-        // Click event is used to bring up the password input box.
         activate_os(&interface, input_password);
         std::thread::sleep(Duration::from_millis(1200));
     }
@@ -4444,9 +3902,6 @@ fn _input_os_password(p: String, activate: bool, interface: impl Interface) {
     interface.send(Data::Message(msg_out));
 }
 
-/// Auto Login. A peer that can check for its logon or lock screen gets the password and types it
-/// itself, only if it is there right then. Keys typed from here land in whatever has focus if the
-/// screen is not locked by the time they arrive.
 pub fn auto_login(p: String, pi: &PeerInfo, interface: impl Interface) {
     if !is_peer_handling_os_login(pi) {
         input_os_password(p, true, interface);
@@ -4464,7 +3919,6 @@ pub fn auto_login(p: String, pi: &PeerInfo, interface: impl Interface) {
     });
 }
 
-/// Windows and macOS peers from the 1.5.1 release handle `os_login`.
 fn is_peer_handling_os_login(pi: &PeerInfo) -> bool {
     (pi.platform == crate::common::PLATFORM_WINDOWS || pi.platform == crate::common::PLATFORM_MACOS)
         && hbb_common::get_version_number(&pi.version) >= hbb_common::get_version_number("1.5.1")
@@ -4498,8 +3952,6 @@ lazy_static::lazy_static! {
     };
 }
 
-/// Handle login error.
-/// Return true if the password is wrong, return false if there's an actual error.
 pub fn handle_login_error(
     lc: Arc<RwLock<LoginConfigHandler>>,
     err: &str,
@@ -4532,7 +3984,6 @@ pub fn handle_login_error(
             );
             msgbox_info.try_again
         } else {
-            // unreachable!
             false
         }
     } else {
@@ -4545,8 +3996,6 @@ pub fn handle_login_error(
     }
 }
 
-// "Switch sides" requires the incoming-only client to connect back to its
-// controlling peer; verify the local pending uuid before opening the connection.
 #[cfg(feature = "flutter")]
 #[cfg(not(any(target_os = "android", target_os = "ios")))]
 async fn is_switch_sides_back(conn_type: ConnType, interface: &impl Interface) -> bool {
@@ -4623,15 +4072,6 @@ async fn request_local_switch_sides_uuid(
     }
 }
 
-/// Handle hash message sent by peer.
-/// Hash will be used for login.
-///
-/// # Arguments
-///
-/// * `lc` - Login config.
-/// * `hash` - Hash sent by peer.
-/// * `interface` - [`Interface`] for sending data.
-/// * `peer` - [`Stream`] for communicating with peer.
 pub async fn handle_hash(
     lc: Arc<RwLock<LoginConfigHandler>>,
     password_preset: &str,
@@ -4641,9 +4081,7 @@ pub async fn handle_hash(
     peer: &mut Stream,
 ) -> bool {
     lc.write().unwrap().hash = hash.clone();
-    // Take care of password application order
 
-    // switch_uuid
     #[cfg(feature = "flutter")]
     #[cfg(not(any(target_os = "android", target_os = "ios")))]
     {
@@ -4667,8 +4105,6 @@ pub async fn handle_hash(
                 }
             }
         }
-        // Incoming-only may connect out solely for a verified switch-back;
-        // never fall through to password login, including on repeated hashes.
         if config::is_incoming_only() {
             interface.msgbox("error", "Connection Error", "Incoming only mode", "");
             let mut misc = Misc::new();
@@ -4681,9 +4117,7 @@ pub async fn handle_hash(
             return false;
         }
     }
-    // last password
     let mut password = lc.read().unwrap().password.clone();
-    // preset password
     if password.is_empty() {
         if !password_preset.is_empty() {
             let mut hasher = Sha256::new();
@@ -4694,8 +4128,6 @@ pub async fn handle_hash(
             lc.write().unwrap().password_source = Default::default();
         }
     }
-    // shared password
-    // Currently it's used only when click shared ab peer card
     let shared_password = lc.write().unwrap().shared_password.take();
     if let Some(shared_password) = shared_password {
         if !shared_password.is_empty() {
@@ -4707,14 +4139,12 @@ pub async fn handle_hash(
             lc.write().unwrap().password_source = PasswordSource::SharedAb(shared_password);
         }
     }
-    // peer config password
     if password.is_empty() {
         password = lc.read().unwrap().config.password.clone();
         if !password.is_empty() {
             lc.write().unwrap().password_source = Default::default();
         }
     }
-    // personal ab password
     if password.is_empty() {
         try_get_password_from_personal_ab(lc.clone(), &mut password);
     }
@@ -4727,7 +4157,7 @@ pub async fn handle_hash(
             hasher.update(&hash.salt);
             let res = hasher.finalize();
             password = res[..].into();
-            lc.write().unwrap().password_source = PasswordSource::SharedAb(p); // reuse SharedAb here
+            lc.write().unwrap().password_source = PasswordSource::SharedAb(p);
         }
     }
 
@@ -4746,7 +4176,6 @@ pub async fn handle_hash(
     }
 
     let password = if password.is_empty() {
-        // login without password, the remote side can click accept
         interface.msgbox("input-password", "Password Required", "", "");
         Vec::new()
     } else {
@@ -4798,15 +4227,6 @@ fn try_get_password_from_personal_ab(lc: Arc<RwLock<LoginConfigHandler>>, passwo
     }
 }
 
-/// Send login message to peer.
-///
-/// # Arguments
-///
-/// * `lc` - Login config.
-/// * `os_username` - OS username.
-/// * `os_password` - OS password.
-/// * `password` - Password.
-/// * `peer` - [`Stream`] for communicating with peer.
 async fn send_login(
     lc: Arc<RwLock<LoginConfigHandler>>,
     os_username: String,
@@ -4823,16 +4243,6 @@ async fn send_login(
     peer.send(&msg_out).await
 }
 
-/// Handle login request made from ui.
-///
-/// # Arguments
-///
-/// * `lc` - Login config.
-/// * `os_username` - OS username.
-/// * `os_password` - OS password.
-/// * `password` - Password.
-/// * `remember` - Whether to remember password.
-/// * `peer` - [`Stream`] for communicating with peer.
 pub async fn handle_login_from_ui(
     lc: Arc<RwLock<LoginConfigHandler>>,
     os_username: String,
@@ -4897,10 +4307,8 @@ async fn send_switch_login_request(
     allow_err!(peer.send(&msg_out).await);
 }
 
-/// Interface for client to send data and commands.
 #[async_trait]
 pub trait Interface: Send + Clone + 'static + Sized {
-    /// Send message data to remote peer.
     fn send(&self, data: Data);
     fn msgbox(&self, msgtype: &str, title: &str, text: &str, link: &str);
     fn handle_login_error(&self, err: &str) -> bool;
@@ -4971,22 +4379,18 @@ pub trait Interface: Send + Clone + 'static + Sized {
         };
         if is_restarting {
             log::info!("Restart remote device, suppress connection error: {err}");
-            // Flutter treats this as a reconnect control event. The text is kept
-            // for legacy UI and existing translation reuse.
             self.msgbox("restarting", "Restarting remote device", "Connection in progress. Please wait.", "");
             return;
         }
 
         let mut relay_hint = false;
         let mut relay_hint_type = "relay-hint";
-        // force relay
         let errno = errno::errno().0;
         log::error!("Connection closed: {err}({errno})");
         if direct == Some(true)
             && ((cfg!(windows) && (errno == 10054 || err.contains("10054")))
                 || (!cfg!(windows) && (errno == 104 || err.contains("104")))
                 || (!err.contains("Failed") && err.contains("deadline")))
-        // deadline: https://github.com/rustdesk/rustdesk-server-pro/discussions/325, most likely comes from secure tcp timeout
         {
             relay_hint = true;
             if !received {
@@ -4994,7 +4398,6 @@ pub trait Interface: Send + Clone + 'static + Sized {
             }
         }
 
-        // relay-hint
         if cfg!(feature = "flutter") && relay_hint {
             self.msgbox(relay_hint_type, title, &text, "");
         } else {
@@ -5003,7 +4406,6 @@ pub trait Interface: Send + Clone + 'static + Sized {
     }
 }
 
-/// Data used by the client interface.
 #[derive(Clone)]
 pub enum Data {
     Close,
@@ -5060,7 +4462,6 @@ pub async fn confirm_insecure_connection(
     false
 }
 
-/// Keycode for key events.
 #[derive(Clone, Debug)]
 pub enum Key {
     ControlKey(ControlKey),
@@ -5115,12 +4516,12 @@ lazy_static::lazy_static! {
         ("VK_RBRACKET", Key::Chr(']' as _)),
         ("VK_BACKSLASH", Key::Chr('\\' as _)),
         ("VK_MINUS", Key::Chr('-' as _)),
-        ("VK_PLUS", Key::Chr('=' as _)), // it is =, but sciter return VK_PLUS
-        ("VK_DIVIDE", Key::ControlKey(ControlKey::Divide)), // numpad
-        ("VK_MULTIPLY", Key::ControlKey(ControlKey::Multiply)), // numpad
-        ("VK_SUBTRACT", Key::ControlKey(ControlKey::Subtract)), // numpad
-        ("VK_ADD", Key::ControlKey(ControlKey::Add)), // numpad
-        ("VK_DECIMAL", Key::ControlKey(ControlKey::Decimal)), // numpad
+        ("VK_PLUS", Key::Chr('=' as _)),
+        ("VK_DIVIDE", Key::ControlKey(ControlKey::Divide)),
+        ("VK_MULTIPLY", Key::ControlKey(ControlKey::Multiply)),
+        ("VK_SUBTRACT", Key::ControlKey(ControlKey::Subtract)),
+        ("VK_ADD", Key::ControlKey(ControlKey::Add)),
+        ("VK_DECIMAL", Key::ControlKey(ControlKey::Decimal)),
         ("VK_F1", Key::ControlKey(ControlKey::F1)),
         ("VK_F2", Key::ControlKey(ControlKey::F2)),
         ("VK_F3", Key::ControlKey(ControlKey::F3)),
@@ -5192,13 +4593,6 @@ lazy_static::lazy_static! {
     ].iter().cloned().collect();
 }
 
-/// Check if the given message is an error and can be retried.
-///
-/// # Arguments
-///
-/// * `msgtype` - The message type.
-/// * `title` - The title of the message.
-/// * `text` - The text of the message.
 #[inline]
 pub fn check_if_retry(msgtype: &str, title: &str, text: &str, retry_for_relay: bool) -> bool {
     msgtype == "error"
@@ -5207,7 +4601,6 @@ pub fn check_if_retry(msgtype: &str, title: &str, text: &str, retry_for_relay: b
             || (!text.to_lowercase().contains("offline")
                 && !text.to_lowercase().contains("not exist")
                 && (!text.to_lowercase().contains("handshake")
-                    // https://github.com/snapview/tungstenite-rs/blob/e7e060a89a72cb08e31c25a6c7284dc1bd982e23/src/error.rs#L248
                     || text
                         .to_lowercase()
                         .contains("connection reset without closing handshake") && use_ws())
@@ -5256,7 +4649,7 @@ async fn hc_connection_(
     mut rx: UnboundedReceiver<()>,
     token: String,
 ) -> ResultType<()> {
-    let mut timer = crate::rustdesk_interval(interval(crate::TIMER_OUT));
+    let mut timer = crate::supportdesk_interval(interval(crate::TIMER_OUT));
     let mut last_recv_msg = Instant::now();
     let mut keep_alive = crate::DEFAULT_KEEP_ALIVE;
 
@@ -5283,7 +4676,7 @@ async fn hc_connection_(
                 let bytes = res.ok_or_else(|| anyhow!("Rendezvous connection is reset by the peer"))??;
                 if bytes.is_empty() {
                     conn.send_bytes(bytes::Bytes::new()).await?;
-                    continue; // heartbeat
+                    continue;
                 }
                 let msg = RendezvousMessage::parse_from_bytes(&bytes)?;
                 match msg.union {
@@ -5297,7 +4690,6 @@ async fn hc_connection_(
                 }
             }
             _  = timer.tick() => {
-                // https://www.emqx.com/en/blog/mqtt-keep-alive
                 if last_recv_msg.elapsed().as_millis() as u64 > keep_alive as u64 * 3 / 2 {
                     bail!("HC connection is timeout");
                 }
@@ -5371,15 +4763,10 @@ pub mod peer_online {
                 return Ok((vec![], ids.clone()));
             }
         };
-        // TODO: Use long connections to avoid socket creation
-        // If we use a Arc<Mutex<Option<FramedStream>>> to hold and reuse the previous socket,
-        // we may face the following error:
-        // An established connection was aborted by the software in your host machine. (os error 10053)
         if let Err(e) = socket.send(&msg_out).await {
             log::debug!("Failed to send peers online states query, {e}");
             return Ok((vec![], ids.clone()));
         }
-        // Retry for 2 times to get the online response
         for _ in 0..2 {
             if let Some(msg_in) =
                 crate::get_next_nonkeyexchange_msg(&mut socket, Some(timeout.as_millis() as _))
@@ -5388,8 +4775,6 @@ pub mod peer_online {
                 match msg_in.union {
                     Some(rendezvous_message::Union::OnlineResponse(online_response)) => {
                         let states = online_response.states;
-                        // One bit per ID, rounded up to whole bytes:
-                        // 0 IDs -> 0 bytes; 1..=8 -> 1; 9..=16 -> 2; 17..=24 -> 3.
                         let required_len = ids.len().div_ceil(u8::BITS as usize);
                         if states.len() < required_len {
                             bail!(
@@ -5400,7 +4785,6 @@ pub mod peer_online {
                         let mut onlines = Vec::new();
                         let mut offlines = Vec::new();
                         for i in 0..ids.len() {
-                            // bytes index from left to right
                             let bit_value = 0x01 << (7 - i % 8);
                             if (states[i / 8] & bit_value) == bit_value {
                                 onlines.push(ids[i].clone());
@@ -5411,11 +4795,9 @@ pub mod peer_online {
                         return Ok((onlines, offlines));
                     }
                     _ => {
-                        // ignore
                     }
                 }
             } else {
-                // TODO: Make sure socket closed?
                 bail!("Online stream receives None");
             }
         }
@@ -5448,22 +4830,15 @@ async fn test_udp_uat(
     udp_port: Arc<Mutex<u16>>,
     mut stop_udp_rx: oneshot::Receiver<()>,
 ) -> ResultType<()> {
-    // The punch port must come only from the rendezvous server's TestNatResponse, which
-    // observes THIS socket's public mapping. A STUN probe binds a different socket and reports
-    // a different NAT mapping, so racing it here could advertise a port the peer can never
-    // reach (and, on symmetric NAT, silently poison the whole UDP punch).
     let start = Instant::now();
     let mut msg_out = RendezvousMessage::new();
     msg_out.set_test_nat_request(TestNatRequest {
         ..Default::default()
     });
-    // Adaptive retry strategy that works within TCP RTT constraints
-    // Start with aggressive sending, then back off
-    let mut retry_interval = Duration::from_millis(20); // Start fast
+    let mut retry_interval = Duration::from_millis(20);
     const MAX_INTERVAL: Duration = Duration::from_millis(200);
     let mut packets_sent = 0;
 
-    // Send initial burst to improve reliability
     let data = msg_out.write_to_bytes()?;
     for _ in 0..2 {
         if let Err(e) = udp_socket.send_to(&data, server_addr).await {
@@ -5482,18 +4857,15 @@ async fn test_udp_uat(
                 break;
             }
             _ = hbb_common::sleep(retry_interval.as_secs_f32()) => {
-                // Adaptive retry: send fewer packets as time goes on
                 let elapsed = last_send_time.elapsed();
 
                 if elapsed >= retry_interval {
-                    // Send single packet (not double) to reduce network load
                     if let Err(e) = udp_socket.send_to(&data, server_addr).await {
                         log::warn!("Failed to send UDP NAT test retry packet: {}", e);
                     } else {
                         packets_sent += 1;
                     }
 
-                    // Exponentially increase interval to reduce network pressure
                     retry_interval = std::cmp::min(
                         Duration::from_millis((retry_interval.as_millis() as f64 * 1.5) as u64),
                         MAX_INTERVAL
@@ -5517,8 +4889,6 @@ async fn test_udp_uat(
                         }
                     }
                     Err(e) => {
-                        // Same ICMP-driven errors as punch_udp sees. Without a pause this arm
-                        // re-arms recv immediately and spins the loop at CPU speed.
                         if let Some(n) = UDP_UAT_ERR_LOG.due() {
                             log::warn!("UDP NAT test socket error x{n}, last: {e}");
                         }
@@ -5591,8 +4961,6 @@ mod webrtc_race_tests {
 
     const NOT_P2P: fn(&&'static str) -> bool = |_| false;
 
-    // A direct result must win even when it lands first — the LAN ordering, where ICE beats the
-    // relay's TCP connect. Parking it as if it were a relay commits the relay on arrival.
     #[tokio::test]
     async fn direct_result_wins_even_when_it_arrives_first() {
         let got = race_transports_prefer_webrtc(
@@ -5619,8 +4987,6 @@ mod webrtc_race_tests {
         assert_eq!(got, "webrtc");
     }
 
-    // The preferred branch runs a whole punch attempt, so it can itself end in a relay. That must
-    // not preempt a direct punch still in flight on the fallback branch.
     #[tokio::test]
     async fn relay_from_preferred_branch_does_not_preempt_a_direct_fallback() {
         let got = race_transports_prefer_webrtc(
@@ -5634,7 +5000,6 @@ mod webrtc_race_tests {
         assert_eq!(got, "direct");
     }
 
-    // ...but it is still committed once nothing direct can arrive.
     #[tokio::test]
     async fn relay_from_preferred_branch_committed_when_fallback_fails() {
         let got = race_transports_prefer_webrtc(
@@ -5663,8 +5028,6 @@ mod webrtc_race_tests {
         assert!(start.elapsed() < Duration::from_secs(5));
     }
 
-    // WebRTC fails first (others still racing), then a relay arrives with a direct attempt still
-    // unfinished behind it. The relay must not be committed while that direct attempt can win.
     #[tokio::test]
     async fn relay_does_not_preempt_unfinished_direct_after_webrtc_fails() {
         let got = race_transports_prefer_webrtc(
@@ -5749,8 +5112,6 @@ mod webrtc_race_tests {
         assert!(start.elapsed() < Duration::from_secs(5));
     }
 
-    // Both legs get the same rendezvous refusal; the UI needs the text verbatim, e.g. the
-    // offline auto-retry matches it whole. Either leg may fail last.
     #[tokio::test]
     async fn same_failure_on_both_legs_reported_once() {
         for (webrtc_ms, fallback_ms) in [(10, 20), (20, 10)] {
@@ -5781,8 +5142,6 @@ mod kx_tests {
 
     const PEER_ID: &str = "123456789";
 
-    /// What the stand-in controlled peer saw: the version the controller picked, and whether the
-    /// controller's first application message decrypted.
     struct Seen {
         picked: u32,
         decrypted: bool,
@@ -5804,10 +5163,6 @@ mod kx_tests {
         }
     }
 
-    /// A stand-in controlled peer on loopback. It advertises `advertised` in its signed identity
-    /// and runs the key under `run`, or under the version the controller picked when `run` is
-    /// `None`, then sends one message and reads one. Returns the host, its identity as the
-    /// rendezvous server would sign it, and what it saw.
     async fn controlled_stub(
         advertised: u32,
         run: Option<u32>,
@@ -5870,8 +5225,6 @@ mod kx_tests {
         (host, signed_id_pk, rx)
     }
 
-    /// The controller's handshake against the stub, then one application message each way.
-    /// Returns what the stub saw and whether the stub's message decrypted on this side.
     async fn handshake(advertised: u32, run: Option<u32>) -> (Seen, bool) {
         let (rs_pk, rs_sk) = sign::gen_keypair();
         let (host, signed_id_pk, seen) = controlled_stub(advertised, run, rs_sk).await;
@@ -5902,8 +5255,6 @@ mod kx_tests {
 
     #[tokio::test]
     async fn test_a_pick_lowered_in_transit_decrypts_nothing() {
-        // The controlled side takes 0 from a controller without versions, so a lowered pick is
-        // caught by the keys disagreeing on the first application message, not before.
         let (seen, decrypted) = handshake(KX_VERSION_LATEST, Some(0)).await;
         assert_eq!(seen.picked, 1);
         assert!(!seen.decrypted && !decrypted);

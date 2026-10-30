@@ -12,7 +12,6 @@ internal class DocumentDescriptors {
     fun open(descriptor: ParcelFileDescriptor): JSONObject {
         val id = UUID.randomUUID().toString()
         try {
-            // Only detach the duplicate: the original carries the provider's close/error channel.
             val duplicate = ParcelFileDescriptor.dup(descriptor.fileDescriptor)
             descriptors[id] = descriptor
             return JSONObject().put("fd", duplicate.detachFd()).put("descriptor", id)

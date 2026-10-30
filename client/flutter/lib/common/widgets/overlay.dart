@@ -169,7 +169,6 @@ class CustomAppBar extends StatelessWidget implements PreferredSizeWidget {
   Size get preferredSize => const Size.fromHeight(kToolbarHeight);
 }
 
-/// floating buttons of back/home/recent actions for android
 class DraggableMobileActions extends StatelessWidget {
   DraggableMobileActions(
       {this.onBackPressed,
@@ -278,8 +277,6 @@ class DraggableKeyPosition {
     _triggerStore();
   }
 
-  // Adjust position to keep it in the screen
-  // Only used for desktop and web desktop
   tryAdjust(double w, double h, double scale) {
     final size = MediaQuery.of(Get.context!).size;
     w = w * scale;
@@ -397,7 +394,6 @@ class _DraggableState extends State<Draggable> {
   }
 
   checkScreenSize() {
-    // Ensure the draggable always stays within current screen bounds
     widget.position.tryAdjust(widget.width, widget.height, 1);
   }
 
@@ -405,19 +401,16 @@ class _DraggableState extends State<Draggable> {
     final bottomHeight = MediaQuery.of(context).viewInsets.bottom;
     final currentVisible = bottomHeight != 0;
 
-    // save
     if (!_keyboardVisible && currentVisible) {
       _saveHeight = position.dy;
     }
 
-    // reset
     if (_lastBottomHeight > 0 && bottomHeight == 0) {
       setState(() {
         widget.position.update(Offset(position.dx, _saveHeight));
       });
     }
 
-    // onKeyboardVisible
     if (_keyboardVisible && currentVisible) {
       final sumHeight = bottomHeight + widget.height;
       final contextHeight = MediaQuery.of(context).size.height;
@@ -493,19 +486,16 @@ class IOSDraggableState extends State<IOSDraggable> {
     final bottomHeight = MediaQuery.of(context).viewInsets.bottom;
     final currentVisible = bottomHeight != 0;
 
-    // save
     if (!_keyboardVisible && currentVisible) {
       _saveHeight = position.pos.dy;
     }
 
-    // reset
     if (_lastBottomHeight > 0 && bottomHeight == 0) {
       setState(() {
         position.update(Offset(position.pos.dx, _saveHeight));
       });
     }
 
-    // onKeyboardVisible
     if (_keyboardVisible && currentVisible) {
       final sumHeight = bottomHeight + _height;
       final contextHeight = MediaQuery.of(context).size.height;
@@ -596,7 +586,6 @@ class QualityMonitor extends StatelessWidget {
                     children: [
                       _row("Speed", qualityMonitorModel.data.speed ?? '-'),
                       _row("FPS", qualityMonitorModel.data.fps ?? '-'),
-                      // let delay be 0 if fps is 0
                       _row(
                           "Delay",
                           "${qualityMonitorModel.data.delay == null ? '-' : (qualityMonitorModel.data.fps ?? "").replaceAll(' ', '').replaceAll('0', '').isEmpty ? 0 : qualityMonitorModel.data.delay}ms",
@@ -618,7 +607,7 @@ class QualityMonitor extends StatelessWidget {
 class BlockableOverlayState extends OverlayKeyState {
   final _middleBlocked = false.obs;
 
-  VoidCallback? onMiddleBlockedClick; // to-do use listener
+  VoidCallback? onMiddleBlockedClick;
 
   RxBool get middleBlocked => _middleBlocked;
 
@@ -635,7 +624,6 @@ class BlockableOverlayState extends OverlayKeyState {
   void applyFfi(FFI ffi) {
     ffi.dialogManager.setOverlayState(this);
     ffi.chatModel.setOverlayState(this);
-    // make remote page penetrable automatically, effective for chat over remote
     onMiddleBlockedClick = () {
       setMiddleBlocked(false);
     };
@@ -656,7 +644,6 @@ class BlockableOverlay extends StatelessWidget {
     final initialEntries = [
       OverlayEntry(builder: (_) => underlying),
 
-      /// middle layer
       OverlayEntry(
           builder: (context) => Obx(() => Listener(
               onPointerDown: (_) {
@@ -671,7 +658,6 @@ class BlockableOverlay extends StatelessWidget {
       initialEntries.addAll(upperLayer!);
     }
 
-    /// set key
     return Overlay(key: state.key, initialEntries: initialEntries);
   }
 }

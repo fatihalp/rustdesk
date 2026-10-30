@@ -181,7 +181,6 @@ class MultipleSessions: Reactor.Component {
     }
 
     function stupidUpdate() {
-        /* hidden is workaround of stupid sciter bug */
         this.hidden = true;
         this.update();
         var me = this;

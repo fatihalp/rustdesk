@@ -1,4 +1,4 @@
-var pi = handler.get_default_pi(); // peer information
+var pi = handler.get_default_pi();
 var chat_msgs = [];
 
 var svg_fullscreen = <svg viewBox="0 0 357 357">
@@ -43,7 +43,7 @@ function stateChanged() {
     adjustBorder();
     adaptDisplay();
     if (cur_window_state != View.WINDOW_MINIMIZED) {
-        view.focus = handler; // to make focus away from restore/maximize button, so that enter key work
+        view.focus = handler;
     }
     var fs = view.windowState == View.WINDOW_FULL_SCREEN;
     var el = $(#fullscreen);
@@ -390,7 +390,6 @@ class Header: Reactor.Component {
     }
     
     event click $(#refresh) {
-        // 0 is just a dummy value. It will be ignored by the handler.
         handler.refresh_video(0);
     }
 
@@ -539,7 +538,6 @@ handler.updateDisplays = function(v) {
 }
 
 handler.setMultipleWindowsSession = function(sessions) {
-    // It will be covered by other message box if the timer is not used, 
     self.timer(1000ms, function() {
         msgbox("multiple-sessions-nocancel", translate("Multiple Windows sessions found"), <MultipleSessionComponent sessions={sessions} />, "", function(res) {
             if (res && res.sid) {
@@ -583,7 +581,6 @@ function updatePrivacyMode() {
     if (el) {
         var supported = handler.is_privacy_mode_supported();
         if (!supported) {
-            // el.attributes.toggleClass("line-through", true);
             el.style["display"]="none";
         } else {
             var value = handler.get_toggle_option("privacy-mode");
@@ -661,7 +658,6 @@ function updateWindowToolbarPosition() {
 }
 
 view.on("size", function() {
-    // ensure size is done, so add timer
     self.timer(1ms, function() {
         updateWindowToolbarPosition();
         adaptDisplay();

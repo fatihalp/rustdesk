@@ -64,8 +64,6 @@ class GroupModel {
   Future<void> _pull() async {
     List<DeviceGroupPayload> tmpDeviceGroups = List.empty(growable: true);
     if (!await _getDeviceGroups(tmpDeviceGroups)) {
-      // old hbbs doesn't support this api
-      // return;
     }
     tmpDeviceGroups.sort((a, b) => a.name.compareTo(b.name));
     List<UserPayload> tmpUsers = List.empty(growable: true);
@@ -77,7 +75,6 @@ class GroupModel {
       return;
     }
     deviceGroups.value = tmpDeviceGroups;
-    // me first
     var index = tmpUsers
         .indexWhere((user) => user.name == gFFI.userModel.userName.value);
     if (index != -1) {
@@ -89,7 +86,6 @@ class GroupModel {
         !deviceGroups.any((d) => d.name == selectedAccessibleItemName.value)) {
       selectedAccessibleItemName.value = '';
     }
-    // recover online
     final oldOnlineIDs = peers.where((e) => e.online).map((e) => e.id).toList();
     peers.value = tmpPeers;
     peers
@@ -150,9 +146,6 @@ class GroupModel {
       return true;
     } catch (err) {
       debugPrint('get accessible device groups: $err');
-      // old hbbs doesn't support this api
-      // groupLoadError.value =
-      //     '${translate('pull_group_failed_tip')}: ${translate(err.toString())}';
     }
     return false;
   }
@@ -186,7 +179,7 @@ class GroupModel {
               json['error']
                   .toString()
                   .contains('ambiguous column name: status')) {
-            throw translate('upgrade_rustdesk_server_pro_to_{1.1.10}_tip');
+            throw translate('upgrade_supportdesk_server_pro_to_{1.1.10}_tip');
           } else {
             throw json['error'];
           }
@@ -368,7 +361,6 @@ class GroupModel {
 
   void _tryHandlePullError() {
     String errorMessage = groupLoadError.value;
-    // The error message is "Retrieving accessible devices is disabled."
     if (errorMessage.toLowerCase().contains('disabled')) {
       users.clear();
       peers.clear();

@@ -26,7 +26,6 @@ import 'package:flutter_hbb/native/custom_cursor.dart'
 
 final SimpleWrapper<bool> _firstEnterImage = SimpleWrapper(false);
 
-// Used to skip session close if "move to new window" is clicked.
 final Map<String, bool> closeSessionOnDispose = {};
 
 class ViewCameraPage extends StatefulWidget {
@@ -82,8 +81,6 @@ class _ViewCameraPageState extends State<ViewCameraPage>
 
   final FocusNode _rawKeyFocusNode = FocusNode(debugLabel: "rawkeyFocusNode");
 
-  // We need `_instanceIdOnEnterOrLeaveImage4Toolbar` together with `_onEnterOrLeaveImage4Toolbar`
-  // to identify the toolbar instance and its callback function.
   int? _instanceIdOnEnterOrLeaveImage4Toolbar;
   Function(bool)? _onEnterOrLeaveImage4Toolbar;
 
@@ -130,20 +127,8 @@ class _ViewCameraPageState extends State<ViewCameraPage>
     _ffi.qualityMonitorModel.checkShowQualityMonitor(sessionId);
     _ffi.dialogManager.loadMobileActionsOverlayVisible();
     DesktopMultiWindow.addListener(this);
-    // if (!_isCustomCursorInited) {
-    //   customCursorController.registerNeedUpdateCursorCallback(
-    //       (String? lastKey, String? currentKey) async {
-    //     if (_firstEnterImage.value) {
-    //       _firstEnterImage.value = false;
-    //       return true;
-    //     }
-    //     return lastKey == null || lastKey != currentKey;
-    //   });
-    //   _isCustomCursorInited = true;
-    // }
 
     _blockableOverlayState.applyFfi(_ffi);
-    // Call onSelected in post frame callback, since we cannot guarantee that the callback will not call setState.
     WidgetsBinding.instance.addPostFrameCallback((_) {
       widget.tabController?.onSelected?.call(widget.id);
     });
@@ -152,13 +137,8 @@ class _ViewCameraPageState extends State<ViewCameraPage>
   @override
   void onWindowBlur() {
     super.onWindowBlur();
-    // On windows, we use `focus` way to handle keyboard better.
-    // Now on Linux, there's some rdev issues which will break the input.
-    // We disable the `focus` way for non-Windows temporarily.
     if (isWindows) {
       _isWindowBlur = true;
-      // unfocus the primary-focus when the whole window is lost focus,
-      // and let OS to handle events instead.
       _rawKeyFocusNode.unfocus();
     }
     stateGlobal.isFocused.value = false;
@@ -167,7 +147,6 @@ class _ViewCameraPageState extends State<ViewCameraPage>
   @override
   void onWindowFocus() {
     super.onWindowFocus();
-    // See [onWindowBlur].
     if (isWindows) {
       _isWindowBlur = false;
     }
@@ -177,15 +156,12 @@ class _ViewCameraPageState extends State<ViewCameraPage>
   @override
   void onWindowRestore() {
     super.onWindowRestore();
-    // On windows, we use `onWindowRestore` way to handle window restore from
-    // a minimized state.
     if (isWindows) {
       _isWindowBlur = false;
     }
     WakelockManager.enable(_uniqueKey);
   }
 
-  // When the window is unminimized, onWindowMaximize or onWindowRestore can be called when the old state was maximized or not.
   @override
   void onWindowMaximize() {
     super.onWindowMaximize();
@@ -218,12 +194,10 @@ class _ViewCameraPageState extends State<ViewCameraPage>
   Future<void> dispose() async {
     final closeSession = closeSessionOnDispose.remove(widget.id) ?? true;
 
-    // https://github.com/flutter/flutter/issues/64935
     super.dispose();
     debugPrint("VIEW CAMERA PAGE dispose session $sessionId ${widget.id}");
     _ffi.textureModel.onViewCameraPageDispose(closeSession);
     if (closeSession) {
-      // ensure we leave this session, this is a double check
       _ffi.inputModel.enterOrLeave(false);
     }
     DesktopMultiWindow.removeListener(this);
@@ -244,8 +218,6 @@ class _ViewCameraPageState extends State<ViewCameraPage>
   }
 
   Widget emptyOverlay() => BlockableOverlay(
-        /// the Overlay key will be set with _blockableOverlayState in BlockableOverlay
-        /// see override build() in [BlockableOverlay]
         state: _blockableOverlayState,
         underlying: Container(
           color: Colors.transparent,
@@ -262,8 +234,6 @@ class _ViewCameraPageState extends State<ViewCameraPage>
             _onEnterOrLeaveImage4Toolbar = func;
           },
           onEnterOrLeaveImageCleaner: (id) {
-            // If _instanceIdOnEnterOrLeaveImage4Toolbar != id
-            // it means `_onEnterOrLeaveImage4Toolbar` is not set or it has been changed to another toolbar.
             if (_instanceIdOnEnterOrLeaveImage4Toolbar == id) {
               _instanceIdOnEnterOrLeaveImage4Toolbar = null;
               _onEnterOrLeaveImage4Toolbar = null;
@@ -301,7 +271,6 @@ class _ViewCameraPageState extends State<ViewCameraPage>
                             ));
                       }
                     }(),
-              // Use Overlay to enable rebuild every time on menu button click.
               _ffi.ffiModel.pi.isSet.isTrue
                   ? Overlay(
                       initialEntries: [OverlayEntry(builder: remoteToolbar)])
@@ -319,25 +288,17 @@ class _ViewCameraPageState extends State<ViewCameraPage>
         final imageReady = _ffi.ffiModel.pi.isSet.isTrue &&
             _ffi.ffiModel.waitForFirstImage.isFalse;
         if (imageReady) {
-          // If the privacy mode(disable physical displays) is switched,
-          // we should not dismiss the dialog immediately.
           if (DateTime.now().difference(togglePrivacyModeTime) >
               const Duration(milliseconds: 3000)) {
-            // `dismissAll()` is to ensure that the state is clean.
-            // It's ok to call dismissAll() here.
             _ffi.dialogManager.dismissAll();
-            // Recreate the block state to refresh the state.
             _blockableOverlayState = BlockableOverlayState();
             _blockableOverlayState.applyFfi(_ffi);
           }
-          // Block the whole `bodyWidget()` when dialog shows.
           return BlockableOverlay(
             underlying: bodyWidget(),
             state: _blockableOverlayState,
           );
         } else {
-          // `_blockableOverlayState` is not recreated here.
-          // The toolbar's block state won't work properly when reconnecting, but that's okay.
           return bodyWidget();
         }
       }),
@@ -368,10 +329,8 @@ class _ViewCameraPageState extends State<ViewCameraPage>
       try {
         _onEnterOrLeaveImage4Toolbar!(true);
       } catch (e) {
-        //
       }
     }
-    // See [onWindowBlur].
     if (!isWindows) {
       if (!_rawKeyFocusNode.hasFocus) {
         _rawKeyFocusNode.requestFocus();
@@ -391,10 +350,8 @@ class _ViewCameraPageState extends State<ViewCameraPage>
       try {
         _onEnterOrLeaveImage4Toolbar!(false);
       } catch (e) {
-        //
       }
     }
-    // See [onWindowBlur].
     if (!isWindows) {
       _ffi.inputModel.enterOrLeave(false);
     }
@@ -421,11 +378,6 @@ class _ViewCameraPageState extends State<ViewCameraPage>
       onEnter: onEnter,
       onExit: onExit,
       onPointerDown: (event) {
-        // A double check for blur status.
-        // Note: If there's an `onPointerDown` event is triggered, `_isWindowBlur` is expected being false.
-        // Sometimes the system does not send the necessary focus event to flutter. We should manually
-        // handle this inconsistent status by setting `_isWindowBlur` to false. So we can
-        // ensure the grab-key thread is running when our users are clicking the remote canvas.
         if (_isWindowBlur) {
           debugPrint(
               "Unexpected status: onPointerDown is triggered while the remote window is in blur status");
@@ -590,7 +542,6 @@ class _ImagePaintState extends State<ImagePaint> {
       final textureId = widget.ffi.textureModel
           .getTextureId(curDisplay == kAllDisplayValue ? i : curDisplay);
       if (true) {
-        // both "textureId.value != -1" and "true" seems ok
         children.add(Positioned(
           left: (displays[i].x - rect.left) * s + offset.dx,
           top: (displays[i].y - rect.top) * s + offset.dy,

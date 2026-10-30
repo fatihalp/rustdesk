@@ -49,10 +49,10 @@ class FloatingWindowService : Service(), View.OnTouchListener {
         private var firstCreate = true
         private var viewWidth = 120
         private var viewHeight = 120
-        private const val MIN_VIEW_SIZE = 32 // size 0 does not help prevent the service from being killed
+        private const val MIN_VIEW_SIZE = 32
         private const val MAX_VIEW_SIZE = 320
         private var viewUntouchable = false
-        private var viewTransparency = 1f // 0 means invisible but can help prevent the service from being killed
+        private var viewTransparency = 1f
         private var customSvg = ""
         private var lastLayoutX = 0
         private var lastLayoutY = 0
@@ -97,7 +97,6 @@ class FloatingWindowService : Service(), View.OnTouchListener {
             try {
                 val svg = SVG.getFromString(customSvg)
                 Log.d(logTag, "custom svg info: ${svg.documentWidth} x ${svg.documentHeight}");
-                // This make the svg render clear
                svg.documentWidth = viewWidth * 1f
                svg.documentHeight = viewHeight * 1f
                 originalDrawable = svg.renderToPicture().let {
@@ -181,7 +180,6 @@ class FloatingWindowService : Service(), View.OnTouchListener {
         val wh = getScreenSize(windowManager)
         val w = wh.first
         val h = wh.second
-        // size
         FFI.getLocalOption("floating-window-size").let {
             if (it.isNotEmpty()) {
                 try {
@@ -195,9 +193,7 @@ class FloatingWindowService : Service(), View.OnTouchListener {
                 }
             }
         }
-        // untouchable
         viewUntouchable = FFI.getLocalOption("floating-window-untouchable") == "Y"
-        // transparency
         FFI.getLocalOption("floating-window-transparency").let {
             if (it.isNotEmpty()) {
                 try {
@@ -210,13 +206,11 @@ class FloatingWindowService : Service(), View.OnTouchListener {
                 }
             }
         }
-        // custom svg
         FFI.getLocalOption("floating-window-svg").let {
             if (it.isNotEmpty()) {
                 customSvg = it
             }
         }
-        // position
         lastLayoutX = 0
         lastLayoutY = (wh.second - viewHeight) / 2
         lastOrientation = resources.configuration.orientation
@@ -246,7 +240,6 @@ class FloatingWindowService : Service(), View.OnTouchListener {
             MotionEvent.ACTION_MOVE -> {
                 val dx = event.rawX - lastDownX
                 val dy = event.rawY - lastDownY
-                // ignore too small fist start moving(some time is click)
                 if (!dragging && dx*dx+dy*dy < 25) {
                     return false
                 }
@@ -292,7 +285,6 @@ class FloatingWindowService : Service(), View.OnTouchListener {
             val newW = wh.first
             val newH = wh.second
             if (newConfig.orientation == Configuration.ORIENTATION_LANDSCAPE || newConfig.orientation == Configuration.ORIENTATION_PORTRAIT) {
-                // Proportional change
                 layoutParams.x = (layoutParams.x.toFloat() / newH.toFloat() * newW.toFloat()).toInt()
                 layoutParams.y = (layoutParams.y.toFloat() / newW.toFloat() * newH.toFloat()).toInt()
             }
@@ -302,9 +294,8 @@ class FloatingWindowService : Service(), View.OnTouchListener {
 
      private fun showPopupMenu() {
          val popupMenu = PopupMenu(this, floatingView)
-         val idShowRustDesk = 0
-         popupMenu.menu.add(0, idShowRustDesk, 0, translate("Show RustDesk"))
-         // For host side, clipboard sync
+         val idShowSupportDesk = 0
+         popupMenu.menu.add(0, idShowSupportDesk, 0, translate("Show SupportDesk"))
          val idSyncClipboard = 1
          val isServiceSyncEnabled = (MainActivity.rdClipboardManager?.isCaptureStarted ?: false) && FFI.isServiceClipboardEnabled()
          if (isServiceSyncEnabled) {
@@ -317,7 +308,7 @@ class FloatingWindowService : Service(), View.OnTouchListener {
          }
          popupMenu.setOnMenuItemClickListener { menuItem ->
              when (menuItem.itemId) {
-                 idShowRustDesk -> {
+                 idShowSupportDesk -> {
                      openMainActivity()
                      true
                  }
@@ -373,7 +364,7 @@ class FloatingWindowService : Service(), View.OnTouchListener {
             if (updateKeepScreenOnLayoutParams()) {
                 windowManager.updateViewLayout(floatingView, layoutParams)
             }
-            handler.postDelayed(this, 1000) // 1000 milliseconds = 1 second
+            handler.postDelayed(this, 1000)
         }
     }
 

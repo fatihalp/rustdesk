@@ -32,13 +32,11 @@ fn record(i: usize) {
     let (w, h) = (capturer.width(), capturer.height());
 
     loop {
-        // Wait until there's a frame.
 
         let frame = match capturer.frame(Duration::from_millis(0)) {
             Ok(frame) => frame,
             Err(error) => {
                 if error.kind() == WouldBlock {
-                    // Keep spinning.
                     thread::sleep(one_frame);
                     continue;
                 } else {
@@ -52,7 +50,6 @@ fn record(i: usize) {
         let buffer = frame.data();
         println!("Captured data len: {}, Saving...", buffer.len());
 
-        // Flip the BGRA image into a RGBA image.
 
         let mut bitflipped = Vec::with_capacity(w * h * 4);
         let stride = buffer.len() / h;
@@ -64,7 +61,6 @@ fn record(i: usize) {
             }
         }
 
-        // Save the image.
 
         let name = format!("screenshot{}_1.png", i);
         repng::encode(
@@ -85,13 +81,11 @@ fn record(i: usize) {
     let (w, h) = (capturer.width(), capturer.height());
 
     loop {
-        // Wait until there's a frame.
 
         let frame = match capturer.frame(Duration::from_millis(0)) {
             Ok(frame) => frame,
             Err(error) => {
                 if error.kind() == WouldBlock {
-                    // Keep spinning.
                     thread::sleep(one_frame);
                     continue;
                 } else {

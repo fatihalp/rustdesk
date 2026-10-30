@@ -24,7 +24,7 @@ lazy_static! {
 }
 
 struct Conn {
-    last_cursor_pos: (f32, f32), // For click ripple
+    last_cursor_pos: (f32, f32),
     last_cursor_evt: LastCursorEvent,
 }
 
@@ -73,7 +73,6 @@ pub fn unregister_whiteboard(k: String) {
             let mut whiteboard = TX_WHITEBOARD.write().unwrap();
             whiteboard.as_ref().map(|tx| {
                 allow_err!(tx.send(("".to_string(), CustomEvent::Exit)));
-                // Simple sleep to wait the whiteboard process exiting.
                 std::thread::sleep(std::time::Duration::from_millis(3_00));
             });
             whiteboard.take();
@@ -91,7 +90,6 @@ pub fn update_whiteboard(k: String, e: CustomEvent) {
             conn.last_cursor_evt.c += 1;
             conn.last_cursor_evt.tm = Instant::now();
             if cursor.btns == 0 {
-                // Send one movement event every 4.
                 if conn.last_cursor_evt.c > 3 {
                     conn.last_cursor_evt.c = 0;
                     conn.last_cursor_evt.evt = None;

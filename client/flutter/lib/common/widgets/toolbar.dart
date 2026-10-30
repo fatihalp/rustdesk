@@ -78,14 +78,6 @@ bool _isWindowsMode1PrivacyImpl(String privacyModeImpl) {
       privacyModeImpl == kPrivacyModeImplExcludeFromCapture;
 }
 
-// macOS privacy mode blacks out all online displays. Windows Mode 1 also
-// covers every local monitor with privacy overlay windows, so remote display
-// switching does not weaken local privacy protection.
-//
-// Keep this separate from the capture backend capability. The legacy Windows
-// magnifier capturer is not reliable for multi-monitor capture; WebRTC's
-// screen_capturer_win_magnifier also disables it when SM_CMONITORS != 1:
-// https://webrtc.googlesource.com/src/+/1845922d5a1bf9c27deeffb4a8c8daea124434c1/modules/desktop_capture/win/screen_capturer_win_magnifier.cc
 bool allowDisplaySwitchInPrivacyMode(PeerInfo pi, String privacyModeImpl) {
   return pi.platform == kPeerPlatformMacOS ||
       (pi.platform == kPeerPlatformWindows &&
@@ -93,11 +85,6 @@ bool allowDisplaySwitchInPrivacyMode(PeerInfo pi, String privacyModeImpl) {
           versionCmp(pi.version, '1.4.8') >= 0);
 }
 
-/// Action IDs that `toolbarControls` is the sole registrar for. Wiped on
-/// every call so stale closures don't outlive the menu entry that owned
-/// them. Actions registered by `registerSessionShortcutActions` MUST NOT
-/// appear here. `kShortcutActionToggleRecording` is platform-conditional
-/// and handled separately in the unregister pass below.
 const _kToolbarOwnedActionIds = <String>[
   kShortcutActionSendCtrlAltDel,
   kShortcutActionRestartRemote,
@@ -207,8 +194,6 @@ class TToggleMenu {
       this.actionId});
 }
 
-/// Register each tagged entry's `onChanged` with the session [ShortcutModel].
-/// Passthrough — returns [menus] so a caller can wrap `return [...]` directly.
 List<TToggleMenu> _registerToggleMenuShortcuts(
   FFI ffi,
   List<TToggleMenu> menus, {
@@ -231,7 +216,6 @@ List<TToggleMenu> _registerToggleMenuShortcuts(
   return menus;
 }
 
-/// Radio variant of [_registerToggleMenuShortcuts].
 List<TRadioMenu<T>> _registerRadioMenuShortcuts<T>(
   FFI ffi,
   List<TRadioMenu<T>> menus, {
@@ -336,12 +320,9 @@ void showWaylandKeyboardInputWarningDialog(
           debugPrint('Failed to persist Wayland keyboard input consent: $e');
         }
       }
-      // Always suppress prompt for current connection after explicit consent.
       setWaylandKeyboardPromptSuppressedForConnection(connectionId, true);
       closeDialog();
       if (remember && !rememberPersisted) {
-        // It's a rare edge case that persisting the user's choice fails.
-        // Failed to persist the user's choice, but still allow keyboard input for current session.
         showToast(translate('Failed'));
       }
     }
@@ -390,9 +371,6 @@ void showWaylandKeyboardInputWarningDialog(
                     try {
                       final opened = await openWaylandKeyboardIssueUrl();
                       if (!opened) {
-                        // Opening this optional help link almost never fails in
-                        // normal desktop environments. Keep the result handled
-                        // for review hygiene, but avoid a low-value user toast.
                         debugPrint('Failed to open Wayland keyboard issue URL');
                       }
                     } catch (e) {
@@ -452,19 +430,14 @@ List<TTextMenu> toolbarControls(BuildContext context, String id, FFI ffi) {
   final isDefaultConn = ffi.connType == ConnType.defaultConn;
   final isWaylandPeer = pi.platform == kPeerPlatformLinux && pi.isWayland;
 
-  // Wipe stale registrations from previous menu builds before re-registering
-  // below; runs unconditionally so mid-session enable works without reconnect.
   for (final actionId in _kToolbarOwnedActionIds) {
     ffi.shortcutModel.unregister(actionId);
   }
-  // toggle_recording is mobile-only here; desktop's registration is owned by
-  // `registerSessionShortcutActions` and must not be touched.
   if (!(isDesktop || isWeb)) {
     ffi.shortcutModel.unregister(kShortcutActionToggleRecording);
   }
 
   List<TTextMenu> v = [];
-  // elevation
   if (isDefaultConn &&
       perms['keyboard'] != false &&
       ffi.elevationModel.showRequestMenu) {
@@ -475,7 +448,6 @@ List<TTextMenu> toolbarControls(BuildContext context, String id, FFI ffi) {
               showRequestElevationDialog(sessionId, ffi.dialogManager)),
     );
   }
-  // osPassword
   if (isDefaultConn && perms['keyboard'] != false) {
     v.add(
       TTextMenu(
@@ -498,7 +470,6 @@ List<TTextMenu> toolbarControls(BuildContext context, String id, FFI ffi) {
       ),
     );
   }
-  // paste
   if (isDefaultConn &&
       pi.platform != kPeerPlatformAndroid &&
       perms['keyboard'] != false) {
@@ -562,7 +533,6 @@ List<TTextMenu> toolbarControls(BuildContext context, String id, FFI ffi) {
           showToast(translate(persistedCleared ? 'Successful' : 'Failed'));
         }));
   }
-  // reset canvas
   if (isDefaultConn && isMobile) {
     v.add(TTextMenu(
         child: Text(translate('Reset canvas')),
@@ -570,8 +540,6 @@ List<TTextMenu> toolbarControls(BuildContext context, String id, FFI ffi) {
         actionId: kShortcutActionResetCanvas));
   }
 
-  // https://github.com/rustdesk/rustdesk/pull/9731
-  // Does not work for connection established by "accept".
   connectWithToken(
       {bool isFileTransfer = false,
       bool isViewCamera = false,
@@ -608,7 +576,6 @@ List<TTextMenu> toolbarControls(BuildContext context, String id, FFI ffi) {
           onPressed: () => connectWithToken(isTcpTunneling: true)),
     );
   }
-  // note
   if (isDefaultConn && !bind.isDisableAccount()) {
     v.add(
       TTextMenu(
@@ -619,11 +586,8 @@ List<TTextMenu> toolbarControls(BuildContext context, String id, FFI ffi) {
             if (!isLogin) {
               final res = await loginDialog();
               if (res != true) return;
-              // Desktop: send message to main window to refresh login status
-              // Web: login is required before connection, so no need to refresh
-              // Mobile: same isolate, no need to send message
               if (isDesktop) {
-                rustDeskWinManager.call(
+                supportDeskWinManager.call(
                     WindowType.Main, kWindowRefreshCurrentUser, "");
               }
             }
@@ -631,11 +595,9 @@ List<TTextMenu> toolbarControls(BuildContext context, String id, FFI ffi) {
           }),
     );
   }
-  // divider
   if (isDefaultConn && (isDesktop || isWebDesktop)) {
     v.add(TTextMenu(child: Offstage(), onPressed: () {}, divider: true));
   }
-  // ctrlAltDel
   if (isDefaultConn &&
       !ffiModel.viewOnly &&
       ffiModel.keyboard &&
@@ -647,7 +609,6 @@ List<TTextMenu> toolbarControls(BuildContext context, String id, FFI ffi) {
           actionId: kShortcutActionSendCtrlAltDel),
     );
   }
-  // restart
   if (isDefaultConn &&
       perms['restart'] != false &&
       (pi.platform == kPeerPlatformLinux ||
@@ -661,7 +622,6 @@ List<TTextMenu> toolbarControls(BuildContext context, String id, FFI ffi) {
           actionId: kShortcutActionRestartRemote),
     );
   }
-  // insertLock
   if (isDefaultConn && !ffiModel.viewOnly && ffi.ffiModel.keyboard) {
     v.add(
       TTextMenu(
@@ -670,11 +630,10 @@ List<TTextMenu> toolbarControls(BuildContext context, String id, FFI ffi) {
           actionId: kShortcutActionInsertLock),
     );
   }
-  // blockUserInput
   if (isDefaultConn &&
       ffi.ffiModel.keyboard &&
       ffi.ffiModel.permissions['block_input'] != false &&
-      pi.platform == kPeerPlatformWindows) // privacy-mode != true ??
+      pi.platform == kPeerPlatformWindows)
   {
     v.add(TTextMenu(
         child: Obx(() => Text(translate(
@@ -688,7 +647,6 @@ List<TTextMenu> toolbarControls(BuildContext context, String id, FFI ffi) {
         },
         actionId: kShortcutActionToggleBlockInput));
   }
-  // switchSides
   if (isDefaultConn &&
       isDesktop &&
       ffiModel.keyboard &&
@@ -701,7 +659,6 @@ List<TTextMenu> toolbarControls(BuildContext context, String id, FFI ffi) {
             showConfirmSwitchSidesDialog(sessionId, id, ffi.dialogManager),
         actionId: kShortcutActionSwitchSides));
   }
-  // refresh
   if (pi.version.isNotEmpty) {
     v.add(TTextMenu(
       child: Text(translate('Refresh')),
@@ -709,7 +666,6 @@ List<TTextMenu> toolbarControls(BuildContext context, String id, FFI ffi) {
       actionId: kShortcutActionRefresh,
     ));
   }
-  // record
   if (!(isDesktop || isWeb) &&
       bind.mainGetLocalOption(key: kOptionHideRecordingButton) != 'Y' &&
       (ffi.recordingModel.start || (perms["recording"] != false))) {
@@ -733,9 +689,6 @@ List<TTextMenu> toolbarControls(BuildContext context, String id, FFI ffi) {
         actionId: kShortcutActionToggleRecording));
   }
 
-  // to-do:
-  // 1. Web desktop
-  // 2. Mobile, copy the image to the clipboard
   if ((isDefaultConn || ffi.connType == ConnType.viewCamera) && isDesktop) {
     final isScreenshotSupported = bind.sessionGetCommonSync(
         sessionId: sessionId, key: 'is_screenshot_supported', param: '');
@@ -747,13 +700,6 @@ List<TTextMenu> toolbarControls(BuildContext context, String id, FFI ffi) {
         onPressed: ffi.ffiModel.timerScreenshot != null
             ? null
             : () {
-                // Live cooldown check: the menu rebuilds onPressed=null
-                // whenever toolbarControls runs and finds timerScreenshot
-                // != null, but the keyboard-shortcut callback holds onto
-                // the originally-enabled closure across cooldown periods
-                // (toolbarControls only re-runs on menu open). Without
-                // this guard the second shortcut press during the 30s
-                // cooldown still fires sessionTakeScreenshot.
                 if (ffi.ffiModel.timerScreenshot != null) return;
                 if (pi.currentDisplay == kAllDisplayValue) {
                   msgBox(
@@ -776,15 +722,12 @@ List<TTextMenu> toolbarControls(BuildContext context, String id, FFI ffi) {
       ));
     }
   }
-  // fingerprint
   if (!(isDesktop || isWebDesktop)) {
     v.add(TTextMenu(
       child: Text(translate('Copy Fingerprint')),
       onPressed: () => onCopyFingerprint(FingerprintState.find(id).value),
     ));
   }
-  // Register tagged TTextMenu callbacks. The else-unregister is defense in
-  // depth for actionIds tagged but missing from `_kToolbarOwnedActionIds`.
   for (final menu in v) {
     final actionId = menu.actionId;
     if (actionId == null) continue;
@@ -937,7 +880,6 @@ Future<List<TToggleMenu>> toolbarCursor(
   final pi = ffiModel.pi;
   final sessionId = ffi.sessionId;
 
-  // show remote cursor
   if (pi.platform != kPeerPlatformAndroid &&
       !ffi.canvasModel.cursorEmbedded &&
       !pi.isWayland) {
@@ -963,7 +905,6 @@ Future<List<TToggleMenu>> toolbarCursor(
               }
             : null));
   }
-  // follow remote cursor
   if (pi.platform != kPeerPlatformAndroid &&
       !ffi.canvasModel.cursorEmbedded &&
       !pi.isWayland &&
@@ -1004,7 +945,6 @@ Future<List<TToggleMenu>> toolbarCursor(
           }
         }));
   }
-  // follow remote window focus
   if (pi.platform != kPeerPlatformAndroid &&
       !ffi.canvasModel.cursorEmbedded &&
       !pi.isWayland &&
@@ -1026,7 +966,6 @@ Future<List<TToggleMenu>> toolbarCursor(
               sessionId: sessionId, arg: option);
         }));
   }
-  // zoom cursor
   final viewStyle = await bind.sessionGetViewStyle(sessionId: sessionId) ?? '';
   if (!isMobile &&
       pi.platform != kPeerPlatformAndroid &&
@@ -1058,7 +997,6 @@ Future<List<TToggleMenu>> toolbarDisplayToggle(
   final sessionId = ffi.sessionId;
   final isDefaultConn = ffi.connType == ConnType.defaultConn;
 
-  // show quality monitor
   final option = 'show-quality-monitor';
   v.add(TToggleMenu(
       value: bind.sessionGetToggleOptionSync(sessionId: sessionId, arg: option),
@@ -1069,7 +1007,6 @@ Future<List<TToggleMenu>> toolbarDisplayToggle(
         ffi.qualityMonitorModel.checkShowQualityMonitor(sessionId);
       },
       child: Text(translate('Show quality monitor'))));
-  // mute
   if (isDefaultConn && perms['audio'] != false) {
     final option = 'disable-audio';
     final value =
@@ -1083,12 +1020,9 @@ Future<List<TToggleMenu>> toolbarDisplayToggle(
         },
         child: Text(translate('Mute'))));
   }
-  // file copy and paste
-  // If the version is less than 1.2.4, file copy and paste is supported on Windows only.
   final isSupportIfPeer_1_2_3 = versionCmp(pi.version, '1.2.4') < 0 &&
       isWindows &&
       pi.platform == kPeerPlatformWindows;
-  // If the version is 1.2.4 or later, file copy and paste is supported when kPlatformAdditionsHasFileClipboard is set.
   final isSupportIfPeer_1_2_4 = versionCmp(pi.version, '1.2.4') >= 0 &&
       bind.mainHasFileClipboard() &&
       pi.platformAdditions.containsKey(kPlatformAdditionsHasFileClipboard);
@@ -1111,7 +1045,6 @@ Future<List<TToggleMenu>> toolbarDisplayToggle(
             : null,
         child: Text(translate('Enable file copy and paste'))));
   }
-  // disable clipboard
   if (isDefaultConn && ffiModel.keyboard && perms['clipboard'] != false) {
     final enabled = !ffiModel.viewOnly;
     final option = 'disable-clipboard';
@@ -1129,7 +1062,6 @@ Future<List<TToggleMenu>> toolbarDisplayToggle(
             : null,
         child: Text(translate('Disable clipboard'))));
   }
-  // lock after session end
   if (isDefaultConn && ffiModel.keyboard && !ffiModel.isPeerAndroid) {
     final enabled = !ffiModel.viewOnly;
     final option = 'lock-after-session-end';
@@ -1181,7 +1113,6 @@ Future<List<TToggleMenu>> toolbarDisplayToggle(
         child: Text(translate('Use all my displays for the remote session'))));
   }
 
-  // 444
   final codec_format = ffi.qualityMonitorModel.data.codecFormat;
   if (versionCmp(pi.version, "1.2.4") >= 0 &&
       (codec_format == "AV1" || codec_format == "VP9")) {
@@ -1203,7 +1134,6 @@ Future<List<TToggleMenu>> toolbarDisplayToggle(
     v.addAll(toolbarKeyboardToggles(ffi));
   }
 
-  // view mode (mobile only, desktop is in keyboard menu)
   if (isDefaultConn && isMobile && versionCmp(pi.version, '1.2.0') >= 0) {
     v.add(TToggleMenu(
         value: ffiModel.viewOnly,
@@ -1229,11 +1159,8 @@ List<TToggleMenu> toolbarPrivacyMode(
   final hasPrivacyModePermission =
       ffiModel.permissions['privacy_mode'] != false;
 
-  // Backend revocation already attempts to turn privacy mode off.
-  // Still keep this menu when privacy mode is active, so users can turn it off
-  // if there is a sync delay, version mismatch, or off attempt failure.
   if (!hasPrivacyModePermission && privacyModeState.isEmpty) {
-    return []; // No permission and not active, hide options.
+    return [];
   }
 
   bool checkDisplayAllowedForPrivacyMode(String targetImplKey, bool turnOn) {
@@ -1329,7 +1256,6 @@ List<TToggleMenu> toolbarKeyboardToggles(FFI ffi) {
   final isDefaultConn = ffi.connType == ConnType.defaultConn;
   List<TToggleMenu> v = [];
 
-  // swap key
   if (ffiModel.keyboard &&
       ((isMacOS && pi.platform != kPeerPlatformMacOS) ||
           (!isMacOS && pi.platform == kPeerPlatformMacOS))) {
@@ -1349,12 +1275,6 @@ List<TToggleMenu> toolbarKeyboardToggles(FFI ffi) {
         child: Text(translate('Swap control-command key'))));
   }
 
-  // Relative mouse mode (gaming mode).
-  // Only show when server supports MOUSE_TYPE_MOVE_RELATIVE (version >= 1.4.5)
-  // Note: This feature is only available in Flutter client. Sciter client does not support this.
-  // Web client is not supported yet due to Pointer Lock API integration complexity with Flutter's input system.
-  // Wayland is not supported due to cursor warping limitations.
-  // Mobile: This option is now in GestureHelp widget, shown only when joystick is visible.
   final isWayland = isDesktop && isLinux && bind.mainCurrentIsWayland();
   if (isDesktop &&
       isDefaultConn &&
@@ -1370,14 +1290,12 @@ List<TToggleMenu> toolbarKeyboardToggles(FFI ffi) {
           final previousValue = ffi.inputModel.relativeMouseMode.value;
           final success = ffi.inputModel.setRelativeMouseMode(value);
           if (!success) {
-            // Revert the observable toggle to reflect the actual state
             ffi.inputModel.relativeMouseMode.value = previousValue;
           }
         },
         child: Text(translate('Relative mouse mode'))));
   }
 
-  // reverse mouse wheel
   if (ffiModel.keyboard) {
     var optionValue =
         bind.sessionGetReverseMouseWheelSync(sessionId: sessionId) ?? '';
@@ -1397,7 +1315,6 @@ List<TToggleMenu> toolbarKeyboardToggles(FFI ffi) {
         child: Text(translate('Reverse mouse wheel'))));
   }
 
-  // swap left right mouse
   if (ffiModel.keyboard) {
     final option = 'swap-left-right-mouse';
     final value =
@@ -1418,14 +1335,7 @@ List<TToggleMenu> toolbarKeyboardToggles(FFI ffi) {
       ownedActionIds: _kToolbarKeyboardToggleActionIds);
 }
 
-/// Drive each toolbar helper for its registration side effect, so a shortcut
-/// fires from the first keystroke without needing the user to open the
-/// matching submenu. Mobile gets `toolbarKeyboardToggles` via
-/// `toolbarDisplayToggle`'s `isMobile` branch — calling it explicitly there
-/// would double-register.
 void registerToolbarShortcuts(BuildContext context, String id, FFI ffi) {
-  // Rebuild only the triggered action's menu, so permission/capability changes
-  // and temporary disabled states take effect without opening the toolbar.
   void register(List<String> actions, FutureOr<Object> Function() refresh) {
     ffi.shortcutModel.registerRefresher(actions, () async {
       if (!context.mounted || ffi.closed) {
@@ -1479,7 +1389,7 @@ List<Widget> getVirtualDisplayMenuChildren(
   final pi = ffi.ffiModel.pi;
   final privacyModeState = PrivacyModeState.find(id);
   if (pi.isRustDeskIdd) {
-    final virtualDisplays = ffi.ffiModel.pi.RustDeskVirtualDisplays;
+    final virtualDisplays = ffi.ffiModel.pi.SupportDeskVirtualDisplays;
     final children = <Widget>[];
     for (var i = 0; i < kMaxVirtualDisplayCount; i++) {
       children.add(Obx(() => CkbMenuButton(

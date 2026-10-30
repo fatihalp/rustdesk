@@ -7,12 +7,11 @@ use hbb_common::{
 use serde::Deserialize;
 use std::{collections::HashMap, path::PathBuf, sync::OnceLock};
 
-const ENV_BRAND_FILE: &str = "RUSTDESK_BRAND_FILE";
+const ENV_BRAND_FILE: &str = "SUPPORTDESK_BRAND_FILE";
+const DEFAULT_APP_NAME: &str = "SupportDesk";
 const STATUS_PASSWORD: &str = "brand-unattended-password";
 const PASSWORD_LEN: usize = 16;
 
-/// Contents of the `brand.json` the support panel packs next to the executable
-/// (`Contents/Resources` on macOS) when it builds a customer client.
 #[derive(Debug, Default, Deserialize)]
 #[serde(default)]
 struct Brand {
@@ -73,22 +72,22 @@ fn overrides(brand: &Brand) -> HashMap<String, String> {
     map
 }
 
-/// Applies the brand file, if any. Call once at startup, before any config is read.
 pub fn init() {
     let Some(brand) = BRAND.get_or_init(load) else {
+        *config::APP_NAME.write().unwrap() = DEFAULT_APP_NAME.to_owned();
         return;
     };
-    if !brand.app_name.is_empty() {
-        *config::APP_NAME.write().unwrap() = brand.app_name.clone();
-    }
+    *config::APP_NAME.write().unwrap() = if brand.app_name.is_empty() {
+        DEFAULT_APP_NAME.to_owned()
+    } else {
+        brand.app_name.clone()
+    };
     config::OVERWRITE_SETTINGS
         .write()
         .unwrap()
         .extend(overrides(brand));
 }
 
-/// Adds enrollment data to the sysinfo upload so the panel can attach the device
-/// to a customer and connect to it without a password prompt.
 pub fn decorate_sysinfo(v: &mut serde_json::Value) {
     let Some(Some(brand)) = BRAND.get() else {
         return;

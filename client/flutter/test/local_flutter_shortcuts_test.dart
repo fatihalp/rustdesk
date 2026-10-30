@@ -333,8 +333,6 @@ void main() {
 
   test('closing the session drops its pending action but keeps the fired key',
       () async {
-    // Close tab is itself a shortcut: the session that matched the key is
-    // gone before the key is released, and the next session gets the rest.
     final released = Completer<void>();
     final actions = <String>[];
     var enabled = true;
@@ -365,8 +363,6 @@ void main() {
   });
 
   test('focus-changing actions run when the key is released', () async {
-    // Close tab moves focus before the key is released; the release may then
-    // land in a session whose keys go through the other matcher.
     var releases = 0;
     final actions = <String>[];
     final dispatcher = _ShortcutHarness(

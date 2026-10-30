@@ -1,8 +1,3 @@
-//! Dynamic loading wrapper for libxdo.
-//!
-//! Provides the same API as libxdo-sys but loads libxdo at runtime,
-//! allowing the program to run on systems without libxdo installed
-//! (e.g., Wayland-only environments).
 
 use hbb_common::{
     libc::{c_char, c_int, c_uint},
@@ -103,7 +98,6 @@ struct XdoLib {
 
 impl XdoLib {
     fn load() -> Option<Self> {
-        // https://github.com/rustdesk/rustdesk/issues/13711
         const LIB_NAMES: [&str; 3] = ["libxdo.so.4", "libxdo.so.3", "libxdo.so"];
 
         unsafe {

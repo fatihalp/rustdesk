@@ -31,7 +31,6 @@ impl GrantsStorage {
                     warn,
                     "Revoking unreadable trusted-device grants: {error}"
                 );
-                // An unreadable V2 scope cannot authorize a remaining legacy copy.
                 Config2::set_trusted_devices_v2(String::new())?;
                 return Ok(super::Grants::default());
             }

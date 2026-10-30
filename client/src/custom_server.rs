@@ -49,18 +49,6 @@ pub fn get_custom_server_from_string(s: &str) -> ResultType<CustomServer> {
     } else {
         s
     };
-    /*
-     * The following code tokenizes the file name based on commas and
-     * extracts relevant parts sequentially.
-     *
-     * host= is expected to be the first part.
-     *
-     * Since Windows renames files adding (1), (2) etc. before the .exe
-     * in case of duplicates, which causes the host or key values to be
-     * garbled.
-     *
-     * This allows using a ',' (comma) symbol as a final delimiter.
-     */
     if s.to_lowercase().contains("host=") {
         let stripped = &s[s.to_ascii_lowercase().find("host=").unwrap_or(0)..s.len()];
         let strs: Vec<&str> = stripped.split(",").collect();
@@ -100,7 +88,6 @@ pub fn get_custom_server_from_string(s: &str) -> ResultType<CustomServer> {
             if let Ok(lic) = get_custom_server_from_config_string(s.trim()) {
                 return Ok(lic);
             } else if s.contains("(") {
-                // https://github.com/rustdesk/rustdesk/issues/4162
                 for s in s.split("(") {
                     if let Ok(lic) = get_custom_server_from_config_string(s.trim()) {
                         return Ok(lic);
@@ -118,10 +105,10 @@ mod test {
 
     #[test]
     fn test_filename_license_string() {
-        assert!(get_custom_server_from_string("rustdesk.exe").is_err());
-        assert!(get_custom_server_from_string("rustdesk").is_err());
+        assert!(get_custom_server_from_string("supportdesk.exe").is_err());
+        assert!(get_custom_server_from_string("supportdesk").is_err());
         assert_eq!(
-            get_custom_server_from_string("rustdesk-host=server.example.net.exe").unwrap(),
+            get_custom_server_from_string("supportdesk-host=server.example.net.exe").unwrap(),
             CustomServer {
                 host: "server.example.net".to_owned(),
                 key: "".to_owned(),
@@ -130,7 +117,7 @@ mod test {
             }
         );
         assert_eq!(
-            get_custom_server_from_string("rustdesk-host=server.example.net,.exe").unwrap(),
+            get_custom_server_from_string("supportdesk-host=server.example.net,.exe").unwrap(),
             CustomServer {
                 host: "server.example.net".to_owned(),
                 key: "".to_owned(),
@@ -138,10 +125,9 @@ mod test {
                 relay: "".to_owned(),
             }
         );
-        // key in these tests is "foobar.,2" base64 encoded
         assert_eq!(
             get_custom_server_from_string(
-                "rustdesk-host=server.example.net,api=abc,key=Zm9vYmFyLiwyCg==.exe"
+                "supportdesk-host=server.example.net,api=abc,key=Zm9vYmFyLiwyCg==.exe"
             )
             .unwrap(),
             CustomServer {
@@ -153,7 +139,7 @@ mod test {
         );
         assert_eq!(
             get_custom_server_from_string(
-                "rustdesk-host=server.example.net,key=Zm9vYmFyLiwyCg==,.exe"
+                "supportdesk-host=server.example.net,key=Zm9vYmFyLiwyCg==,.exe"
             )
             .unwrap(),
             CustomServer {
@@ -165,7 +151,7 @@ mod test {
         );
         assert_eq!(
             get_custom_server_from_string(
-                "rustdesk-host=server.example.net,key=Zm9vYmFyLiwyCg==,relay=server.example.net.exe"
+                "supportdesk-host=server.example.net,key=Zm9vYmFyLiwyCg==,relay=server.example.net.exe"
             )
             .unwrap(),
             CustomServer {
@@ -177,7 +163,7 @@ mod test {
         );
         assert_eq!(
             get_custom_server_from_string(
-                "rustdesk-Host=server.example.net,Key=Zm9vYmFyLiwyCg==,RELAY=server.example.net.exe"
+                "supportdesk-Host=server.example.net,Key=Zm9vYmFyLiwyCg==,RELAY=server.example.net.exe"
             )
             .unwrap(),
             CustomServer {
@@ -194,40 +180,38 @@ mod test {
             relay: "".to_owned(),
         };
         assert_eq!(
-            get_custom_server_from_string("rustdesk-licensed-0nI900VsFHZVBVdIlncwpHS4V0bOZ0dtVldrpVO4JHdCp0YV5WdzUGZzdnYRVjI6ISeltmIsISMuEjLx4SMiojI0N3boJye.exe")
+            get_custom_server_from_string("supportdesk-licensed-0nI900VsFHZVBVdIlncwpHS4V0bOZ0dtVldrpVO4JHdCp0YV5WdzUGZzdnYRVjI6ISeltmIsISMuEjLx4SMiojI0N3boJye.exe")
                 .unwrap(), lic);
         assert_eq!(
-            get_custom_server_from_string("rustdesk-licensed-0nI900VsFHZVBVdIlncwpHS4V0bOZ0dtVldrpVO4JHdCp0YV5WdzUGZzdnYRVjI6ISeltmIsISMuEjLx4SMiojI0N3boJye(1).exe")
+            get_custom_server_from_string("supportdesk-licensed-0nI900VsFHZVBVdIlncwpHS4V0bOZ0dtVldrpVO4JHdCp0YV5WdzUGZzdnYRVjI6ISeltmIsISMuEjLx4SMiojI0N3boJye(1).exe")
                 .unwrap(), lic);
         assert_eq!(
-            get_custom_server_from_string("rustdesk--0nI900VsFHZVBVdIlncwpHS4V0bOZ0dtVldrpVO4JHdCp0YV5WdzUGZzdnYRVjI6ISeltmIsISMuEjLx4SMiojI0N3boJye(1).exe")
+            get_custom_server_from_string("supportdesk--0nI900VsFHZVBVdIlncwpHS4V0bOZ0dtVldrpVO4JHdCp0YV5WdzUGZzdnYRVjI6ISeltmIsISMuEjLx4SMiojI0N3boJye(1).exe")
                 .unwrap(), lic);
         assert_eq!(
-            get_custom_server_from_string("rustdesk-licensed-0nI900VsFHZVBVdIlncwpHS4V0bOZ0dtVldrpVO4JHdCp0YV5WdzUGZzdnYRVjI6ISeltmIsISMuEjLx4SMiojI0N3boJye (1).exe")
+            get_custom_server_from_string("supportdesk-licensed-0nI900VsFHZVBVdIlncwpHS4V0bOZ0dtVldrpVO4JHdCp0YV5WdzUGZzdnYRVjI6ISeltmIsISMuEjLx4SMiojI0N3boJye (1).exe")
                 .unwrap(), lic);
         assert_eq!(
-            get_custom_server_from_string("rustdesk-licensed-0nI900VsFHZVBVdIlncwpHS4V0bOZ0dtVldrpVO4JHdCp0YV5WdzUGZzdnYRVjI6ISeltmIsISMuEjLx4SMiojI0N3boJye (1) (2).exe")
+            get_custom_server_from_string("supportdesk-licensed-0nI900VsFHZVBVdIlncwpHS4V0bOZ0dtVldrpVO4JHdCp0YV5WdzUGZzdnYRVjI6ISeltmIsISMuEjLx4SMiojI0N3boJye (1) (2).exe")
                 .unwrap(), lic);
         assert_eq!(
-            get_custom_server_from_string("rustdesk-licensed-0nI900VsFHZVBVdIlncwpHS4V0bOZ0dtVldrpVO4JHdCp0YV5WdzUGZzdnYRVjI6ISeltmIsISMuEjLx4SMiojI0N3boJye--abc.exe")
+            get_custom_server_from_string("supportdesk-licensed-0nI900VsFHZVBVdIlncwpHS4V0bOZ0dtVldrpVO4JHdCp0YV5WdzUGZzdnYRVjI6ISeltmIsISMuEjLx4SMiojI0N3boJye--abc.exe")
                 .unwrap(), lic);
         assert_eq!(
-            get_custom_server_from_string("rustdesk-licensed--0nI900VsFHZVBVdIlncwpHS4V0bOZ0dtVldrpVO4JHdCp0YV5WdzUGZzdnYRVjI6ISeltmIsISMuEjLx4SMiojI0N3boJye--.exe")
+            get_custom_server_from_string("supportdesk-licensed--0nI900VsFHZVBVdIlncwpHS4V0bOZ0dtVldrpVO4JHdCp0YV5WdzUGZzdnYRVjI6ISeltmIsISMuEjLx4SMiojI0N3boJye--.exe")
                 .unwrap(), lic);
         assert_eq!(
-            get_custom_server_from_string("rustdesk-licensed---0nI900VsFHZVBVdIlncwpHS4V0bOZ0dtVldrpVO4JHdCp0YV5WdzUGZzdnYRVjI6ISeltmIsISMuEjLx4SMiojI0N3boJye--.exe")
+            get_custom_server_from_string("supportdesk-licensed---0nI900VsFHZVBVdIlncwpHS4V0bOZ0dtVldrpVO4JHdCp0YV5WdzUGZzdnYRVjI6ISeltmIsISMuEjLx4SMiojI0N3boJye--.exe")
                 .unwrap(), lic);
         assert_eq!(
-            get_custom_server_from_string("rustdesk-licensed--0nI900VsFHZVBVdIlncwpHS4V0bOZ0dtVldrpVO4JHdCp0YV5WdzUGZzdnYRVjI6ISeltmIsISMuEjLx4SMiojI0N3boJye--.exe")
+            get_custom_server_from_string("supportdesk-licensed--0nI900VsFHZVBVdIlncwpHS4V0bOZ0dtVldrpVO4JHdCp0YV5WdzUGZzdnYRVjI6ISeltmIsISMuEjLx4SMiojI0N3boJye--.exe")
                 .unwrap(), lic);
-        // padded base64 (one '=' after reversal) is accepted, wrong padding is not
         assert_eq!(
-            get_custom_server_from_string("rustdesk-licensed-=0nI900VsFHZVBVdIlncwpHS4V0bOZ0dtVldrpVO4JHdCp0YV5WdzUGZzdnYRVjI6ISeltmIsISMuEjLx4SMiojI0N3boJye.exe")
+            get_custom_server_from_string("supportdesk-licensed-=0nI900VsFHZVBVdIlncwpHS4V0bOZ0dtVldrpVO4JHdCp0YV5WdzUGZzdnYRVjI6ISeltmIsISMuEjLx4SMiojI0N3boJye.exe")
                 .unwrap(), lic);
         assert!(
-            get_custom_server_from_string("rustdesk-licensed-==0nI900VsFHZVBVdIlncwpHS4V0bOZ0dtVldrpVO4JHdCp0YV5WdzUGZzdnYRVjI6ISeltmIsISMuEjLx4SMiojI0N3boJye.exe")
+            get_custom_server_from_string("supportdesk-licensed-==0nI900VsFHZVBVdIlncwpHS4V0bOZ0dtVldrpVO4JHdCp0YV5WdzUGZzdnYRVjI6ISeltmIsISMuEjLx4SMiojI0N3boJye.exe")
                 .is_err());
-        // bare string as passed to `--config`
         assert_eq!(
             get_custom_server_from_string("=0nI900VsFHZVBVdIlncwpHS4V0bOZ0dtVldrpVO4JHdCp0YV5WdzUGZzdnYRVjI6ISeltmIsISMuEjLx4SMiojI0N3boJye.exe")
                 .unwrap(), lic);
@@ -235,10 +219,9 @@ mod test {
 
     #[test]
     fn test_filename_license_string_in_non_ascii_path() {
-        // Windows passes the full exe path, and `İ` grows from 2 to 3 bytes when lowercased.
         assert_eq!(
             get_custom_server_from_string(
-                r"C:\Users\İsmail\Downloads\rustdesk-host=server.example.net,key=Zm9vYmFyLiwyCg==.exe"
+                r"C:\Users\İsmail\Downloads\supportdesk-host=server.example.net,key=Zm9vYmFyLiwyCg==.exe"
             )
             .unwrap(),
             CustomServer {

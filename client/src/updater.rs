@@ -51,9 +51,6 @@ fn acquire_mac_update_lock() -> ResultType<MacUpdateLock> {
     }
     handle.set_permissions(std::fs::Permissions::from_mode(0o600))?;
 
-    // Keep the descriptor open through update preparation and detached-script
-    // launch. O_CLOEXEC means this lock does not cover the detached bundle
-    // swap; flock is released when this guard is dropped or the process exits.
     let lock_result = unsafe {
         hbb_common::libc::flock(
             handle.as_raw_fd(),
@@ -81,16 +78,12 @@ lazy_static::lazy_static! {
 
 static CONTROLLING_SESSION_COUNT: AtomicUsize = AtomicUsize::new(0);
 
-/// Initial wait after startup before the first update check (30 seconds).
 pub const INITIAL_CHECK_DELAY: Duration = Duration::from_secs(30);
 
-/// One full day — default interval between update checks.
 pub const DUR_ONE_DAY: Duration = Duration::from_secs(60 * 60 * 24);
 
-/// Minimum interval between consecutive update checks (10 minutes).
 pub const MIN_INTERVAL: Duration = Duration::from_secs(60 * 10);
 
-/// Retry interval when an update check fails or a session is active (30 minutes).
 pub const RETRY_INTERVAL: Duration = Duration::from_secs(60 * 30);
 
 pub fn update_controlling_session_count(count: usize) {
@@ -116,8 +109,6 @@ pub fn stop_auto_update() {
 }
 
 #[inline]
-/// Returns true when there are no active incoming or outgoing connections.
-/// Used to avoid updating while a remote session is in progress.
 pub fn has_no_active_conns() -> bool {
     let conns = crate::Connection::alive_conns();
     conns.is_empty() && has_no_controlling_conns()
@@ -165,10 +156,8 @@ fn start_auto_update_check_(rx_msg: Receiver<UpdateMsg>) {
         match &recv_res {
             Ok(UpdateMsg::CheckUpdate) | Err(_) => {
                 if last_check_time.elapsed() < MIN_INTERVAL {
-                    // log::debug!("Update check skipped due to minimum interval.");
                     continue;
                 }
-                // Don't check update if there are alive connections.
                 if !has_no_active_conns() {
                     check_interval = RETRY_INTERVAL;
                     continue;
@@ -187,8 +176,6 @@ fn start_auto_update_check_(rx_msg: Receiver<UpdateMsg>) {
 }
 
 fn check_update(manually: bool) -> ResultType<()> {
-    // On macOS, auto-update is handled by check_update_as_root() in the service process.
-    // The shared check_update() path is only used for manual update checks from the GUI.
     #[cfg(target_os = "macos")]
     if !manually {
         return Ok(());
@@ -226,9 +213,6 @@ fn check_update(manually: bool) -> ResultType<()> {
             bail!("Failed to get the file path from the URL: {}", download_url);
         };
         ensure_verified_update_artifact(download_url, &file_path, artifact.size, &artifact.sha256)?;
-        // We have checked if the `conns` is empty before, but we need to check again.
-        // No need to care about the downloaded file here, because it's rare case that the `conns` are empty
-        // before the download, but not empty after the download.
         if has_no_active_conns() {
             #[cfg(target_os = "windows")]
             update_new_version(update_msi, version, &file_path, &artifact.sha256);
@@ -327,7 +311,6 @@ fn update_new_version(update_msi: bool, version: &str, file_path: &PathBuf, expe
                     }
                     Some(custom_client_staging_dir)
                 } else {
-                    // Clean up any residual staging directory from previous custom client
                     let staging_dir = crate::platform::get_custom_client_staging_dir();
                     hbb_common::allow_err!(crate::platform::remove_custom_client_staging_dir(
                         &staging_dir
@@ -373,7 +356,6 @@ fn update_new_version(update_msi: bool, version: &str, file_path: &PathBuf, expe
             remove_update_file(file_path);
         }
     } else {
-        // unreachable!()
         log::error!(
             "Failed to convert the file path to string: {}",
             file_path.display()
@@ -381,13 +363,6 @@ fn update_new_version(update_msi: bool, version: &str, file_path: &PathBuf, expe
     }
 }
 
-/// Queries all active connections (remote, file-transfer, port-forward, camera, terminal)
-/// from every logged-in user's --server process via IPC.
-/// The root service cannot read connection state directly since connections
-/// live in user --server processes. Handles fast user switching by querying
-/// all GUI users, including the login-window server at UID 0. Falls back to
-/// false (assumes sessions active) on any IPC error to avoid updating during
-/// an unknown session state.
 #[cfg(target_os = "macos")]
 pub fn has_no_active_conns_ipc() -> bool {
     let result = match hbb_common::tokio::runtime::Runtime::new() {
@@ -411,7 +386,6 @@ pub fn has_no_active_conns_ipc() -> bool {
 #[cfg(target_os = "macos")]
 async fn query_no_active_conns_ipc() -> ResultType<bool> {
     const IPC_TIMEOUT_MS: u64 = 1_000;
-    // An empty GUI user set maps to UID 0 so LoginWindow must also confirm it is idle.
     let uids = crate::platform::get_logged_in_uids();
     for uid in uids {
         let mut conn = crate::ipc::connect_for_uid(IPC_TIMEOUT_MS, uid, "")
@@ -441,9 +415,6 @@ fn wait_for_failed_update_retry() {
         return;
     }
 
-    // The updater script records failure immediately before launchd restarts
-    // the old daemon. Preserve the retry deadline across that restart instead
-    // of consuming the marker and retrying the same broken release in 30 sec.
     let remaining = std::fs::metadata(marker)
         .and_then(|metadata| metadata.modified())
         .ok()
@@ -468,8 +439,6 @@ fn wait_for_failed_update_retry() {
     }
 }
 
-/// Starts the background silent auto-update scheduler for macOS.
-/// Called from `start_os_service()` which runs as root via LaunchDaemon.
 #[cfg(target_os = "macos")]
 pub fn start_auto_update_macos() {
     let spawn_result = std::thread::Builder::new()
@@ -489,9 +458,6 @@ pub fn start_auto_update_macos() {
                     match check_update_as_root() {
                         Ok(update_started) => {
                             if update_started {
-                                // The replacement script is detached and may fail
-                                // after this process returns. Always retry at the
-                                // failure interval until the new daemon replaces us.
                                 interval = RETRY_INTERVAL;
                             } else {
                                 interval = DUR_ONE_DAY;
@@ -514,7 +480,6 @@ pub fn start_auto_update_macos() {
 #[cfg(target_os = "macos")]
 pub fn check_update_as_root() -> ResultType<bool> {
     let _update_lock = acquire_mac_update_lock()?;
-    // Allow-auto-update setting
     if !config::Config::get_bool_option(keys::OPTION_ALLOW_AUTO_UPDATE) {
         log::info!("[root-update] Auto update is disabled, skipping.");
         return Ok(false);
@@ -523,10 +488,6 @@ pub fn check_update_as_root() -> ResultType<bool> {
         log::info!("[root-update] Custom client detected, skipping stock update.");
         return Ok(false);
     }
-    // Clean up only old temp dirs from previous failed updates. The detached
-    // installer keeps using its update directory after this process exits and
-    // releases the advisory lock, so a newly-started daemon must not remove a
-    // directory that still belongs to the active transaction.
     if let Ok(entries) = std::fs::read_dir("/tmp") {
         for entry in entries.flatten() {
             let name = entry.file_name();
@@ -573,13 +534,10 @@ pub fn check_update_as_root() -> ResultType<bool> {
         artifact.version,
         dmg_url
     );
-    // Validate URL against GitHub release allowlist before downloading as root
     let Some(file_path_validated) = get_update_download_file_from_url(dmg_url) else {
         bail!("[root-update] URL failed allowlist check: {}", dmg_url);
     };
     drop(file_path_validated);
-    // Use mktemp so a local user cannot pre-create a predictable path and
-    // permanently deny updates for a reused service PID.
     let private_tmp_output = std::process::Command::new("/usr/bin/mktemp")
         .args(["-d", "/tmp/.rustdeskdownload-XXXXXX"])
         .output()?;
@@ -615,16 +573,13 @@ pub fn check_update_as_root() -> ResultType<bool> {
         return Err(err);
     }
     log::info!("[root-update] Downloaded and verified at {}", tmp_path);
-    // Recheck active sessions before installing — download can take minutes
     if !has_no_active_conns_ipc() {
         if let Err(e) = std::fs::remove_dir_all(&private_tmp) {
             log::warn!("[root-update] Failed to remove temp dir {}: {}", private_tmp, e);
         }
         bail!("[root-update] Active session started during download, deferring update.");
     }
-    // Install silently as root
     let result = crate::platform::update_from_dmg_as_root(&tmp_path, &artifact.version);
-    // Clean up download directory
     if let Err(e) = std::fs::remove_dir_all(&private_tmp) {
         log::warn!(
             "[root-update] Failed to remove temp dir {}: {}",

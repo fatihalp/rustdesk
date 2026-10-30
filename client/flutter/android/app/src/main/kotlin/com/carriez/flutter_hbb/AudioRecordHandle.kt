@@ -13,7 +13,7 @@ import android.os.Build
 import android.util.Log
 import kotlin.concurrent.thread
 
-const val AUDIO_ENCODING = AudioFormat.ENCODING_PCM_FLOAT //  ENCODING_OPUS need API 30
+const val AUDIO_ENCODING = AudioFormat.ENCODING_PCM_FLOAT
 const val AUDIO_SAMPLE_RATE = 48000
 const val AUDIO_CHANNEL_MASK = AudioFormat.CHANNEL_IN_STEREO
 
@@ -105,7 +105,6 @@ class AudioRecordHandle(private var context: Context, private var isVideoStart: 
         if (audioReader != null && minBufferSize != 0) {
             return
         }
-        // read f32 to byte , length * 4
         val bufferSize = 2 * 4 * AudioRecord.getMinBufferSize(
             AUDIO_SAMPLE_RATE,
             AUDIO_CHANNEL_MASK,
@@ -209,7 +208,6 @@ class AudioRecordHandle(private var context: Context, private var isVideoStart: 
         if (!isSupportVoiceCall()) {
             return false
         }
-        // No need to check if video or audio is started here.
         if (!switchToVoiceCall(mediaProjection)) {
             return false
         }
@@ -217,7 +215,6 @@ class AudioRecordHandle(private var context: Context, private var isVideoStart: 
     }
 
     fun onVoiceCallClosed(mediaProjection: MediaProjection?): Boolean {
-        // Return true if not supported, because is was not started.
         if (!isSupportVoiceCall()) {
             return true
         }

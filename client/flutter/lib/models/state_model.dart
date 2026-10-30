@@ -19,7 +19,6 @@ class StateGlobal {
   final svcStatus = SvcStatus.notReady.obs;
   final RxInt videoConnCount = 0.obs;
   final RxBool isFocused = false.obs;
-  // for mobile and web
   bool isInMainPage = true;
   bool isWebVisible = true;
 
@@ -29,12 +28,8 @@ class StateGlobal {
 
   String _inputSource = '';
 
-  // Track relative mouse mode state for each peer connection.
-  // Key: peerId, Value: true if relative mouse mode is active.
-  // Note: This is session-only runtime state, NOT persisted to config.
   final RxMap<String, bool> relativeMouseModeState = <String, bool>{}.obs;
 
-  // Use for desktop -> remote toolbar -> resolution
   final Map<String, Map<int, String?>> _lastResolutionGroupValues = {};
 
   int get windowId => _windowId;
@@ -108,8 +103,6 @@ class StateGlobal {
     if (procWnd) {
       final wc = WindowController.fromWindowId(windowId);
       wc.setFullscreen(_fullscreen.isTrue).then((_) {
-        // We remove the redraw (width + 1, height + 1), because this issue cannot be reproduced.
-        // https://github.com/rustdesk/rustdesk/issues/9675
       });
     }
   }
@@ -143,5 +136,4 @@ class StateGlobal {
   static final StateGlobal instance = StateGlobal._();
 }
 
-// This final variable is initialized when the first time it is accessed.
 final stateGlobal = StateGlobal.instance;

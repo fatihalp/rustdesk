@@ -47,22 +47,16 @@ struct ActiveUserLookupCache {
 const INVALID_TERM_VALUES: [&str; 3] = ["", "unknown", "dumb"];
 const SHELL_PROCESSES: [&str; 4] = ["bash", "zsh", "fish", "sh"];
 
-// Terminal type constants
 const TERM_XTERM_256COLOR: &str = "xterm-256color";
 const TERM_SCREEN_256COLOR: &str = "screen-256color";
 const TERM_XTERM: &str = "xterm";
 
 #[cfg(feature = "drm")]
 lazy_static::lazy_static! {
-    /// Only for per-frame callers; see `is_login_screen_wayland_cached`.
-    /// Own block because `#[cfg]` on one item inside a shared one breaks the macro.
     static ref IS_LOGIN_SCREEN_WAYLAND: bool = is_login_screen_wayland();
 }
 
 lazy_static::lazy_static! {
-    /// `is_x11_or_headless()` answers x11 at a Wayland greeter, which the portal could not
-    /// serve but the DRM path can. Unmemoised lookup on purpose: this may run mid-boot, and
-    /// a "no" cached that early would be wrong for the rest of the process.
     pub static ref IS_X11: bool = {
         let x11 = base::platform::linux::is_x11_or_headless();
         #[cfg(feature = "drm")]
@@ -83,7 +77,6 @@ lazy_static::lazy_static! {
             x11
         }
     };
-    // Cache for TERM value - once TERM_XTERM_256COLOR is found, reuse it directly
     static ref CACHED_TERM: std::sync::Mutex<Option<String>> = std::sync::Mutex::new(None);
     static ref DATABASE_XTERM_256COLOR: Option<Database> = {
         match Database::from_name(TERM_XTERM_256COLOR) {
@@ -99,26 +92,15 @@ lazy_static::lazy_static! {
     static ref GNOME_MONITOR_LAYOUT_MODE_CACHE: std::sync::Mutex<
         Option<(Instant, Option<GnomeMonitorLayoutMode>)>,
     > = Default::default();
-    // https://github.com/rustdesk/rustdesk/issues/13705
-    // Check if `sudo -E` actually preserves environment.
-    //
-    // This flag is only used by `run_as_user()` (root service -> user session). If the current process is not
-    // running as `root`, this check is meaningless (and `sudo -n` may fail), so we return `false` directly.
-    //
-    // On Ubuntu 25.10, `sudo -E` may still succeed but effectively ignores `-E`. Some versions print a warning
-    // to stderr (wording may vary by locale), so we verify behavior instead:
-    // - Inject a sentinel environment variable into the `sudo` process
-    // - Run `sudo -n -E env` and check whether the sentinel is present in stdout
     static ref SUDO_E_PRESERVES_ENV: bool = {
         if !is_root() {
             log::warn!("Not running as root, SUDO_E_PRESERVES_ENV check skipped");
             false
         } else {
-            let key = format!("__RUSTDESK_SUDO_E_TEST_{}", std::process::id());
+            let key = format!("__SUPPORTDESK_SUDO_E_TEST_{}", std::process::id());
             let val = "1";
             let expected = format!("{key}={val}");
             Command::new("sudo")
-                // -n for non-interactive to avoid password prompt
                 .env(&key, val)
                 .args(["-n", "-E", "env"])
                 .output()
@@ -147,8 +129,6 @@ impl GnomeMonitorLayoutMode {
 }
 
 fn gnome_monitor_layout_mode_from_value(value: u32) -> Option<GnomeMonitorLayoutMode> {
-    // Upstream: https://gitlab.gnome.org/GNOME/mutter/-/blob/main/data/dbus-interfaces/org.gnome.Mutter.DisplayConfig.xml
-    // Ubuntu mode 3: https://git.launchpad.net/ubuntu/+source/mutter/tree/debian/patches/x11-Add-support-for-fractional-scaling-using-Randr.patch
     match value {
         1 | 3 => Some(GnomeMonitorLayoutMode::Logical),
         2 => Some(GnomeMonitorLayoutMode::Physical),
@@ -275,8 +255,6 @@ fn get_active_user_id_name_from_cache() -> Option<(String, String)> {
 }
 
 thread_local! {
-    // XDO context - created via libxdo-sys (which uses dynamic loading stub).
-    // If libxdo is not available, xdo will be null and xdo-based functions become no-ops.
     static XDO: RefCell<*mut xdo_t> = RefCell::new({
         let xdo = unsafe { libxdo_sys::xdo_new(std::ptr::null()) };
         if xdo.is_null() {
@@ -292,8 +270,6 @@ thread_local! {
 pub fn right_alt_is_level3_shift() -> ResultType<bool> {
     use hbb_common::x11::{keysym, xlib};
     const XKB_USE_CORE_KBD: c_uint = 0x0100;
-    // A fresh connection avoids Xlib's stale keymap cache after a layout switch.
-    // This query runs only for a matched chord with physical Right Alt held.
     let display = unsafe { xlib::XOpenDisplay(std::ptr::null()) };
     if display.is_null() {
         bail!("X display unavailable");
@@ -309,7 +285,6 @@ pub fn right_alt_is_level3_shift() -> ResultType<bool> {
         let symbol = unsafe {
             xlib::XkbKeycodeToKeysym(display, code as _, state.group.into(), 0)
         };
-        // Physical Right Alt is ordinary Alt on layouts such as US English.
         Ok(matches!(symbol as u32, keysym::XK_ISO_Level3_Shift
             | keysym::XK_ISO_Level3_Latch | keysym::XK_ISO_Level3_Lock
             | keysym::XK_Mode_switch))
@@ -318,13 +293,11 @@ pub fn right_alt_is_level3_shift() -> ResultType<bool> {
     result
 }
 
-// X11 error event structure for the custom error handler.
-// See: https://www.x.org/releases/current/doc/libX11/libX11/libX11.html#Using-the-Default-Error-Handlers
 #[repr(C)]
 struct XErrorEvent {
     type_: c_int,
-    display: *mut c_void, // Display*
-    resourceid: c_ulong,  // XID
+    display: *mut c_void,
+    resourceid: c_ulong,
     serial: c_ulong,
     error_code: u8,
     request_code: u8,
@@ -337,13 +310,9 @@ const X11_BAD_WINDOW: u8 = 3;
 const XDO_SUCCESS: c_int = 0;
 const XDO_ERROR: c_int = 1;
 
-/// Atomic flag set by the custom X error handler when a BadWindow error occurs.
 static X_BAD_WINDOW_DETECTED: AtomicBool = AtomicBool::new(false);
 static X_UNEXPECTED_ERROR_DETECTED: AtomicBool = AtomicBool::new(false);
 
-/// Custom X error handler that catches BadWindow errors (error_code == 3) instead of
-/// letting the default handler terminate the process.
-/// See issue: https://github.com/rustdesk/rustdesk/issues/9003
 unsafe extern "C" fn handle_x_error(_display: *mut c_void, event: *mut XErrorEvent) -> c_int {
     if !event.is_null() && (*event).error_code == X11_BAD_WINDOW {
         X_BAD_WINDOW_DETECTED.store(true, Ordering::SeqCst);
@@ -365,18 +334,15 @@ unsafe extern "C" fn handle_x_error(_display: *mut c_void, event: *mut XErrorEve
 #[link(name = "X11")]
 extern "C" {
     fn XOpenDisplay(display_name: *const c_char) -> *mut c_void;
-    // fn XCloseDisplay(d: *mut c_void) -> c_int;
     fn XSetErrorHandler(handler: Option<XErrorHandler>) -> Option<XErrorHandler>;
 }
 
 #[link(name = "Xfixes")]
 extern "C" {
-    // fn XFixesQueryExtension(dpy: *mut c_void, event: *mut c_int, error: *mut c_int) -> c_int;
     fn XFixesGetCursorImage(dpy: *mut c_void) -> *const xcb_xfixes_get_cursor_image;
     fn XFree(data: *mut c_void);
 }
 
-// /usr/include/X11/extensions/Xfixes.h
 #[repr(C)]
 pub struct xcb_xfixes_get_cursor_image {
     pub x: i16,
@@ -395,28 +361,16 @@ pub fn is_login_screen_wayland() -> bool {
     is_gdm_user(&values[1]) && get_display_server_of_session(&values[0]) == DISPLAY_SERVER_WAYLAND
 }
 
-/// An explicit `RUSTDESK_FORCED_DISPLAY_SERVER` is an operator override, and the root service
-/// forwards it to the per-user server on purpose: the greeter correction may only fix an
-/// AUTO-detected answer, never argue with the operator — a half-applied override would leave
-/// `get_display_server()` and the DRM routing gates disagreeing with each other.
 #[cfg(feature = "drm")]
 pub(crate) fn display_server_forced() -> bool {
-    std::env::var("RUSTDESK_FORCED_DISPLAY_SERVER").is_ok()
+    std::env::var("SUPPORTDESK_FORCED_DISPLAY_SERVER").is_ok()
 }
 
-/// X11 as far as the DRM path is concerned: a Wayland greeter is not, unless the operator
-/// forced the display server.
-///
-/// Both halves unmemoised, for the retry loops that must keep asking until seat0 can be named.
 #[cfg(feature = "drm")]
 pub fn is_x11_for_drm() -> bool {
     scrap::is_x11() && (display_server_forced() || !is_login_screen_wayland())
 }
 
-/// Memoised `is_login_screen_wayland`, for per-frame callers that must not run `loginctl`.
-///
-/// Only from the per-session `--server`: it is spawned after the session is identified, so the
-/// answer is settled. Anything that can run mid-boot must use the uncached form.
 #[cfg(feature = "drm")]
 #[inline]
 pub fn is_login_screen_wayland_cached() -> bool {
@@ -479,21 +433,7 @@ pub fn set_cursor_pos(x: i32, y: i32) -> bool {
     res
 }
 
-/// Clip cursor - Linux implementation is a no-op.
-///
-/// On X11, there's no direct equivalent to Windows ClipCursor. XGrabPointer
-/// can confine the pointer but requires a window handle and has side effects.
-///
-/// On Wayland, pointer constraints require the zwp_pointer_constraints_v1
-/// protocol which is compositor-dependent.
-///
-/// For relative mouse mode on Linux, the Flutter side uses pointer warping
-/// (set_cursor_pos) to re-center the cursor after each movement, which achieves
-/// a similar effect without requiring cursor clipping.
-///
-/// Returns true (always succeeds as no-op).
 pub fn clip_cursor(_rect: Option<(i32, i32, i32, i32)>) -> bool {
-    // Log only once per process to avoid flooding logs when called frequently.
     static LOGGED: AtomicBool = AtomicBool::new(false);
     if !LOGGED.swap(true, Ordering::Relaxed) {
         log::debug!("clip_cursor called (no-op on Linux, this message is logged only once)");
@@ -521,10 +461,6 @@ pub fn get_focused_display(displays: Vec<DisplayInfo>) -> Option<usize> {
                     return;
                 }
 
-                // XSetErrorHandler is process-global, not scoped to this Display/thread.
-                // This path is currently called by the single window_focus service thread.
-                // While installed, this handler can still observe unrelated X11 errors from
-                // other threads; unexpected errors make this geometry query fail.
                 X_BAD_WINDOW_DETECTED.store(false, Ordering::SeqCst);
                 X_UNEXPECTED_ERROR_DETECTED.store(false, Ordering::SeqCst);
                 let prev_handler = XSetErrorHandler(Some(handle_x_error));
@@ -547,11 +483,6 @@ pub fn get_focused_display(displays: Vec<DisplayInfo>) -> Option<usize> {
                     XDO_ERROR
                 };
 
-                // Do not call XSync(DISPLAY) here: DISPLAY is a separate
-                // XOpenDisplay() connection, while libxdo owns the Display*
-                // used by these geometry queries. These libxdo calls are
-                // synchronous XGetWindowAttributes-based queries, so the target
-                // BadWindow is expected to be delivered before the calls return.
                 XSetErrorHandler(prev_handler);
                 if X_BAD_WINDOW_DETECTED.load(Ordering::SeqCst)
                     || X_UNEXPECTED_ERROR_DETECTED.load(Ordering::SeqCst)
@@ -576,23 +507,9 @@ pub fn get_focused_display(displays: Vec<DisplayInfo>) -> Option<usize> {
 }
 
 pub fn get_cursor() -> ResultType<Option<u64>> {
-    // DRM/KMS capture: the hardware cursor arrives over the `_drm` stream, not from XFixes.
-    //
-    // The MEMOISED `is_x11()` here, deliberately, unlike the capture-path callers that take the
-    // unmemoised `scrap::is_x11()` because this one latches on first use. The tradeoff is the other
-    // way round at cursor cadence: the unmemoised form forks `loginctl` per call, and this runs on
-    // every cursor poll. A latch that guessed wrong costs a cursor served by the wrong source until
-    // the process restarts, not a capture that cannot start -- and by the time a cursor is being
-    // polled there is a live session, which is the case the latch reads correctly.
     #[cfg(feature = "drm")]
     if !is_x11() {
         if let Some(id) = crate::server::drm_capturer::drm_cursor_id() {
-            // In a mixed DRM + PipeWire session the DRM streams only cover the DRM-backed displays;
-            // when the pointer sits on a PipeWire-served display every DRM stream reports the hidden
-            // sentinel. Returning that sentinel here would hide the cursor globally, including on the
-            // PipeWire display where it is still visible, so only report a hidden DRM cursor when it
-            // is authoritative -- a pure-DRM session. A visible DRM cursor is always authoritative;
-            // otherwise fall through to the normal cursor path.
             if id != scrap::drm_reader::HIDDEN_CURSOR_ID
                 || !crate::server::display_service::has_non_drm_backed_display()
             {
@@ -618,18 +535,9 @@ pub fn get_cursor() -> ResultType<Option<u64>> {
 }
 
 pub fn get_cursor_data(hcursor: u64) -> ResultType<CursorData> {
-    // DRM/KMS capture: return the latest hardware-cursor snapshot from the `_drm` stream. Its id may
-    // have advanced past `hcursor` between get_cursor() and here, so return the latest rather than
-    // bailing (which would trigger a MouseCursorService backoff).
-    //
-    // Memoised `is_x11()` on purpose, for the reason spelled out in `get_cursor()`; the two must
-    // agree anyway, since a caller that took the DRM branch there has to take it here.
     #[cfg(feature = "drm")]
     if !is_x11() {
         if let Some(c) = crate::server::drm_capturer::drm_cursor() {
-            // See get_cursor(): a hidden DRM sentinel is authoritative only in a pure-DRM session. In
-            // a mixed DRM + PipeWire session fall through so the PipeWire display's cursor is served
-            // by the normal path instead of being hidden everywhere.
             if c.id != scrap::drm_reader::HIDDEN_CURSOR_ID
                 || !crate::server::display_service::has_non_drm_backed_display()
             {
@@ -656,11 +564,9 @@ pub fn get_cursor_data(hcursor: u64) -> ResultType<CursorData> {
                         cd.hoty = (*img).yhot as _;
                         cd.width = (*img).width as _;
                         cd.height = (*img).height as _;
-                        // to-do: how about if it is 0
                         cd.id = (*img).cursor_serial as _;
                         let pixels =
                             std::slice::from_raw_parts((*img).pixels, (cd.width * cd.height) as _);
-                        // cd.colors.resize(pixels.len() * 4, 0);
                         let mut cd_colors = vec![0_u8; pixels.len() * 4];
                         for y in 0..cd.height {
                             for x in 0..cd.width {
@@ -709,17 +615,6 @@ fn start_uinput_service() {
     });
 }
 
-/// Suggests the best terminal type based on the environment.
-///
-/// The function prioritizes terminal types in the following order:
-/// 1. `screen-256color`: Preferred when running inside `tmux` or `screen` sessions,
-///    as these multiplexers often support advanced terminal features.
-/// 2. `xterm-256color`: Selected if the terminal supports 256 colors, which is
-///    suitable for modern terminal applications.
-/// 3. `xterm`: Used as a fallback for basic terminal compatibility.
-///
-/// Terminals like `linux` and `vt100` are excluded because they lack support for
-/// modern features required by many applications.
 fn suggest_best_term() -> String {
     if is_running_in_tmux() || is_running_in_screen() {
         return TERM_SCREEN_256COLOR.to_string();
@@ -752,7 +647,6 @@ fn term_supports_256_colors(term: &str) -> bool {
 }
 
 fn get_cur_term(uid: &str) -> Option<String> {
-    // Check cache first - if TERM_XTERM_256COLOR was found before, reuse it
     if let Ok(cache) = CACHED_TERM.lock() {
         if let Some(ref cached) = *cache {
             if cached == TERM_XTERM_256COLOR {
@@ -765,7 +659,6 @@ fn get_cur_term(uid: &str) -> Option<String> {
         return None;
     }
 
-    // Check current process environment
     if let Ok(term) = std::env::var("TERM") {
         if term == TERM_XTERM_256COLOR {
             if let Ok(mut cache) = CACHED_TERM.lock() {
@@ -775,10 +668,8 @@ fn get_cur_term(uid: &str) -> Option<String> {
         }
     }
 
-    // Collect all TERM values from shell processes, looking for TERM_XTERM_256COLOR
     let terms = get_all_term_values(uid);
 
-    // Prefer TERM_XTERM_256COLOR
     if terms.iter().any(|t| t == TERM_XTERM_256COLOR) {
         if let Ok(mut cache) = CACHED_TERM.lock() {
             *cache = Some(TERM_XTERM_256COLOR.to_string());
@@ -786,7 +677,6 @@ fn get_cur_term(uid: &str) -> Option<String> {
         return Some(TERM_XTERM_256COLOR.to_string());
     }
 
-    // Return first valid TERM if no TERM_XTERM_256COLOR found
     let fallback = terms.into_iter().next();
     if let Some(ref term) = fallback {
         log::debug!(
@@ -797,16 +687,11 @@ fn get_cur_term(uid: &str) -> Option<String> {
     fallback
 }
 
-/// Get all TERM values from shell processes (bash, zsh, fish, sh).
-/// Returns a Vec of unique, valid TERM values.
 fn get_all_term_values(uid: &str) -> Vec<String> {
     let Ok(uid_num) = uid.parse::<u32>() else {
         return Vec::new();
     };
 
-    // Build regex pattern to match shell processes using only argv[0] (the executable path)
-    // Pattern: match process name at start or after '/', followed by space or end
-    // e.g., "bash", "/bin/bash", "/usr/bin/zsh"
     let shell_pattern = SHELL_PROCESSES
         .iter()
         .map(|p| format!(r"(^|/){p}(\s|$)"))
@@ -833,7 +718,6 @@ fn get_all_term_values(uid: &str) -> Vec<String> {
 
         let proc_path = entry.path();
 
-        // Check if process belongs to the specified uid
         if let Ok(meta) = std::fs::metadata(&proc_path) {
             use std::os::unix::fs::MetadataExt;
             if meta.uid() != uid_num {
@@ -843,10 +727,6 @@ fn get_all_term_values(uid: &str) -> Vec<String> {
             continue;
         }
 
-        // Check cmdline matches process pattern
-        // /proc/<pid>/cmdline is a sequence of null-terminated strings; the first
-        // one (argv[0]) is the executable path. Match the regex only against that
-        // to avoid false positives from arguments (e.g., "python /path/to/bash-script.py").
         let cmdline_path = proc_path.join("cmdline");
         let Ok(cmdline) = std::fs::read(&cmdline_path) else {
             continue;
@@ -860,7 +740,6 @@ fn get_all_term_values(uid: &str) -> Vec<String> {
             continue;
         }
 
-        // Read environ and extract TERM
         let environ_path = proc_path.join("environ");
         let Ok(environ) = std::fs::read(&environ_path) else {
             continue;
@@ -876,7 +755,6 @@ fn get_all_term_values(uid: &str) -> Vec<String> {
                     let val_bytes = &part[eq + 1..];
                     let term = String::from_utf8_lossy(val_bytes).into_owned();
                     if !INVALID_TERM_VALUES.contains(&term.as_str()) && !terms.contains(&term) {
-                        // Early return if we found the preferred term
                         if term == TERM_XTERM_256COLOR {
                             return vec![term];
                         }
@@ -949,11 +827,11 @@ fn try_start_server_(desktop: Option<&Desktop>) -> ResultType<Option<Child>> {
                 envs.push(("DBUS_SESSION_BUS_ADDRESS", desktop.dbus.clone()));
             }
             if let Ok(forced_display_server) =
-                std::env::var("RUSTDESK_FORCED_DISPLAY_SERVER")
+                std::env::var("SUPPORTDESK_FORCED_DISPLAY_SERVER")
             {
                 if !forced_display_server.is_empty() {
                     envs.push((
-                        "RUSTDESK_FORCED_DISPLAY_SERVER",
+                        "SUPPORTDESK_FORCED_DISPLAY_SERVER",
                         forced_display_server,
                     ));
                 }
@@ -985,20 +863,12 @@ fn start_server(desktop: Option<&Desktop>, server: &mut Option<Child>) {
     }
 }
 
-/// Whether a just-spawned `--server` is still running after a short grace period, taking ownership of
-/// the corpse (clearing `server`) when it is not. `start_server` reports only whether the SPAWN
-/// succeeded, which is not the same question: a child that execs and exits immediately still leaves
-/// `Some(child)` behind.
-///
-/// A child that exits is detected as soon as it does; a healthy one costs the full grace, once per
-/// start. A server that dies LATER than this is a different (transient) failure, and the restart
-/// throttle in `should_start_server` already bounds that case.
 #[cfg(feature = "drm")]
 fn server_survived_grace(server: &mut Option<Child>) -> bool {
     const GRACE: Duration = Duration::from_millis(1000);
     const STEP_MS: u64 = 100;
     let Some(ps) = server.as_mut() else {
-        return false; // spawn itself failed
+        return false;
     };
     let deadline = Instant::now() + GRACE;
     while Instant::now() < deadline {
@@ -1009,7 +879,6 @@ fn server_survived_grace(server: &mut Option<Child>) -> bool {
                 return false;
             }
             Ok(None) => sleep_millis(STEP_MS),
-            // We cannot tell; treat it as alive rather than tearing down a possibly healthy child.
             Err(err) => {
                 log::error!("error waiting on the just-started --server: {err}");
                 return true;
@@ -1045,7 +914,7 @@ fn set_x11_env(desktop: &Desktop) {
 }
 
 #[inline]
-fn stop_rustdesk_servers() {
+fn stop_supportdesk_servers() {
     let _ = run_cmds(&format!(
         r##"ps -ef | grep -E '{} +--server' | awk '{{print $2}}' | xargs -r kill -9"##,
         crate::get_app_name().to_lowercase(),
@@ -1080,13 +949,8 @@ fn should_start_server(
     {
         let terminal_session_count = crate::ipc::get_terminal_session_count().unwrap_or(0);
         if terminal_session_count > 0 {
-            // There are terminal sessions, so we don't restart the server.
-            // We also need to keep `cm0` unchanged, so that we can reach this branch the next time.
             return false;
         }
-        // restart server if new connections all closed, or every one hour,
-        // as a workaround to resolve "SpotUdp" (dns resolve)
-        // and x server get displays failure issue
         should_kill = true;
         log::info!("restart server");
     }
@@ -1114,32 +978,20 @@ fn should_start_server(
     start_new
 }
 
-// to-do: stop_server(&mut user_server); may not stop child correctly
-// stop_rustdesk_servers() is just a temp solution here.
 fn force_stop_server() {
-    stop_rustdesk_servers();
+    stop_supportdesk_servers();
     sleep_millis(super::SERVICE_INTERVAL);
 }
 
 pub fn start_os_service() {
     check_if_stop_service();
-    stop_rustdesk_servers();
+    stop_supportdesk_servers();
     start_uinput_service();
 
     std::thread::spawn(|| {
         allow_err!(crate::ipc::start(crate::POSTFIX_SERVICE));
     });
 
-    // DRM/KMS capture producer (opt-in `drm` feature): a dedicated thread + runtime that streams
-    // scanout frames to the user `--server` over the `_drm` service-scoped channel. Runs here
-    // because this process is the root service that already holds CAP_SYS_ADMIN for the in-process
-    // (direct-mode) libdrmtap read.
-    //
-    // Builder, like every other thread this feature starts: `thread::spawn` PANICS if the thread
-    // cannot be created (EAGAIN under a thread-count or memory limit), and here that panic would
-    // unwind out of `start_os_service` -- taking down the root service itself, for a feature whose
-    // failure should only cost DRM capture. Losing the producer leaves the consumer to fall back to
-    // PipeWire/X11, which is the same path a host without the feature takes.
     #[cfg(feature = "drm")]
     if let Err(err) = std::thread::Builder::new()
         .name("drm-producer".into())
@@ -1173,12 +1025,8 @@ pub fn start_os_service() {
         desktop.refresh();
         update_active_user_lookup_cache(&desktop);
 
-        // Duplicate logic here with should_start_server.
         if desktop.username == "root" || desktop.is_login_wayland() {
-            // try kill subprocess "--server"
             stop_server(&mut user_server);
-            // try start subprocess "--server"
-            // No need to check is_display_changed here.
             if should_start_server(
                 true,
                 false,
@@ -1189,29 +1037,11 @@ pub fn start_os_service() {
                 &mut server,
             ) {
                 force_stop_server();
-                // Run the login-screen --server as the active seat0 session user (the greeter
-                // account) rather than root, so the DRM capture GPU/EGL convert never loads the
-                // vendor GPU userspace in a privileged process. is_login_wayland() matches a GDM or
-                // SDDM Wayland greeter (is_gdm_user covers both), and desktop.uid is that greeter's
-                // uid, so this drops to whichever greeter owns seat0. A greeter is_gdm_user does not
-                // recognize (e.g. LightDM) never reaches this branch -- it takes the unprivileged
-                // else-branch below already. A genuine root graphical session (username=="root")
-                // has no lower uid to drop to, so it stays root. The whole branch is gated on the drm
-                // feature, so the drm-off build is upstream's single `start_server(None, ..)` line.
                 #[cfg(not(feature = "drm"))]
                 start_server(None, &mut server);
                 #[cfg(feature = "drm")]
                 if desktop.username != "root" && !desktop.uid.is_empty() {
                     start_server(Some(&desktop), &mut server);
-                    // If dropping to the greeter uid did not produce a RUNNING server, fall back to a
-                    // root --server so the login screen stays remotable instead of looping on a
-                    // failing greeter spawn. This pays the GPU-in-root tradeoff only on that failure
-                    // path, never in the normal greeter case. Liveness, not just spawn success: a
-                    // greeter account that cannot actually run it (a nologin shell, a hardened home,
-                    // no writable config dir) leaves a child that exits at once, and the loop above
-                    // notices only that the child is gone and respawns it, forever, without ever
-                    // reaching this fallback -- so the login screen becomes permanently un-remotable
-                    // on a host where it used to work.
                     if !server_survived_grace(&mut server) {
                         log::warn!(
                             "greeter --server did not stay up; falling back to a root --server"
@@ -1223,14 +1053,12 @@ pub fn start_os_service() {
                 }
             }
         } else if desktop.username != "" {
-            // try kill subprocess "--server"
             stop_server(&mut server);
 
             let is_display_changed = desktop.display != display || desktop.xauth != xauth;
             display = desktop.display.clone();
             xauth = desktop.xauth.clone();
 
-            // try start subprocess "--server"
             if should_start_server(
                 !desktop.is_wayland(),
                 is_display_changed,
@@ -1251,7 +1079,6 @@ pub fn start_os_service() {
 
         let keeps_session = sid == desktop.sid;
         if keeps_session {
-            // for fixing https://github.com/rustdesk/rustdesk/issues/3129 to avoid too much dbus calling,
             sleep_millis(500);
         } else {
             sleep_millis(super::SERVICE_INTERVAL);
@@ -1269,8 +1096,6 @@ pub fn start_os_service() {
 }
 
 #[inline]
-/// Returns the cached active `(uid, username)` snapshot when available.
-/// Callers that require a fresh seat0 lookup should call `get_values_of_seat0` directly.
 pub fn get_active_user_id_name() -> (String, String) {
     if let Some(id_name) = get_active_user_id_name_from_cache() {
         return id_name;
@@ -1280,8 +1105,6 @@ pub fn get_active_user_id_name() -> (String, String) {
 }
 
 #[inline]
-/// Returns the cached active uid when available.
-/// Callers that require a fresh seat0 lookup should call `get_values_of_seat0` directly.
 pub fn get_active_userid() -> String {
     if let Some((uid, _)) = get_active_user_id_name_from_cache() {
         return uid;
@@ -1290,10 +1113,7 @@ pub fn get_active_userid() -> String {
 }
 
 #[inline]
-/// Returns the active uid from a fresh seat0 lookup, bypassing the service-loop cache.
 pub fn get_active_userid_fresh() -> String {
-    // A Wayland greeter owns seat0 while it is up and the DRM backend serves it, so a uid gate that
-    // cannot see it rejects the greeter's own `--server`. `Desktop::refresh` reads it the same way.
     #[cfg(feature = "drm")]
     return get_values_of_seat0_with_gdm_wayland(&[1])[0].clone();
     #[cfg(not(feature = "drm"))]
@@ -1301,17 +1121,11 @@ pub fn get_active_userid_fresh() -> String {
 }
 
 #[inline]
-/// The cached active uid as a number, or `None` when the cache is empty. Unlike `get_active_userid`
-/// this NEVER falls back to a blocking `loginctl` seat0 lookup, so it is safe to call on an async
-/// runtime thread and on a hot path (e.g. per-frame re-auth): a cache miss returns `None` for the
-/// caller to treat as "active session momentarily unknown" rather than stalling on a subprocess.
 pub fn get_active_userid_cached() -> Option<u32> {
     get_active_user_id_name_from_cache().and_then(|(uid, _)| uid.parse::<u32>().ok())
 }
 
 fn get_cm() -> bool {
-    // Runs twice a second in the service loop, so walk /proc rather than forking `ps aux`; that
-    // fork is also what the `CMD_PS` audit-message workaround this replaces was for.
     let cm = format!(
         "{} --cm",
         std::env::current_exe()
@@ -1322,7 +1136,6 @@ fn get_cm() -> bool {
 }
 
 pub fn is_login_wayland() -> bool {
-    // Debian's gdm3 reads /etc/gdm3/daemon.conf instead of custom.conf.
     let files = [
         "/etc/gdm3/custom.conf",
         "/etc/gdm/custom.conf",
@@ -1349,7 +1162,6 @@ pub fn current_is_wayland() -> bool {
     return is_desktop_wayland() && unsafe { UNMODIFIED };
 }
 
-// to-do: test the other display manager
 fn _get_display_manager() -> String {
     if let Ok(x) = std::fs::read_to_string("/etc/X11/default-display-manager") {
         if let Some(x) = x.split("/").last() {
@@ -1360,11 +1172,7 @@ fn _get_display_manager() -> String {
 }
 
 #[inline]
-/// Returns the cached active username when available.
-/// Callers that require a fresh seat0 lookup should call `get_values_of_seat0` directly.
 pub fn get_active_username() -> String {
-    // Flatpak runs only inside the logged-in user's session, and Flathub builds
-    // cannot reach the host's loginctl.
     if is_flatpak() {
         return crate::username();
     }
@@ -1393,7 +1201,6 @@ pub fn get_active_user_home() -> Option<PathBuf> {
     if !username.is_empty() {
         match get_user_home_by_name(&username) {
             None => {
-                // fallback to most common default pattern
                 let home = PathBuf::from(format!("/home/{}", username));
                 if home.exists() {
                     return Some(home);
@@ -1439,19 +1246,12 @@ pub fn is_prelogin() -> bool {
     false
 }
 
-// Check "Lock".
-// "Switch user" can't be checked, because `get_values_of_seat0(&[0])` does not return the session.
-// The logged in session is "online" not "active".
-// And the "Switch user" screen is usually Wayland login session, which we do not support.
 pub fn is_locked() -> bool {
     if is_prelogin() {
         return false;
     }
 
     let values = get_values_of_seat0(&[0]);
-    // Though the values can't be empty, we still add check here for safety.
-    // Because we cannot guarantee whether the internal implementation will change in the future.
-    // https://github.com/rustdesk/hbb_common/blob/ebb4d4a48cf7ed6ca62e93f8ed124065c6408536/src/platform/linux.rs#L119
     if values.is_empty() {
         log::debug!("Failed to check is locked, values vector is empty.");
         return false;
@@ -1498,25 +1298,12 @@ where
 
     let xdg = &format!("XDG_RUNTIME_DIR=/run/user/{uid}");
     if *SUDO_E_PRESERVES_ENV {
-        // Original logic: use sudo -E to preserve environment
         let mut args = vec![xdg, "-u", &username, cmd.to_str().unwrap_or("")];
         args.append(&mut arg.clone());
-        // -E is required to preserve env
         args.insert(0, "-E");
         let task = Command::new("sudo").envs(envs).args(args).spawn()?;
         Ok(Some(task))
     } else {
-        // Fallback: sudo -u username env VAR=VALUE ... cmd args
-        // For systems where sudo -E is not supported (e.g., Ubuntu 25.10+)
-        //
-        // SECURITY: No shell is involved here (we use execve-style argv).
-        // Environment is passed via `env` arguments,
-        // so there is no shell injection vector.
-        //
-        // Only accept portable env var names (POSIX portable character set for shells).
-        // Most legitimate env vars follow [A-Za-z_][A-Za-z0-9_]* convention.
-        // Variables with dots (e.g., "java.home") are Java system properties, not env vars.
-        // Being restrictive here is intentional for security in this sudo context.
         fn is_valid_env_key(key: &str) -> bool {
             let mut it = key.chars();
             match it.next() {
@@ -1535,8 +1322,6 @@ where
                 log::warn!("Skipping environment variable with invalid key: '{}'. Only [A-Za-z_][A-Za-z0-9_]* are allowed in sudo context.", key);
                 continue;
             }
-            // IMPORTANT: do NOT add shell quotes here; `Command` does not invoke a shell.
-            // Passing KEY=VALUE as a single argv element is safe and preserves spaces.
             let mut arg = OsString::from(&*key);
             arg.push("=");
             arg.push(v.as_ref());
@@ -1561,10 +1346,8 @@ pub fn get_pa_monitor() -> String {
         .unwrap_or("".to_owned())
 }
 
-// The first monitor in the source list can belong to an output the desktop does not play to.
 fn get_default_pa_monitor() -> Option<String> {
     use pulsectl::controllers::*;
-    // The audio service retries about every second while PulseAudio is unavailable.
     const LOG_INTERVAL: std::time::Duration = std::time::Duration::from_secs(60);
     let mut handler = SinkController::create()
         .map_err(|err| {
@@ -1657,7 +1440,6 @@ pub fn lock_screen() {
 }
 
 pub fn toggle_blank_screen(_v: bool) {
-    // https://unix.stackexchange.com/questions/17170/disable-keyboard-mouse-input-on-unix-under-x
 }
 
 pub fn block_input(_v: bool) -> (bool, String) {
@@ -1673,21 +1455,6 @@ pub fn is_installed() -> bool {
     }
 }
 
-/// Get multiple environment variables from a process matching the given criteria.
-/// This version reads /proc directly instead of spawning shell commands.
-///
-/// # Arguments
-/// * `uid` - User ID to filter processes
-/// * `process_pat` - Regex pattern to match process cmdline
-/// * `names` - Environment variable names to retrieve. **Must be <= 64 elements** due to
-///   the internal bitmask used for tie-breaking.
-///
-/// # Panics (debug builds)
-/// Panics if `names.len() > 64`.
-///
-/// # Implementation notes
-/// - Returns values from a *single* best-matching process_pat (for consistency).
-/// - Avoids repeated scanning by parsing `environ` once per process.
 fn get_envs<'a>(
     uid: &str,
     process_pat: &str,
@@ -1696,10 +1463,6 @@ fn get_envs<'a>(
     get_envs_where(uid, process_pat, names, false, |count| count == names.len())
 }
 
-/// The newest process matching `process_pat`, whatever it happens to carry: the semantics of the
-/// `ps -u <uid> -f | grep <pat> | tail -1` pipeline the callers below used before. A variable this
-/// process does not have means moving on to the next pattern, never on to an older process that
-/// may belong to a session which has since logged out.
 fn get_envs_of_newest<'a>(
     uid: &str,
     process_pat: &str,
@@ -1708,9 +1471,6 @@ fn get_envs_of_newest<'a>(
     get_envs_where(uid, process_pat, names, true, |_| true)
 }
 
-/// `get_envs` with the caller's own process order and its own notion of a complete answer, told
-/// how many of `names` the process carries: the first process `accept` takes wins outright, and
-/// the count-based ranking is only the fallback for when no process is accepted at all.
 fn get_envs_where<'a, F>(
     uid: &str,
     process_pat: &str,
@@ -1721,7 +1481,6 @@ fn get_envs_where<'a, F>(
 where
     F: FnMut(usize) -> bool,
 {
-    // The tie-breaking logic uses a u64 bitmask, limiting us to 64 variables.
     debug_assert!(
         names.len() <= 64,
         "get_envs: names.len() must be <= 64, got {}",
@@ -1738,8 +1497,6 @@ where
         return empty;
     };
 
-    // Used for stable tie-breaking when multiple processes match.
-    // Higher bits correspond to earlier entries in `names`.
     let name_indices: std::collections::HashMap<&'a str, usize> =
         names.iter().enumerate().map(|(i, &n)| (n, i)).collect();
 
@@ -1747,11 +1504,6 @@ where
     let mut best_count = 0usize;
     let mut best_mask: u64 = 0;
 
-    // Iterate /proc to find matching processes. `newest_first` is only for `get_envs_of_newest`,
-    // whose callers need the last PID-ordered match their `ps ... | tail -1` pipelines took;
-    // without it the order is whatever readdir returns, which is what `get_envs` has always used.
-    // Neither order identifies the active session -- a user with two live graphical sessions has
-    // one of each, and picking by PID guesses. See `Desktop::refresh` for who owns that question.
     let Ok(entries) = std::fs::read_dir("/proc") else {
         return best;
     };
@@ -1766,7 +1518,6 @@ where
     for pid in pids {
         let proc_path = std::path::Path::new("/proc").join(pid.to_string());
 
-        // Check if process belongs to the specified uid
         if let Ok(meta) = std::fs::metadata(&proc_path) {
             use std::os::unix::fs::MetadataExt;
             if meta.uid() != uid_num {
@@ -1776,23 +1527,15 @@ where
             continue;
         }
 
-        // Check cmdline matches process pattern
         let cmdline_path = proc_path.join("cmdline");
         let Ok(cmdline) = std::fs::read(&cmdline_path) else {
             continue;
         };
         let cmdline_str = String::from_utf8_lossy(&cmdline).replace('\0', " ");
-        // The `grep -v 'grep'` of the pipeline this replaces. A user grepping for one of these
-        // patterns is otherwise the newest match for it, and answers with whatever environment
-        // their shell had -- an X forwarding endpoint over ssh, say.
         if cmdline_str.contains("grep") || !re.is_match(&cmdline_str) {
             continue;
         }
 
-        // Read environ and extract matching variables. A read that fails -- the process exited
-        // between these two reads -- is a process carrying none of `names`, not a process to
-        // skip: skipping it would hand `newest_first` on to an older PID, where the pipeline
-        // this replaces stopped at the single PID its `tail -1` had already picked.
         let environ = std::fs::read(proc_path.join("environ")).unwrap_or_default();
 
         let mut found = empty.clone();
@@ -1842,9 +1585,6 @@ where
     best
 }
 
-/// True when `pred` accepts the `/proc/<pid>/<file>` of any process, NULs turned into spaces,
-/// optionally only of processes owned by `uid`.
-/// Reads `/proc` directly instead of forking `ps` / `pgrep`, for the service-loop callers below.
 fn any_process<F: Fn(&str) -> bool>(uid: Option<u32>, file: &str, pred: F) -> bool {
     let Ok(entries) = std::fs::read_dir("/proc") else {
         return false;
@@ -1894,59 +1634,17 @@ pub fn quit_gui() {
     unsafe { gtk_main_quit() };
 }
 
-/*
-pub fn exec_privileged(args: &[&str]) -> ResultType<Child> {
-    Ok(Command::new("pkexec").args(args).spawn()?)
-}
-*/
 
 pub fn check_super_user_permission() -> ResultType<bool> {
     gtk_sudo::run(vec!["echo"])?;
     Ok(true)
 }
 
-/*
-pub fn elevate(args: Vec<&str>) -> ResultType<bool> {
-    let cmd = std::env::current_exe()?;
-    match cmd.to_str() {
-        Some(cmd) => {
-            let mut args_with_exe = vec![cmd];
-            args_with_exe.append(&mut args.clone());
-            // -E required for opensuse
-            if is_opensuse() {
-                args_with_exe.insert(0, "-E");
-            }
-            let res = match exec_privileged(&args_with_exe)?.wait() {
-                Ok(status) => {
-                    if status.success() {
-                        true
-                    } else {
-                        log::error!(
-                            "Failed to wait install process, process status: {:?}",
-                            status
-                        );
-                        false
-                    }
-                }
-                Err(e) => {
-                    log::error!("Failed to wait install process, error: {}", e);
-                    false
-                }
-            };
-            Ok(res)
-        }
-        None => {
-            hbb_common::bail!("Failed to get current exe as str");
-        }
-    }
-}
-*/
 
 type GtkSettingsPtr = *mut c_void;
 type GObjectPtr = *mut c_void;
 #[link(name = "gtk-3")]
 extern "C" {
-    // fn gtk_init(argc: *mut c_int, argv: *mut *mut c_char);
     fn gtk_settings_get_default() -> GtkSettingsPtr;
 }
 
@@ -1956,8 +1654,6 @@ extern "C" {
 }
 
 pub fn get_double_click_time() -> u32 {
-    // GtkSettings *settings = gtk_settings_get_default ();
-    // g_object_get (settings, "gtk-double-click-time", &double_click_time, NULL);
     unsafe {
         let mut double_click_time = 0u32;
         let Ok(property) = std::ffi::CString::new("gtk-double-click-time") else {
@@ -2001,8 +1697,6 @@ fn get_xrandr_conn_pat(name: &str) -> String {
     )
 }
 
-// The mode lines below an output. A mode name can have a suffix after its size, like the "i" of
-// "1920x1080i", so a TV's interlaced mode does not end the list.
 const XRANDR_MODES_PAT: &str = r"(?P<resolutions>(\s*\d+x\d+\S*\s+\d+.*\n)+)";
 
 pub fn resolutions(name: &str) -> Vec<Resolution> {
@@ -2012,29 +1706,6 @@ pub fn resolutions(name: &str) -> Vec<Resolution> {
     if let Ok(re) = Regex::new(&format!("{}{}", connected_pat, resolutions_pat)) {
         match run_cmds("xrandr --query | tr -s ' '") {
             Ok(xrandr_output) => {
-                // There'are different kinds of xrandr output.
-                /*
-                1.
-                Screen 0: minimum 320 x 175, current 1920 x 1080, maximum 1920 x 1080
-                default connected 1920x1080+0+0 0mm x 0mm
-                 1920x1080 10.00*
-                 1280x720 25.00
-                 1680x1050 60.00
-                Virtual2 disconnected (normal left inverted right x axis y axis)
-                Virtual3 disconnected (normal left inverted right x axis y axis)
-
-                Screen 0: minimum 320 x 200, current 1920 x 1080, maximum 16384 x 16384
-                eDP-1 connected primary 1920x1080+0+0 (normal left inverted right x axis y axis) 344mm x 193mm
-                1920x1080     60.01*+  60.01    59.97    59.96    59.93
-                1680x1050     59.95    59.88
-                1600x1024     60.17
-
-                XWAYLAND0 connected primary 1920x984+0+0 (normal left inverted right x axis y axis) 0mm x 0mm
-                Virtual1 connected primary 1920x984+0+0 (normal left inverted right x axis y axis) 0mm x 0mm
-                HDMI-0 connected (normal left inverted right x axis y axis)
-
-                rdp0 connected primary 1920x1080+0+0 0mm x 0mm
-                    */
                 if let Some(caps) = re.captures(&xrandr_output) {
                     if let Some(resolutions) = caps.name("resolutions") {
                         let resolution_pat =
@@ -2136,13 +1807,8 @@ pub fn change_resolution_directly(name: &str, width: usize, height: usize) -> Re
     Ok(())
 }
 
-/// Scoped to `uid`, the user of the session being refreshed: the compositor starts Xwayland as
-/// that user, so another user's Xwayland -- a switched-away session, a second seat -- answering
-/// this used to route a pure-Wayland session into the Xwayland probe, which has no display for
-/// it to find. A uid that cannot be parsed falls back to the unscoped answer.
 #[inline]
 pub fn is_xwayland_running(uid: &str) -> bool {
-    // Same test as the `pgrep -a Xwayland` this replaces: the process name, not its command line.
     any_process(uid.parse::<u32>().ok(), "comm", |comm| {
         comm.contains("Xwayland")
     })
@@ -2154,7 +1820,6 @@ mod desktop {
     pub const XFCE4_PANEL: &str = "xfce4-panel";
     pub const SDDM_GREETER: &str = "sddm-greeter";
 
-    // xdg-desktop-portal runs on all Wayland desktops (GNOME, KDE, wlroots, etc.)
     const XDG_DESKTOP_PORTAL: &str = "xdg-desktop-portal";
     const XWAYLAND: &str = "Xwayland";
     const IBUS_DAEMON: &str = "ibus-daemon";
@@ -2166,10 +1831,6 @@ mod desktop {
     const ENV_KEY_WAYLAND_DISPLAY: &str = "WAYLAND_DISPLAY";
     const ENV_KEY_DBUS_SESSION_BUS_ADDRESS: &str = "DBUS_SESSION_BUS_ADDRESS";
 
-    /// A compositor that runs Xwayland without exporting `XAUTHORITY` (wlroots, e.g. Hyprland)
-    /// still hands out a usable session through the Wayland side. Requiring xauth there never
-    /// succeeded, so every refresh ran the retry loop to the end.
-    /// https://github.com/rustdesk/rustdesk/issues/15952
     fn is_session_env_complete(envs: &std::collections::HashMap<&str, String>) -> bool {
         let value = |key: &str| envs.get(key).map_or("", |v| v.as_str());
         !value(ENV_KEY_DISPLAY).is_empty()
@@ -2204,7 +1865,6 @@ mod desktop {
 
         fn get_display_xauth_wayland(&mut self) {
             for _ in 1..=10 {
-                // Prefer Wayland-related variables first when multiple portal processes match.
                 let mut envs = get_envs(
                     &self.uid,
                     XDG_DESKTOP_PORTAL,
@@ -2221,9 +1881,6 @@ mod desktop {
                 self.dbus = envs
                     .remove(ENV_KEY_DBUS_SESSION_BUS_ADDRESS)
                     .unwrap_or_default();
-                // For pure Wayland sessions, prefer `WAYLAND_DISPLAY`.
-                // NOTE: On some systems (e.g. Ubuntu 25.10), `DISPLAY`/`XAUTHORITY` may exist even when XWayland
-                // is not running, so do NOT treat them as a success condition here.
                 let has_wayland = !self.wl_display.is_empty();
                 let has_dbus = !self.dbus.is_empty();
                 if has_wayland && has_dbus {
@@ -2267,16 +1924,6 @@ mod desktop {
                     let dbus = envs
                         .remove(ENV_KEY_DBUS_SESSION_BUS_ADDRESS)
                         .unwrap_or_default();
-                    // Take a candidate whole. Two graphical sessions of one user each answer
-                    // some of these, and a display paired with another session's xauth or
-                    // compositor is a pair that never existed. So rank candidates rather than
-                    // merge them, and keep the best seen: the later patterns are fallbacks.
-                    //
-                    // The Wayland-only rank matters when `is_xwayland_running` matched some other
-                    // user's Xwayland and this session has none of its own. Nothing here can then
-                    // answer with a display, and dropping the candidate for that would leave the
-                    // child server without the compositor and bus of a session that is perfectly
-                    // serveable through them.
                     let rank = if complete {
                         3
                     } else if !wl_display.is_empty() && !dbus.is_empty() {
@@ -2297,11 +1944,6 @@ mod desktop {
                         return;
                     }
                 }
-                // The Wayland pair on its own is a session the child server can be started
-                // against -- it is what `get_display_xauth_wayland` returns on. Retrying is for a
-                // session that has not finished coming up, and a compositor whose Xwayland starts
-                // on demand may never export a `DISPLAY` for this walk to find, so waiting ten
-                // more rounds for one costs the whole probe again on every refresh.
                 if kept >= 2 {
                     break;
                 }
@@ -2334,12 +1976,6 @@ mod desktop {
             }
 
             if self.display.is_empty() {
-                // logind stores the value pam_systemd was handed at session creation, which is not
-                // necessarily a local display: it can be qualified with this host (`myhost:0`) or
-                // name an X forwarding endpoint (`localhost:10.0`), and some setups record a bare
-                // `:`. Strip this host, then require a display number. `localhost` is deliberately
-                // left in place: a non-empty display here suppresses every fallback below, both
-                // `get_display_by_user` and the `:0` default, so anything not local must not pass.
                 let display = Self::get_display_from_session(&self.sid)
                     .replace(&hbb_common::whoami::hostname(), "");
                 if display.strip_prefix(':').map_or(false, |number| {
@@ -2416,7 +2052,7 @@ mod desktop {
                                 self.xauth = v.to_string();
                             } else {
                                 if let Some(pid) = line.split_whitespace().nth(1) {
-                                    let mut base_dir: String = String::from("/home"); // default pattern
+                                    let mut base_dir: String = String::from("/home");
                                     let home_dir = get_env_from_pid("HOME", pid);
                                     if home_dir.is_empty() {
                                         if let Some(home) = get_user_home_by_name(&self.username) {
@@ -2429,7 +2065,6 @@ mod desktop {
                                         self.xauth = format!("{}/{}", base_dir, v);
                                     };
                                 } else {
-                                    // unreachable!
                                 }
                             }
                             return;
@@ -2440,7 +2075,6 @@ mod desktop {
         }
 
         fn get_xauth_x11(&mut self) {
-            // try by direct access to window manager process by name
             let tray = format!("{} +--tray", crate::get_app_name().to_lowercase());
             for _ in 1..=10 {
                 let display_proc = vec![
@@ -2466,12 +2100,10 @@ mod desktop {
                 sleep_millis(300);
             }
 
-            // get from Xorg process, parameter and environment
             if self.xauth.is_empty() {
                 self.get_xauth_from_xorg();
             }
 
-            // fallback to default file name
             if self.xauth.is_empty() {
                 let gdm = format!("/run/user/{}/gdm/Xauthority", self.uid);
                 self.xauth = if std::path::Path::new(&gdm).exists() {
@@ -2503,7 +2135,6 @@ mod desktop {
         }
 
         fn get_display_by_user(user: &str) -> String {
-            // log::debug!("w {}", &user);
             if let Ok(output) = std::process::Command::new("w").arg(&user).output() {
                 for line in String::from_utf8_lossy(&output.stdout).lines() {
                     let mut iter = line.split_whitespace();
@@ -2515,8 +2146,6 @@ mod desktop {
                     }
                 }
             }
-            // above not work for gdm user
-            //log::debug!("ls -l /tmp/.X11-unix/");
             let mut last = "".to_owned();
             if let Ok(output) = std::process::Command::new("ls")
                 .args(vec!["-l", "/tmp/.X11-unix/"])
@@ -2538,13 +2167,8 @@ mod desktop {
             last
         }
 
-        /// Preserves an active seat0 session's cached identity so the service loop only retries
-        /// late Wayland display discovery instead of repeating the full seat lookup.
         pub fn refresh(&mut self) {
             if !self.sid.is_empty() && is_active_and_seat0(&self.sid) {
-                // Xwayland display and xauth may not be available in a short time after login.
-                // Avoid scanning processes on X11, where Xwayland discovery cannot provide any
-                // useful session information.
                 if self.is_wayland()
                     && !self.is_login_wayland()
                     && is_xwayland_running(&self.uid)
@@ -2569,20 +2193,6 @@ mod desktop {
             if self.is_login_wayland() {
                 self.display = "".to_owned();
                 self.xauth = "".to_owned();
-                // Resolve HOME even on this path. Upstream returned without it because nothing then
-                // consumed a login-Wayland Desktop, but the drm build starts a `--server` as the
-                // greeter uid here, and a child with no HOME has nowhere to put its config. The
-                // compositor variables (WAYLAND_DISPLAY, DBUS, DISPLAY, XAUTHORITY) are left blank
-                // on purpose and are NOT an oversight: the drm capture path talks to the root
-                // service over `_drm` and to a render node, never to the compositor or the portal,
-                // which is the entire reason it works at a login screen. `try_start_server_` skips
-                // empty entries, so the greeter child simply does not get them.
-                //
-                // `is_login_wayland` needs `is_gdm_user(username)`, and a current GDM runs its
-                // greeter as `gdm-greeter`, which that helper does not match -- measured on the
-                // test host, where the greeter server therefore takes the branch below and gets a
-                // fully populated environment. This is for the display managers whose greeter user
-                // does match.
                 #[cfg(feature = "drm")]
                 self.get_home();
                 return;
@@ -2603,23 +2213,17 @@ mod desktop {
     }
 }
 
-/// A session-bus idle-inhibit interface, tried in order; the first that answers wins.
-/// `org.freedesktop.ScreenSaver` is absent on purpose: that is the one `keepawake` already tried.
 struct SessionInhibitTarget {
     dest: &'static str,
     path: &'static str,
     iface: &'static str,
-    /// GNOME takes `(app_id, xid, reason, flags)`; PowerManagement takes `(app, reason)`.
     gnome_shape: bool,
     uninhibit: &'static str,
 }
 
-/// `org.gnome.SessionManager.Inhibit` flag 8 = idle only; logout/switch-user/suspend would take
-/// away actions the person at the machine should keep.
 const GNOME_INHIBIT_IDLE: u32 = 8;
 
 const SESSION_INHIBIT_TARGETS: &[SessionInhibitTarget] = &[
-    // Measured on a GDM greeter: output held 129.9 s with the inhibit, 30.3 s without.
     SessionInhibitTarget {
         dest: "org.gnome.SessionManager",
         path: "/org/gnome/SessionManager",
@@ -2627,8 +2231,6 @@ const SESSION_INHIBIT_TARGETS: &[SessionInhibitTarget] = &[
         gnome_shape: true,
         uninhibit: "Uninhibit",
     },
-    // What powerdevil and xfce4-power-manager implement. NOT tested here; costs one failed call
-    // where absent, and the log below names every interface tried.
     SessionInhibitTarget {
         dest: "org.freedesktop.PowerManagement",
         path: "/org/freedesktop/PowerManagement/Inhibit",
@@ -2638,9 +2240,6 @@ const SESSION_INHIBIT_TARGETS: &[SessionInhibitTarget] = &[
     },
 ];
 
-/// Idle inhibit for the case `keepawake` cannot serve: it inhibits `org.freedesktop.ScreenSaver`,
-/// which a GDM greeter bus neither provides nor can activate, so its `create()` fails outright.
-/// The connection is kept because the inhibit is bound to it: dropping it releases the inhibit.
 struct SessionIdleInhibit {
     conn: dbus::blocking::Connection,
     target: &'static SessionInhibitTarget,
@@ -2666,7 +2265,6 @@ impl SessionIdleInhibit {
                     std::time::Duration::from_secs(3),
                 );
                 if target.gnome_shape {
-                    // Inhibit(s app_id, u xid, s reason, u flags) -> u cookie; xid 0 = no window.
                     proxy.method_call(
                         target.iface,
                         "Inhibit",
@@ -2691,8 +2289,6 @@ impl SessionIdleInhibit {
                 Err(err) => refused.push(format!("{}: {err}", target.dest)),
             }
         }
-        // Name every interface tried and why it failed: on an untested desktop this log is what
-        // turns "the screen still blanks" into a report naming the missing interface.
         log::info!(
             "wakelock: no session idle inhibitor answered, so the compositor may still blank this \
              screen ({})",
@@ -2709,8 +2305,6 @@ impl Drop for SessionIdleInhibit {
             self.target.path,
             std::time::Duration::from_secs(3),
         );
-        // Best effort: the session manager ties the inhibit to the caller's bus name, so dropping
-        // `conn` below releases it even if this call does not get through.
         let res: Result<(), dbus::Error> =
             proxy.method_call(self.target.iface, self.target.uninhibit, (self.cookie,));
         if let Err(err) = res {
@@ -2731,12 +2325,7 @@ impl WakeLock {
         {
             Ok(handle) => WakeLock(Some(handle), None),
             Err(err) => {
-                // Not `.ok()`: a discarded error is how a login screen ran with no inhibitor at
-                // all and nobody noticed.
                 log::info!("wakelock: keepawake could not take the inhibit ({err})");
-                // keepawake asks for the ScreenSaver inhibit first and abandons the whole request
-                // if it fails, losing the logind idle/sleep inhibits that stop the HOST suspending
-                // mid-session. Re-ask without the display part: those are on the system bus.
                 let system = if idle || sleep {
                     match keepawake::Builder::new()
                         .display(false)
@@ -2779,15 +2368,6 @@ pub fn run_cmds_privileged(cmds: &str) -> bool {
     crate::platform::gtk_sudo::run(vec![cmds]).is_ok()
 }
 
-/// Spawn the current executable after a delay.
-///
-/// # Security
-/// The executable path is safely quoted using `shell_quote()` to prevent
-/// command injection vulnerabilities. The `secs` parameter is a u32, so it
-/// cannot contain malicious input.
-///
-/// # Arguments
-/// * `secs` - Number of seconds to wait before spawning
 pub fn run_me_with(secs: u32) {
     let exe = match std::env::current_exe() {
         Ok(path) => path,
@@ -2797,13 +2377,8 @@ pub fn run_me_with(secs: u32) {
         }
     };
 
-    // SECURITY: Use shell_quote to safely escape the executable path,
-    // preventing command injection even if the path contains special characters.
     let exe_quoted = shell_quote(&exe.to_string_lossy());
 
-    // Spawn a background process that sleeps and then executes.
-    // The child process is automatically orphaned when parent exits,
-    // and will be adopted by init (PID 1).
     Command::new(CMD_SH.as_str())
         .arg("-c")
         .arg(&format!("sleep {secs}; exec {exe_quoted}"))
@@ -2812,8 +2387,6 @@ pub fn run_me_with(secs: u32) {
 }
 
 fn switch_service(stop: bool) -> String {
-    // SECURITY: Use trusted home directory lookup via getpwuid instead of $HOME env var
-    // to prevent confused-deputy attacks where an attacker manipulates environment variables.
     let home = get_home_dir_trusted()
         .map(|p| p.to_string_lossy().to_string())
         .unwrap_or_default();
@@ -2823,8 +2396,6 @@ fn switch_service(stop: bool) -> String {
         let app_name0 = crate::get_app_name();
         let config_subdir = format!(".config/{}", app_name_lower);
 
-        // SECURITY: Quote all paths to prevent shell injection from paths containing
-        // spaces, semicolons, or other special characters.
         let src1 = shell_quote(&format!("{}/{}/{}.toml", home, config_subdir, app_name0));
         let src2 = shell_quote(&format!("{}/{}/{}2.toml", home, config_subdir, app_name0));
         let dst = shell_quote(&format!("/root/{}/", config_subdir));
@@ -2837,20 +2408,17 @@ fn switch_service(stop: bool) -> String {
 
 pub fn uninstall_service(show_new_window: bool, _: bool) -> bool {
     if !has_cmd("systemctl") {
-        // Failed when installed + flutter run + started by `show_new_window`.
         return false;
     }
     log::info!("Uninstalling service...");
     let cp = switch_service(true);
     let app_name = crate::get_app_name().to_lowercase();
-    // systemctl kill rustdesk --tray, execute cp first
     if !run_cmds_privileged(&format!(
         "{cp} systemctl disable {app_name}; systemctl stop {app_name};"
     )) {
         Config::set_option("stop-service".into(), "".into());
         return true;
     }
-    // systemctl stop will kill child processes, below may not be executed.
     if show_new_window {
         run_me_with(2);
     }
@@ -2883,8 +2451,6 @@ fn check_if_stop_service() {
 }
 
 pub fn check_autostart_config() -> ResultType<()> {
-    // SECURITY: Use trusted home directory lookup via getpwuid instead of $HOME env var
-    // to prevent confused-deputy attacks where an attacker manipulates environment variables.
     let home = match get_home_dir_trusted() {
         Some(p) => p.to_string_lossy().to_string(),
         None => {
@@ -2895,32 +2461,13 @@ pub fn check_autostart_config() -> ResultType<()> {
     let app_name = crate::get_app_name().to_lowercase();
     let path = format!("{home}/.config/autostart");
     let file = format!("{path}/{app_name}.desktop");
-    // https://github.com/rustdesk/rustdesk/issues/4863
     std::fs::remove_file(&file).ok();
-    /*
-        std::fs::create_dir_all(&path).ok();
-        if !Path::new(&file).exists() {
-            // write text to the desktop file
-            let mut file = std::fs::File::create(&file)?;
-            file.write_all(
-                format!(
-                    "
-    [Desktop Entry]
-    Type=Application
-    Exec={app_name} --tray
-    NoDisplay=false
-            "
-                )
-                .as_bytes(),
-            )?;
-        }
-        */
     Ok(())
 }
 
 pub struct WallPaperRemover {
     old_path: String,
-    old_path_dark: Option<String>, // ubuntu 22.04 light/dark theme have different uri
+    old_path_dark: Option<String>,
 }
 
 impl WallPaperRemover {
@@ -2987,15 +2534,8 @@ pub fn is_selinux_enforcing() -> bool {
     }
 }
 
-/// Get the app ID for shortcuts inhibitor permission.
-/// Returns different ID based on whether running in Flatpak or native.
-/// The ID must match the installed .desktop filename, as GNOME Shell's
-/// inhibitShortcutsDialog uses `Shell.WindowTracker.get_window_app(window).get_id()`.
 fn get_shortcuts_inhibitor_app_id() -> String {
     if is_flatpak() {
-        // In Flatpak, FLATPAK_ID is set automatically by the runtime to the app ID
-        // (e.g., "com.rustdesk.RustDesk"). This is the most reliable source.
-        // Fall back to constructing from app name if not available.
         match std::env::var("FLATPAK_ID") {
             Ok(id) if !id.is_empty() => format!("{}.desktop", id),
             _ => {
@@ -3012,8 +2552,6 @@ const PERMISSION_STORE_DEST: &str = "org.freedesktop.impl.portal.PermissionStore
 const PERMISSION_STORE_PATH: &str = "/org/freedesktop/impl/portal/PermissionStore";
 const PERMISSION_STORE_IFACE: &str = "org.freedesktop.impl.portal.PermissionStore";
 
-/// Clear GNOME shortcuts inhibitor permission via D-Bus.
-/// This allows the permission dialog to be shown again.
 pub fn clear_gnome_shortcuts_inhibitor_permission() -> ResultType<()> {
     let app_id = get_shortcuts_inhibitor_app_id();
     log::info!(
@@ -3029,7 +2567,6 @@ pub fn clear_gnome_shortcuts_inhibitor_permission() -> ResultType<()> {
         std::time::Duration::from_secs(3),
     );
 
-    // DeletePermission(s table, s id, s app) -> ()
     let result: Result<(), dbus::Error> = proxy.method_call(
         PERMISSION_STORE_IFACE,
         "DeletePermission",
@@ -3043,7 +2580,6 @@ pub fn clear_gnome_shortcuts_inhibitor_permission() -> ResultType<()> {
         }
         Err(e) => {
             let err_name = e.name().unwrap_or("");
-            // If the permission doesn't exist, that's also fine
             if err_name == "org.freedesktop.portal.Error.NotFound"
                 || err_name == "org.freedesktop.DBus.Error.UnknownObject"
                 || err_name == "org.freedesktop.DBus.Error.ServiceUnknown"
@@ -3060,7 +2596,6 @@ pub fn clear_gnome_shortcuts_inhibitor_permission() -> ResultType<()> {
     }
 }
 
-/// Check if GNOME shortcuts inhibitor permission exists.
 pub fn has_gnome_shortcuts_inhibitor_permission() -> bool {
     let app_id = get_shortcuts_inhibitor_app_id();
 
@@ -3077,8 +2612,6 @@ pub fn has_gnome_shortcuts_inhibitor_permission() -> bool {
         std::time::Duration::from_secs(3),
     );
 
-    // Lookup(s table, s id) -> (a{sas} permissions, v data)
-    // We only need the permissions dict; check if app_id is a key.
     let result: Result<
         (
             std::collections::HashMap<String, Vec<String>>,

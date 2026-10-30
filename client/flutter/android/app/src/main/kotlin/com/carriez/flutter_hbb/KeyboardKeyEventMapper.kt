@@ -41,8 +41,6 @@ object KeyEventConverter {
     }
 
     private fun convertModifier(controlKey: hbb.MessageOuterClass.ControlKey): Int {
-        // Add logic to map ControlKey values to Android KeyEvent key codes.
-        // You'll need to provide the mapping for each key.
         return when (controlKey) {
             ControlKey.Alt -> KeyEvent.META_ALT_ON
             ControlKey.Control -> KeyEvent.META_CTRL_ON
@@ -53,7 +51,7 @@ object KeyEventConverter {
             ControlKey.Shift -> KeyEvent.META_SHIFT_ON
             ControlKey.RAlt -> KeyEvent.META_ALT_RIGHT_ON
             ControlKey.RControl -> KeyEvent.META_CTRL_RIGHT_ON
-            else -> 0 // Default to unknown.
+            else -> 0
         }
     }
 
@@ -71,8 +69,6 @@ object KeyEventConverter {
     }
 
     private fun convertControlKeyToKeyCode(controlKey: hbb.MessageOuterClass.ControlKey): Int {
-        // Add logic to map ControlKey values to Android KeyEvent key codes.
-        // You'll need to provide the mapping for each key.
         return when (controlKey) {
             ControlKey.Alt -> KeyEvent.KEYCODE_ALT_LEFT
             ControlKey.Backspace -> KeyEvent.KEYCODE_DEL
@@ -116,7 +112,7 @@ object KeyEventConverter {
             ControlKey.VolumeUp -> KeyEvent.KEYCODE_VOLUME_UP
             ControlKey.VolumeDown -> KeyEvent.KEYCODE_VOLUME_DOWN
             ControlKey.Power -> KeyEvent.KEYCODE_POWER
-            else -> 0 // Default to unknown.
+            else -> 0
         }
     }
 }

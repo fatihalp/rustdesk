@@ -34,7 +34,6 @@ cfg_if! {
         mod android;
         pub use self::android::*;
     }else {
-        //TODO: Fallback implementation.
     }
 }
 
@@ -48,8 +47,8 @@ pub mod vpxcodec;
 #[cfg(feature = "vram")]
 pub mod vram;
 pub use self::convert::*;
-pub const STRIDE_ALIGN: usize = 64; // commonly used in libvpx vpx_img_alloc caller
-pub const HW_STRIDE_ALIGN: usize = 0; // recommended by av_frame_get_buffer
+pub const STRIDE_ALIGN: usize = 64;
+pub const HW_STRIDE_ALIGN: usize = 0;
 
 pub mod aom;
 #[cfg(not(any(target_os = "ios")))]
@@ -120,7 +119,6 @@ impl Default for ImageTexture {
 
 #[inline]
 pub fn would_block_if_equal(old: &mut Vec<u8>, b: &[u8]) -> std::io::Result<()> {
-    // does this really help?
     if b == &old[..] {
         return Err(std::io::ErrorKind::WouldBlock.into());
     }
@@ -130,7 +128,6 @@ pub fn would_block_if_equal(old: &mut Vec<u8>, b: &[u8]) -> std::io::Result<()> 
 }
 
 pub trait TraitCapturer {
-    // We doesn't support
     #[cfg(not(any(target_os = "ios")))]
     fn frame<'a>(&'a mut self, timeout: std::time::Duration) -> std::io::Result<Frame<'a>>;
 
@@ -437,11 +434,8 @@ pub trait GoogleImage {
             ImageFormat::Raw => 3,
             ImageFormat::ARGB | ImageFormat::ABGR => 4,
         };
-        // https://github.com/lemenkov/libyuv/blob/6900494d90ae095d44405cd4cc3f346971fa69c9/source/convert_argb.cc#L128
-        // https://github.com/lemenkov/libyuv/blob/6900494d90ae095d44405cd4cc3f346971fa69c9/source/convert_argb.cc#L129
         (w * bytes_per_pixel + align - 1) & !(align - 1)
     }
-    // rgb [in/out] fmt and stride must be set in ImageRgb
     fn to(&self, rgb: &mut ImageRgb) {
         rgb.w = self.width();
         rgb.h = self.height();
@@ -521,7 +515,6 @@ pub trait GoogleImage {
                         self.height() as _,
                     );
                 }
-                // (Chroma::I444, ImageFormat::Raw), new version libyuv have I444ToRAW
                 _ => log::error!("unsupported pixfmt: {:?}", self.chroma()),
             }
         }

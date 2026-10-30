@@ -2,12 +2,6 @@ package com.carriez.flutter_hbb
 
 import ffi.FFI
 
-/**
- * Capture screen,get video and audio,send to rust.
- * Dispatch notifications
- *
- * Inspired by [droidVNC-NG] https://github.com/bk138/droidVNC-NG
- */
 
 import android.Manifest
 import android.annotation.SuppressLint
@@ -47,14 +41,13 @@ import java.nio.ByteBuffer
 import kotlin.math.max
 import kotlin.math.min
 
-const val DEFAULT_NOTIFY_TITLE = "RustDesk"
+const val DEFAULT_NOTIFY_TITLE = "SupportDesk"
 const val DEFAULT_NOTIFY_TEXT = "Service is running"
 const val DEFAULT_NOTIFY_ID = 1
 const val NOTIFY_ID_OFFSET = 100
 
 const val MIME_TYPE = MediaFormat.MIMETYPE_VIDEO_VP9
 
-// video const
 
 const val MAX_SCREEN_SIZE = 1200
 
@@ -66,7 +59,6 @@ class MainService : Service() {
     @Keep
     @RequiresApi(Build.VERSION_CODES.N)
     fun rustPointerInput(kind: Int, mask: Int, x: Int, y: Int) {
-        // turn on screen with LEFT_DOWN when screen off
         if (!powerManager.isInteractive && (kind == 0 || mask == LEFT_DOWN)) {
             if (wakeLock.isHeld) {
                 Log.d(logTag, "Turn on Screen, WakeLock release")
@@ -76,10 +68,10 @@ class MainService : Service() {
             wakeLock.acquire(5000)
         } else {
             when (kind) {
-                0 -> { // touch
+                0 -> {
                     InputService.ctx?.onTouchInput(mask, x, y)
                 }
-                1 -> { // mouse
+                1 -> {
                     InputService.ctx?.onMouseInput(mask, x, y)
                 }
                 else -> {
@@ -187,12 +179,12 @@ class MainService : Service() {
     private var serviceHandler: Handler? = null
 
     private val powerManager: PowerManager by lazy { applicationContext.getSystemService(Context.POWER_SERVICE) as PowerManager }
-    private val wakeLock: PowerManager.WakeLock by lazy { powerManager.newWakeLock(PowerManager.ACQUIRE_CAUSES_WAKEUP or PowerManager.SCREEN_BRIGHT_WAKE_LOCK, "rustdesk:wakelock")}
+    private val wakeLock: PowerManager.WakeLock by lazy { powerManager.newWakeLock(PowerManager.ACQUIRE_CAUSES_WAKEUP or PowerManager.SCREEN_BRIGHT_WAKE_LOCK, "supportdesk:wakelock")}
 
     companion object {
-        private var _isReady = false // media permission ready status
-        private var _isStart = false // screen capture start status
-        private var _isAudioStart = false // audio capture start status
+        private var _isReady = false
+        private var _isStart = false
+        private var _isAudioStart = false
         val isReady: Boolean
             get() = _isReady
         val isStart: Boolean
@@ -207,7 +199,6 @@ class MainService : Service() {
 
     private var reuseVirtualDisplay = Build.VERSION.SDK_INT > 33
 
-    // video
     private var mediaProjection: MediaProjection? = null
     private var mediaProjectionCallback: MediaProjection.Callback? = null
     private var captureRestartPending = false
@@ -228,10 +219,8 @@ class MainService : Service() {
     private var imageReader: ImageReader? = null
     private var virtualDisplay: VirtualDisplay? = null
 
-    // audio
     private val audioRecordHandle = AudioRecordHandle(this, { isStart }, { isAudioStart })
 
-    // notification
     private lateinit var notificationManager: NotificationManager
     private lateinit var notificationChannel: String
     private lateinit var notificationBuilder: NotificationCompat.Builder
@@ -248,7 +237,6 @@ class MainService : Service() {
         updateScreenInfo(resources.configuration.orientation)
         initNotification()
 
-        // keep the config dir same with flutter
         val prefs = applicationContext.getSharedPreferences(KEY_SHARED_PREFERENCES, FlutterActivity.MODE_PRIVATE)
         val configPath = prefs.getString(KEY_APP_DIR_CONFIG_PATH, "") ?: ""
         val homePath = applicationContext.getExternalFilesDir(null)?.absolutePath
@@ -264,10 +252,6 @@ class MainService : Service() {
         super.onDestroy()
     }
 
-    // Swiping the app away from recents destroys the UI but this service keeps
-    // the process alive, so outgoing sessions would stay connected with no way
-    // to close them. Incoming connections are unaffected: the service keeps
-    // running so the device stays reachable.
     override fun onTaskRemoved(rootIntent: Intent?) {
         Log.d(logTag, "onTaskRemoved, closing outgoing sessions")
         FFI.closeAllSessions()
@@ -361,7 +345,7 @@ class MainService : Service() {
                 requestMediaProjection()
             }
         }
-        return START_NOT_STICKY // don't use sticky (auto restart), the new service (from auto restart) will lose control
+        return START_NOT_STICKY
     }
 
     override fun onConfigurationChanged(newConfig: Configuration) {
@@ -389,7 +373,6 @@ class MainService : Service() {
     @SuppressLint("WrongConstant")
     private fun createSurface(): Surface? {
         return if (useVP9) {
-            // TODO
             null
         } else {
             Log.d(logTag, "ImageReader.newInstance:INFO:$SCREEN_INFO")
@@ -402,7 +385,6 @@ class MainService : Service() {
                 ).apply {
                     setOnImageAvailableListener({ imageReader: ImageReader ->
                         try {
-                            // If not call acquireLatestImage, listener will not be called again
                             imageReader.acquireLatestImage().use { image ->
                                 if (image == null || !isStart) return@setOnImageAvailableListener
                                 val planes = image.planes
@@ -635,17 +617,11 @@ class MainService : Service() {
         FFI.setFrameRawEnable("video",false)
         _isStart = false
         MainActivity.rdClipboardManager?.setCaptureStarted(_isStart)
-        // release video
         if (reuseVirtualDisplay) {
-            // The virtual display video projection can be paused by calling `setSurface(null)`.
-            // https://developer.android.com/reference/android/hardware/display/VirtualDisplay.Callback
-            // https://learn.microsoft.com/en-us/dotnet/api/android.hardware.display.virtualdisplay.callback.onpaused?view=net-android-34.0
             virtualDisplay?.setSurface(null)
         } else {
             virtualDisplay?.release()
         }
-        // suface needs to be release after `imageReader.close()` to imageReader access released surface
-        // https://github.com/rustdesk/rustdesk/issues/4118#issuecomment-1515666629
         imageReader?.close()
         imageReader = null
         videoEncoder?.let {
@@ -657,11 +633,8 @@ class MainService : Service() {
             virtualDisplay = null
         }
         videoEncoder = null
-        // suface needs to be release after `imageReader.close()` to imageReader access released surface
-        // https://github.com/rustdesk/rustdesk/issues/4118#issuecomment-1515666629
         surface?.release()
 
-        // release audio
         stopMicrophoneCapture {
             _isAudioStart = false
             audioRecordHandle.tryReleaseAudio()
@@ -729,8 +702,6 @@ class MainService : Service() {
         return createOrSetVirtualDisplay(mp, inputSurface)
     }
 
-    // https://github.com/bk138/droidVNC-NG/blob/b79af62db5a1c08ed94e6a91464859ffed6f4e97/app/src/main/java/net/christianbeier/droidvnc_ng/MediaProjectionService.java#L250
-    // Reuse virtualDisplay if it exists, to avoid media projection confirmation dialog every connection.
     private fun createOrSetVirtualDisplay(mp: MediaProjection, s: Surface): Boolean {
         return try {
             val existingDisplay = virtualDisplay
@@ -740,7 +711,7 @@ class MainService : Service() {
                 true
             } else {
                 val display = mp.createVirtualDisplay(
-                    "RustDeskVD",
+                    "SupportDeskVD",
                     SCREEN_INFO.width, SCREEN_INFO.height, SCREEN_INFO.dpi, VIRTUAL_DISPLAY_FLAG_AUTO_MIRROR,
                     s, null, null
                 )
@@ -783,7 +754,6 @@ class MainService : Service() {
                 sendVP9Thread.execute {
                     val byteArray = ByteArray(buf.limit())
                     buf.get(byteArray)
-                    // sendVp9(byteArray)
                     codec.releaseOutputBuffer(index, false)
                 }
             }
@@ -816,13 +786,13 @@ class MainService : Service() {
     private fun initNotification() {
         notificationManager = getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
         notificationChannel = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
-            val channelId = "RustDesk"
-            val channelName = "RustDesk Service"
+            val channelId = "SupportDesk"
+            val channelName = "SupportDesk Service"
             val channel = NotificationChannel(
                 channelId,
                 channelName, NotificationManager.IMPORTANCE_HIGH
             ).apply {
-                description = "RustDesk Service Channel"
+                description = "SupportDesk Service Channel"
             }
             channel.lightColor = Color.BLUE
             channel.lockscreenVisibility = Notification.VISIBILITY_PRIVATE
@@ -871,7 +841,6 @@ class MainService : Service() {
     private fun foregroundServiceType(): Int {
         var serviceType = ServiceInfo.FOREGROUND_SERVICE_TYPE_NONE
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.UPSIDE_DOWN_CAKE) {
-            // Keep a valid FGS type while the unattended host is idle and no capture type is active.
             serviceType = serviceType or ServiceInfo.FOREGROUND_SERVICE_TYPE_SPECIAL_USE
         }
         if (mediaProjectionForegroundService) {
@@ -930,9 +899,6 @@ class MainService : Service() {
             .setPriority(NotificationCompat.PRIORITY_MAX)
             .setContentTitle(translate("Do you accept?"))
             .setContentText("$type:$username-$peerId")
-            // .setStyle(MediaStyle().setShowActionsInCompactView(0, 1))
-            // .addAction(R.drawable.check_blue, "check", genLoginRequestPendingIntent(true))
-            // .addAction(R.drawable.close_red, "close", genLoginRequestPendingIntent(false))
             .build()
         notificationManager.notify(getClientNotifyID(clientID), notification)
     }

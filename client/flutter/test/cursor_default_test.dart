@@ -9,9 +9,7 @@ import 'package:flutter_hbb/native/custom_cursor.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:uuid/uuid.dart';
 
-// A file of its own: nothing else in this isolate has made the default cursor before the model.
 
-/// A core that keeps no shape.
 class _Cursor extends CursorModel {
   _Cursor(FFI ffi) : super(WeakReference(ffi));
   @override
@@ -54,7 +52,6 @@ void main() {
     final evt = {'id': '2'};
     ffi.ffiModel.updateLastCursorId(evt);
     ffi.ffiModel.handleCursorId(evt);
-    // Not a wait for the default cursor itself: asking for it would make it.
     await Future<void>.delayed(const Duration(milliseconds: 500));
     expect(cursor.cache, isNull);
     final built = _key(buildCursorOfCache(

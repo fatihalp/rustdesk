@@ -17,7 +17,7 @@ fn provider(output: &Path, request: &str) -> ResultType<String> {
     let modified = output.metadata().map_or(0, |m| std::os::unix::fs::MetadataExt::mtime(&m));
     let metadata = json!({"name": "notes.txt", "directory": false, "size": 12, "modified": modified});
     let value = match request["op"].as_str() {
-        Some("home") => json!("/@rustdesk/tree/selected/Documents"),
+        Some("home") => json!("/@supportdesk/tree/selected/Documents"),
         Some("allowed") => json!(true),
         Some("list") => json!([metadata]),
         Some("stat") if request["path"].as_str().unwrap().ends_with(".txt") => metadata,
@@ -195,7 +195,7 @@ async fn selected_folder_transfers_directly_and_preserves_data_on_publish_failur
     use std::time::{SystemTime, UNIX_EPOCH};
 
     let output = std::env::temp_dir().join(format!(
-        "rustdesk-documents-{}",
+        "supportdesk-documents-{}",
         SystemTime::now()
             .duration_since(UNIX_EPOCH)
             .unwrap()
@@ -203,10 +203,10 @@ async fn selected_folder_transfers_directly_and_preserves_data_on_publish_failur
     ));
     let provider_output = output.clone();
     initialize(move |request| provider(&provider_output, request)).unwrap();
-    let path = "/@rustdesk/tree/selected/Documents";
+    let path = "/@supportdesk/tree/selected/Documents";
     assert!(allowed(path).unwrap() && allowed(&format!("{path}/notes.txt")).unwrap());
     assert!(!allowed(&format!("{path}-private/notes.txt")).unwrap());
-    assert!(!allowed("/@rustdesk/tree/previous/Documents/notes.txt").unwrap());
+    assert!(!allowed("/@supportdesk/tree/previous/Documents/notes.txt").unwrap());
     let directory = super::super::read_dir(Path::new(path), false).unwrap();
     assert_eq!(directory.path, path);
     assert_eq!(directory.entries[0].name, "notes.txt");
@@ -275,14 +275,14 @@ async fn provider_error_at_eof(path: &str) {
 #[test]
 fn document_paths_cannot_escape_the_selected_location() {
     for path in [
-        "/@rustdesk/tree/id/folder/../secret",
-        "/@rustdesk//Download",
-        "/@rustdesk/tree/id/a\\b",
-        "/@rustdesk/file/id/report.txt",
-        "/@rustdesk/save/id/report.txt",
-        "/@rustdesk/Download/report.txt",
+        "/@supportdesk/tree/id/folder/../secret",
+        "/@supportdesk//Download",
+        "/@supportdesk/tree/id/a\\b",
+        "/@supportdesk/file/id/report.txt",
+        "/@supportdesk/save/id/report.txt",
+        "/@supportdesk/Download/report.txt",
     ] {
         assert!(validate(path).is_err(), "{}", path);
     }
-    assert!(validate("/@rustdesk/tree/id/folder/report.txt").is_ok());
+    assert!(validate("/@supportdesk/tree/id/folder/report.txt").is_ok());
 }

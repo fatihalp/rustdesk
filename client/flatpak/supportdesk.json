@@ -1,0 +1,54 @@
+{
+  "id": "com.supportdesk.SupportDesk",
+  "runtime": "org.freedesktop.Platform",
+  "runtime-version": "24.08",
+  "sdk": "org.freedesktop.Sdk",
+  "command": "supportdesk",
+  "cleanup": ["/include", "/lib/pkgconfig", "/share/gtk-doc"],
+  "rename-desktop-file": "supportdesk.desktop",
+  "rename-icon": "supportdesk",
+  "modules": [
+    "shared-modules/libappindicator/libappindicator-gtk3-12.10.json",
+    {
+      "name": "xdotool",
+      "no-autogen": true,
+      "make-install-args": ["PREFIX=${FLATPAK_DEST}"],
+      "sources": [
+        {
+          "type": "archive",
+          "url": "https://github.com/jordansissel/xdotool/releases/download/v3.20211022.1/xdotool-3.20211022.1.tar.gz",
+          "sha256": "96f0facfde6d78eacad35b91b0f46fecd0b35e474c03e00e30da3fdd345f9ada"
+        }
+      ]
+    },
+    {
+      "name": "supportdesk",
+      "buildsystem": "simple",
+      "build-commands": [
+        "bsdtar -Oxf supportdesk.deb data.tar.xz | bsdtar -xf -",
+        "cp -r usr/* /app/",
+        "mkdir -p /app/bin && ln -s /app/share/supportdesk/supportdesk /app/bin/supportdesk"
+      ],
+      "sources": [
+        {
+          "type": "file",
+          "path": "supportdesk.deb"
+        },
+        {
+          "type": "file",
+          "path": "com.supportdesk.SupportDesk.metainfo.xml"
+        }
+      ]
+    }
+  ],
+  "finish-args": [
+    "--share=ipc",
+    "--socket=wayland",
+    "--socket=x11",
+    "--share=network",
+    "--filesystem=home",
+    "--device=dri",
+    "--socket=pulseaudio",
+    "--talk-name=org.freedesktop.Flatpak"
+  ]
+}

@@ -59,7 +59,6 @@ class AbModel {
   String? _personalAbGuid;
   RxBool legacyMode = false.obs;
 
-  // Only handles peers add/remove
   final Map<String, VoidCallback> _peerIdUpdateListeners = {};
 
   final sortTags = shouldSortTags().obs;
@@ -110,12 +109,6 @@ class AbModel {
     current.pullError.value = '';
   }
 
-// #region ab
-  /// Pulls the address book data from the server.
-  ///
-  /// If `force` is `ForcePullAb.listAndCurrent`, the function will pull the list of address books, current address book, and try initialize personal address book.
-  /// If `force` is `ForcePullAb.current`, the function will only pull the current address book.
-  /// If `quiet` is true, the function will not display any notifications or errors.
   var _pulling = false;
   Future<void> pullAb(
       {required ForcePullAb? force, required bool quiet}) async {
@@ -145,9 +138,7 @@ class AbModel {
     debugPrint("pullAb, force: $force, quiet: $quiet");
     if (!listInitialized || force == ForcePullAb.listAndCurrent) {
       try {
-        // Read personal guid every time to avoid upgrading the server without closing the main window
         _personalAbGuid = null;
-        // `true`: continue init. `false`: stop, error already recorded.
         if (!await _getPersonalAbGuid(quiet: quiet)) {
           return;
         }
@@ -160,7 +151,6 @@ class AbModel {
           List<AbProfile> abProfiles = List.empty(growable: true);
           abProfiles.add(AbProfile(_personalAbGuid!, _personalAddressBookName,
               gFFI.userModel.userName.value, null, ShareRule.read.value, null));
-          // get all address book name
           await _getSharedAbProfiles(abProfiles, quiet: quiet);
           addressbooks.removeWhere((key, value) =>
               abProfiles.firstWhereOrNull((e) => e.name == key) == null);
@@ -173,14 +163,12 @@ class AbModel {
             }
           }
         } else {
-          // only legacy address book
           addressbooks
               .removeWhere((key, value) => key != _legacyAddressBookName);
           if (!addressbooks.containsKey(_legacyAddressBookName)) {
             addressbooks[_legacyAddressBookName] = LegacyAb();
           }
         }
-        // set current address book name
         if (!listInitialized) {
           listInitialized = true;
           trySetCurrentToLast();
@@ -190,9 +178,7 @@ class AbModel {
               ? _legacyAddressBookName
               : _personalAddressBookName);
         }
-        // pull current address book
         await current.pullAb(quiet: quiet);
-        // try initialize personal address book
         if (!current.isPersonal()) {
           final personalAb = addressbooks[_personalAddressBookName];
           if (personalAb != null && !personalAb.initialized) {
@@ -257,8 +243,6 @@ class AbModel {
     return false;
   }
 
-  /// Loads `/api/ab/personal`.
-  /// Returns `true` to continue init, `false` to stop after a real error.
   Future<bool> _getPersonalAbGuid({required bool quiet}) async {
     int? statusCode;
     try {
@@ -270,7 +254,6 @@ class AbModel {
       statusCode = resp.statusCode;
       if (statusCode == 404) {
         debugPrint("HTTP 404, current api server is legacy mode");
-        // Old server: keep `_personalAbGuid` null and continue in legacy mode.
         return true;
       }
       Map<String, dynamic> json =
@@ -282,13 +265,11 @@ class AbModel {
         throw 'HTTP $statusCode';
       }
       _personalAbGuid = json['guid'];
-      // New server: guid is available, continue in non-legacy mode.
       return true;
     } catch (err) {
       debugPrint('get personal ab err: ${err.toString()}');
       _setListPullError(err, quiet: quiet, statusCode: statusCode);
     }
-    // Real error: stop the current pull.
     return false;
   }
 
@@ -356,9 +337,7 @@ class AbModel {
     return false;
   }
 
-// #endregion
 
-// #region rule
   List<String> addressBooksCanWrite() {
     List<String> list = [];
     addressbooks.forEach((key, value) async {
@@ -369,9 +348,7 @@ class AbModel {
     return list;
   }
 
-// #endregion
 
-// #region peer
   Future<String?> addIdToCurrent(String id, String alias, String password,
       List<dynamic> tags, String note) async {
     if (currentAbPeers.where((element) => element.id == id).isNotEmpty) {
@@ -382,7 +359,6 @@ class AbModel {
       'alias': alias,
       'tags': tags,
     };
-    // avoid set existing password to empty
     if (password.isNotEmpty) {
       peer['password'] = password;
     }
@@ -394,7 +370,6 @@ class AbModel {
     return ret;
   }
 
-  // Use Map<String, dynamic> rather than Peer to distinguish between empty and null
   Future<String?> addPeersTo(
     List<Map<String, dynamic>> ps,
     String name,
@@ -436,7 +411,6 @@ class AbModel {
     bool res = await current.changeNote(id: id, note: note);
     await pullNonLegacyAfterChange();
     currentAbPeers.refresh();
-    // no need to save cache
     return res;
   }
 
@@ -472,7 +446,6 @@ class AbModel {
     _refreshTab();
     _saveCache();
     if (legacyMode.value && current.isPersonal()) {
-      // non-legacy mode not add peers automatically
       Future.delayed(Duration(seconds: 2), () async {
         if (!shouldSyncAb()) return;
         var hasSynced = false;
@@ -494,9 +467,7 @@ class AbModel {
     return ret;
   }
 
-// #endregion
 
-// #region tags
   Future<bool> addTags(List<String> tagList) async {
     tagList.removeWhere((e) => e == kUntagged);
     final ret = await current.addTags(tagList, {});
@@ -533,9 +504,7 @@ class AbModel {
     return ret;
   }
 
-// #endregion
 
-// #region sync from recent
   Future<void> _syncFromRecent({bool push = true}) async {
     if (!_syncFromRecentLock) {
       _syncFromRecentLock = true;
@@ -598,9 +567,7 @@ class AbModel {
     _timerCounter = 0;
   }
 
-// #endregion
 
-// #region cache
   _saveCache() {
     try {
       var ab_entries = _serializeCache();
@@ -698,9 +665,7 @@ class AbModel {
     }
   }
 
-// #endregion
 
-// #region tools
   Peer? find(String id) {
     return currentAbPeers.firstWhereOrNull((e) => e.id == id);
   }
@@ -786,7 +751,6 @@ class AbModel {
     platformFFI.tryHandle({'name': LoadEvent.addressBook});
   }
 
-  // should not call this function in a loop call stack
   Future<void> pullNonLegacyAfterChange({String? name}) async {
     if (name == null) {
       if (current.name() != _legacyAddressBookName) {
@@ -862,7 +826,6 @@ class AbModel {
     }
   }
 
-// #endregion
 }
 
 abstract class BaseAb {
@@ -874,9 +837,9 @@ abstract class BaseAb {
   final pullError = "".obs;
   final pushError = "".obs;
   final abLoading = false
-      .obs; // Indicates whether the UI should show a loading state for the address book.
+      .obs;
   var abPulling =
-      false; // Tracks whether a pull operation is currently in progress to prevent concurrent pulls. Unlike abLoading, this is not tied to UI updates.
+      false;
   bool initialized = false;
 
   String name();
@@ -971,7 +934,6 @@ abstract class BaseAb {
 
 class LegacyAb extends BaseAb {
   bool get emtpy => peers.isEmpty && tags.isEmpty;
-  // licensedDevices is obtained from personal ab, shared ab restrict it in server
   var licensedDevices = 0;
 
   LegacyAb();
@@ -1016,7 +978,6 @@ class LegacyAb extends BaseAb {
       final resp = await http.get(Uri.parse(api), headers: authHeaders);
       statusCode = resp.statusCode;
       if (resp.body.toLowerCase() == "null") {
-        // normal reply, empty ab return null
         tags.clear();
         tagColors.clear();
         peers.clear();
@@ -1028,7 +989,6 @@ class LegacyAb extends BaseAb {
         } else if (json.containsKey('data')) {
           try {
             licensedDevices = json['licensed_devices'];
-            // ignore: empty_catches
           } catch (e) {}
           final data = jsonDecode(json['data']);
           if (data != null) {
@@ -1059,7 +1019,6 @@ class LegacyAb extends BaseAb {
     pushError.value = '';
     bool ret = false;
     try {
-      //https: //stackoverflow.com/questions/68249333/flutter-getx-updating-item-in-children-list-is-not-reactive
       peers.refresh();
       final api = "${await bind.mainGetApiServer()}/api/ab";
       var authHeaders = getHttpHeaders();
@@ -1095,13 +1054,12 @@ class LegacyAb extends BaseAb {
     return ret;
   }
 
-// #region Peer
   @override
   Future<String?> addPeers(List<Map<String, dynamic>> ps) async {
     bool full = false;
     for (var p in ps) {
       if (!isFull()) {
-        p.remove('password'); // legacy ab ignore password
+        p.remove('password');
         final index = peers.indexWhere((e) => e.id == p['id']);
         if (index >= 0) {
           _merge(Peer.fromJson(p), peers[index]);
@@ -1159,13 +1117,11 @@ class LegacyAb extends BaseAb {
 
   @override
   Future<bool> changeNote({required String id, required String note}) async {
-    // no need to implement
     return false;
   }
 
   @override
   Future<bool> changeSharedPassword(String id, String password) async {
-    // no need to implement
     return false;
   }
 
@@ -1200,7 +1156,6 @@ class LegacyAb extends BaseAb {
       await pushAb(toastIfSucc: false, toastIfFail: false);
       gFFI.abModel._refreshTab();
     }
-    // Pull cannot be used for sync to avoid cyclic sync.
   }
 
   void _merge(Peer r, Peer p) {
@@ -1232,9 +1187,7 @@ class LegacyAb extends BaseAb {
     peers.removeWhere((e) => ids.contains(e.id));
     return await pushAb();
   }
-// #endregion
 
-// #region Tag
   @override
   Future<bool> addTags(
       List<String> tagList, Map<String, int> tagColorMap) async {
@@ -1304,7 +1257,6 @@ class LegacyAb extends BaseAb {
     return await pushAb();
   }
 
-// #endregion
 
   Map<String, dynamic> _serialize() {
     final peersJsonData =
@@ -1339,7 +1291,6 @@ class LegacyAb extends BaseAb {
     if (isFull()) {
       peers.removeRange(licensedDevices, peers.length);
     }
-    // restore online
     peers
         .where((e) => oldOnlineIDs.contains(e.id))
         .map((e) => e.online = true)
@@ -1348,7 +1299,6 @@ class LegacyAb extends BaseAb {
       Map<String, dynamic> map = jsonDecode(data['tag_colors']);
       tagColors.value = Map<String, int>.from(map);
     }
-    // add color to tag
     final tagsWithoutColor =
         tags.toList().where((e) => !tagColors.containsKey(e)).toList();
     for (var t in tagsWithoutColor) {
@@ -1543,7 +1493,6 @@ class Ab extends BaseAb {
     return false;
   }
 
-// #region Peers
   @override
   Future<String?> addPeers(List<Map<String, dynamic>> ps) async {
     try {
@@ -1713,7 +1662,6 @@ class Ab extends BaseAb {
         saveCache = true;
       }
       if (map.isEmpty) {
-        // no need to sync
         return false;
       }
       map['id'] = p.id;
@@ -1729,14 +1677,12 @@ class Ab extends BaseAb {
     }
 
     try {
-      // Not add new peers because IDs that are not on the server can't be synced, then sync will happen every startup.
       for (var p in peers) {
         Peer? r = recents.firstWhereOrNull((e) => e.id == p.id);
         if (r != null) {
           await trySyncOnePeer(p, r);
         }
       }
-      // Pull cannot be used for sync to avoid cyclic sync.
       if (uiUpdate && gFFI.abModel.currentName.value == profile.name) {
         peers.refresh();
       }
@@ -1769,9 +1715,7 @@ class Ab extends BaseAb {
       return false;
     }
   }
-// #endregion
 
-// #region Tags
   @override
   Future<bool> addTags(
       List<String> tagList, Map<String, int> tagColorMap) async {
@@ -1875,10 +1819,8 @@ class Ab extends BaseAb {
     }
   }
 
-// #endregion
 }
 
-// DummyAb is for current ab is null
 class DummyAb extends BaseAb {
   @override
   bool isFull() {
@@ -2002,7 +1944,6 @@ List<dynamic> _jsonDecodeRespList(String body, int statusCode) {
 String _jsonDecodeActionResp(http.Response resp) {
   var errMsg = '';
   if (resp.statusCode == 200 && resp.body.isEmpty) {
-    // ok
   } else {
     try {
       errMsg = jsonDecode(resp.body)['error'].toString();
@@ -2025,7 +1966,6 @@ String _jsonDecodeActionResp(http.Response resp) {
   return errMsg;
 }
 
-// https://github.com/seanmonstar/reqwest/issues/838
 void _setEmptyBody(Map<String, String> headers) {
   headers['Content-Length'] = '0';
 }

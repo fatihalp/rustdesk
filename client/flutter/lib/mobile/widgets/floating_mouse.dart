@@ -1,4 +1,3 @@
-// This floating mouse widget simulates a physical mouse when connecting from mobile to desktop in touch mode.
 
 import 'dart:async';
 import 'dart:math';
@@ -332,8 +331,6 @@ class _FloatingMouseState extends State<FloatingMouse> {
     return Offset(x, y);
   }
 
-  // Returns true if [value] is within 2.01 pixels of [edge].
-  // We need this near check because it can make the auto scroll easier to trigger and control.
   bool _isValueNearEdge(double edge, double value) {
     return (value - edge).abs() < 2.01;
   }
@@ -343,12 +340,9 @@ class _FloatingMouseState extends State<FloatingMouse> {
   }
 
   bool _isValueAtOrOutsideEdge(double edge, double? value) {
-    // If value is null, then consider it outside the edge.
     return value == null || isDoubleEqual(value, edge);
   }
 
-  // If the mouse is very close to the edge of the display,
-  // we can only start auto scroll when the mouse is at the edge of the screen.
   bool _shouldAutoScrollIfCursorNearRemoteEdge(double remoteEdge,
       double remoteValue, double localEdge, double localValue) {
     if ((remoteEdge - remoteValue).abs() < 100.0) {
@@ -393,14 +387,12 @@ class _FloatingMouseState extends State<FloatingMouse> {
         });
       }
 
-      // Get the display rect
       final displayRect = widget.ffi.ffiModel.displaysRect();
       if (displayRect == null) {
         _canvasScrollState.tryCancel();
         return;
       }
 
-      // Get the mouse global position and position in remote display
       mouseGlobalPosition ??= _getMouseGlobalPosition();
       if (positionInRemoteDisplay == null) {
         final evt = _inputModel.processEventToPeer(
@@ -409,13 +401,6 @@ class _FloatingMouseState extends State<FloatingMouse> {
         positionInRemoteDisplay = _getPositionFromMouseRetEvt(evt);
       }
 
-      // Check if need to start auto canvas scroll
-      // If:
-      // 1. The mouse is near the edge of the screen.
-      // 2. The position in remote display is in the rect of the display.
-      // 3. If the remote cursor is near the edge of the remote display,
-      //    then the local mouse must be at the edge of the screen.
-      // Then start auto canvas scroll.
       if (_isValueNearEdge(minX, _position.dx)) {
         bool shouldStartScroll = true;
         if (_isValueAtOrOutsideEdge(
@@ -518,7 +503,6 @@ class _FloatingMouseState extends State<FloatingMouse> {
       final RenderBox? mouseBox = contextMouse.findRenderObject() as RenderBox?;
       if (mouseBox == null || !mouseBox.attached) return;
 
-      // Only enter scroll mode when all RenderObjects are available.
       final Offset mouseTopLeft = mouseBox.localToGlobal(Offset.zero);
       final Size mouseSize = mouseBox.size;
       final Offset center =
@@ -879,7 +863,6 @@ class _MouseBodyState extends State<MouseBody> {
                     Row(
                       crossAxisAlignment: CrossAxisAlignment.end,
                       children: [
-                        // Left button
                         Transform.translate(
                           offset: Offset(
                               -(80 - 24) * 0.5 * leftScale.translateScale,
@@ -977,7 +960,6 @@ class _MouseBodyState extends State<MouseBody> {
                         ),
                       ],
                     ),
-                    // Middle function area overflows Row bottom
                     Positioned(
                       left: (80 * s - 22 * s) / 2,
                       top: 0,
@@ -1010,9 +992,7 @@ class _MouseBodyState extends State<MouseBody> {
                   ],
                 ),
               ),
-              // Thin gap separates upper and lower parts
               SizedBox(height: 1 * s),
-              // Bottom part: drag area (top middle indentation)
               Expanded(
                 child: Listener(
                   onPointerMove: widget.onPointerMoveUpdate,
@@ -1111,14 +1091,12 @@ class DottedCirclePainter extends CustomPainter {
   }
 }
 
-// Painter for the bottom center indentation of the drag area
 class BottomIndentPainter extends CustomPainter {
   @override
   void paint(Canvas canvas, Size size) {
     final paint = Paint()
       ..color = Colors.grey.withOpacity(0.7)
       ..style = PaintingStyle.fill;
-    // Draw bottom semicircle
     final center = Offset(size.width / 2, size.height);
     canvas.drawArc(
       Rect.fromCenter(center: center, width: size.width, height: size.height),
@@ -1127,7 +1105,6 @@ class BottomIndentPainter extends CustomPainter {
       false,
       paint,
     );
-    // Use background color to carve a circular notch in the middle
     final clearPaint = Paint()..blendMode = BlendMode.clear;
     canvas.drawCircle(Offset(size.width / 2, size.height - 10), 10, clearPaint);
   }
@@ -1136,7 +1113,6 @@ class BottomIndentPainter extends CustomPainter {
   bool shouldRepaint(covariant CustomPainter oldDelegate) => false;
 }
 
-// Painter for the top center indentation of the drag area
 class DragAreaTopIndentPainter extends CustomPainter {
   final double scale;
   final Color color;
@@ -1144,12 +1120,10 @@ class DragAreaTopIndentPainter extends CustomPainter {
 
   @override
   void paint(Canvas canvas, Size size) {
-    // Use saveLayer to make the hollow part transparent
     final paint = Paint()
       ..color = color
       ..style = PaintingStyle.fill;
     canvas.saveLayer(Offset.zero & size, Paint());
-    // Draw drag area main body (rectangle + bottom rounded corners)
     final rect = Rect.fromLTWH(0, 0, size.width, size.height);
     final rrect = RRect.fromRectAndCorners(
       rect,
@@ -1157,7 +1131,6 @@ class DragAreaTopIndentPainter extends CustomPainter {
       bottomRight: Radius.circular(40 * scale),
     );
     canvas.drawRRect(rrect, paint);
-    // Use BlendMode.dstOut to carve a smaller semicircular notch at the top center
     final clearPaint = Paint()..blendMode = BlendMode.dstOut;
     canvas.drawArc(
       Rect.fromCenter(

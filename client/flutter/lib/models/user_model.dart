@@ -20,8 +20,6 @@ class UserModel {
   final RxString avatar = ''.obs;
   final RxBool isAdmin = false.obs;
   final RxString networkError = ''.obs;
-  // True when networkError carries a server-reported error rather than a
-  // connectivity failure; netWorkErrorWidget hides the network tip then.
   final RxBool networkErrorFromServer = false.obs;
   bool get isLogin => userName.isNotEmpty;
   String get displayNameOrUserName =>
@@ -42,10 +40,6 @@ class UserModel {
 
   UserModel(this.parent) {
     userName.listen((p0) {
-      // When user name becomes empty, show login button
-      // When user name becomes non-empty:
-      //  For _updateLocalUserInfo, network error will be set later
-      //  For login success, should clear network error
       networkError.value = '';
     });
   }
@@ -89,9 +83,6 @@ class UserModel {
       final data = json.decode(decode_http_response(response));
       final error = data['error'];
       if (error != null) {
-        // The only failure known to come from the server itself, so the
-        // check-your-network tip does not apply. Flag before the message is
-        // set in the catch below so rebuilds read a consistent pair.
         networkErrorFromServer.value = true;
         throw error;
       }
@@ -100,10 +91,6 @@ class UserModel {
       _parseAndUpdateUser(user);
     } catch (e) {
       debugPrint('Failed to refreshCurrentUser: $e');
-      // Surface failures in the address book / group tabs, which offer a
-      // retry. Anything not flagged above -- transport errors, non-JSON or
-      // unexpected-schema bodies (e.g. a filter's block page) -- keeps the
-      // check-your-network tip.
       if (networkError.value.isEmpty) {
         networkError.value = e.toString();
       }
@@ -154,12 +141,10 @@ class UserModel {
     isAdmin.value = user.isAdmin;
     bind.mainSetLocalOption(key: 'user_info', value: jsonEncode(user));
     if (isWeb) {
-      // ugly here, tmp solution
       bind.mainSetLocalOption(key: 'verifier', value: user.verifier ?? '');
     }
   }
 
-  // update ab and group status
   static Future<void> updateOtherModels() async {
     await Future.wait([
       gFFI.abModel.pullAb(force: ForcePullAb.listAndCurrent, quiet: false),
@@ -189,7 +174,6 @@ class UserModel {
     }
   }
 
-  /// throw [RequestException]
   Future<LoginResponse> login(LoginRequest loginRequest) async {
     final url = await bind.mainGetApiServer();
     final resp = await http.post(Uri.parse('$url/api/login'),
@@ -234,9 +218,6 @@ class UserModel {
     return loginResponse;
   }
 
-  /// Throws on network failures, non-success responses, and invalid response
-  /// data. Returns an empty list when no API server is configured or a
-  /// successful response contains no third-party login options.
   static Future<List<dynamic>> queryOidcLoginOptions() async {
     final url = await bind.mainGetApiServer();
     if (url.trim().isEmpty) return [];

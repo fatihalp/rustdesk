@@ -6,7 +6,6 @@ import 'package:get/get.dart';
 import '../../common.dart';
 import './material_mod_popup_menu.dart' as mod_menu;
 
-// https://stackoverflow.com/questions/68318314/flutter-popup-menu-inside-popup-menu
 class PopupMenuChildrenItem<T> extends mod_menu.PopupMenuEntry<T> {
   const PopupMenuChildrenItem({
     key,
@@ -88,7 +87,6 @@ class MyPopupMenuItemState<T, W extends PopupMenuChildrenItem<T>>
 }
 
 class MenuConfig {
-  // adapt to the screen height
   static const fontSize = 14.0;
   static const midPadding = 10.0;
   static const iconScale = 0.8;
@@ -564,7 +562,6 @@ class MenuEntrySwitch<T> extends MenuEntrySwitchBase<T> {
   }
 }
 
-// Compatible with MenuEntrySwitch, it uses value instead of getter
 class MenuEntrySwitchSync<T> extends MenuEntrySwitchBase<T> {
   final SwitchSetter setter;
   final RxBool _curOption = false.obs;
@@ -597,7 +594,6 @@ class MenuEntrySwitchSync<T> extends MenuEntrySwitchBase<T> {
   setOption(bool? option) async {
     if (option != null) {
       await setter(option);
-      // Notice: no ensure with getter, best used on menus that are destroyed on click
       if (_curOption.value != option) {
         _curOption.value = option;
       }
@@ -749,7 +745,6 @@ class MenuEntryButton<T> extends MenuEntryBase<T> {
 
 class CustomPopupMenuTheme {
   static const Color commonColor = MyTheme.accent;
-  // kMinInteractiveDimension
   static const double height = 20.0;
   static const double dividerHeight = 3.0;
 }

@@ -48,7 +48,6 @@ impl Connection {
                 if self.conn_audit_two_factor == ConnAuditTwoFactor::Totp
                     && error.is::<Unavailable>()
                 {
-                    // Retain the ticket for the final authentication check.
                     attempt.enroll = false;
                     host::log_unavailable(&error);
                     return true;

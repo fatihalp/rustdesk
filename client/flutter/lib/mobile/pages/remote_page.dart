@@ -28,14 +28,9 @@ import '../widgets/custom_scale_widget.dart';
 
 final initText = '1' * 1024;
 
-// Workaround for Android (default input method, Microsoft SwiftKey keyboard) when using physical keyboard.
-// When connecting a physical keyboard, `KeyEvent.physicalKey.usbHidUsage` are wrong is using Microsoft SwiftKey keyboard.
-// https://github.com/flutter/flutter/issues/159384
-// https://github.com/flutter/flutter/issues/159383
 void _disableAndroidSoftKeyboard({bool? isKeyboardVisible}) {
   if (isAndroid) {
     if (isKeyboardVisible != true) {
-      // `enable_soft_keyboard` will be set to `true` when clicking the keyboard icon, in `openKeyboard()`.
       gFFI.invokeMethod("enable_soft_keyboard", false);
     }
   }
@@ -44,8 +39,6 @@ void _disableAndroidSoftKeyboard({bool? isKeyboardVisible}) {
 bool handleMobileLocalKeyEvent(KeyEvent event,
     {required bool remoteFocused, required InputModel inputModel}) {
   if (event is KeyUpEvent && inputModel.isViewOnly) {
-    // View-only skips normal modifier cleanup; stale physical keys would
-    // otherwise look like touch selections in the input helper.
     inputModel.handleKeyUpEventModifiers(event);
   }
   if (!remoteFocused &&
@@ -60,8 +53,6 @@ bool handleMobileLocalKeyEvent(KeyEvent event,
         PhysicalKeyboardKey.metaLeft,
         PhysicalKeyboardKey.metaRight,
       ].contains(event.physicalKey)) {
-    // Local UI may consume key-ups while the remote input path still owns
-    // the modifiers pressed before focus moved.
     inputModel.handleKeyEvent(event);
   }
   return false;
@@ -100,7 +91,7 @@ class _RemotePageState extends State<RemotePage> with WidgetsBindingObserver {
   late final StreamSubscription<bool> keyboardSubscription;
   final FocusNode _mobileFocusNode = FocusNode();
   final FocusNode _physicalFocusNode = FocusNode();
-  var _showEdit = false; // use soft keyboard
+  var _showEdit = false;
 
   Worker? _waylandKeyboardGateWorker;
   bool _waylandKeyboardGateInitialized = false;
@@ -150,15 +141,8 @@ class _RemotePageState extends State<RemotePage> with WidgetsBindingObserver {
       }
       _disableAndroidSoftKeyboard(
           isKeyboardVisible: keyboardVisibilityController.isVisible);
-      // Seed shortcut action callbacks once the session is ready, so that
-      // global keyboard shortcuts work even if the user never opens the
-      // toolbar menu. The returned list is intentionally discarded — the
-      // side effect of registering callbacks (inside toolbarControls) is
-      // what we want here.
       if (mounted) {
         toolbarControls(context, widget.id, gFFI);
-        // Mobile has no DesktopTabController, so tab-switch shortcuts will
-        // log a no-handler debug line if a user binds one.
         registerSessionShortcutActions(gFFI);
         _registerMobileChatShortcut();
         registerToolbarShortcuts(context, widget.id, gFFI);
@@ -168,9 +152,6 @@ class _RemotePageState extends State<RemotePage> with WidgetsBindingObserver {
 
     inputModel.keyboardInputAllowed = true;
 
-    // Wayland sessions may use clipboard-based text input on the controlled side.
-    // Require explicit user confirmation before allowing soft-keyboard and
-    // clipboard-assisted text input. Physical keyboard events are not gated here.
     _waylandKeyboardGateWorker = ever(gFFI.ffiModel.pi.isSet, (bool isSet) {
       if (isSet) {
         _initWaylandKeyboardGateIfNeeded();
@@ -185,15 +166,7 @@ class _RemotePageState extends State<RemotePage> with WidgetsBindingObserver {
   Future<void> dispose() async {
     HardwareKeyboard.instance.removeHandler(_handleLocalKeyEvent);
     WidgetsBinding.instance.removeObserver(this);
-    // Close the session up-front. `gFFI.close()` below only calls `sessionClose`
-    // after several awaits (canvas save, image update, the `enable_soft_keyboard`
-    // platform call), so if the app is backgrounded while this page is disposing,
-    // dispose can be suspended before reaching it and the connection is never torn
-    // down. The reconnect then re-attaches to the leaked session and is stuck on
-    // "Connecting...". Dispatching it here makes teardown happen synchronously on
-    // pop; the `sessionClose` in `gFFI.close()` becomes a no-op once removed.
     unawaited(bind.sessionClose(sessionId: sessionId));
-    // https://github.com/flutter/flutter/issues/64935
     super.dispose();
     gFFI.dialogManager.hideMobileActionsOverlay(store: false);
     gFFI.inputModel.listenToMouse(false);
@@ -214,9 +187,6 @@ class _RemotePageState extends State<RemotePage> with WidgetsBindingObserver {
     WakelockManager.disable(_uniqueKey);
     await keyboardSubscription.cancel();
     removeSharedStates(widget.id);
-    // `on_voice_call_closed` should be called when the connection is ended.
-    // The inner logic of `on_voice_call_closed` will check if the voice call is active.
-    // Only one client is considered here for now.
     gFFI.chatModel.onVoiceCallClosed("End connection");
   }
 
@@ -227,8 +197,6 @@ class _RemotePageState extends State<RemotePage> with WidgetsBindingObserver {
     }
   }
 
-  // For client side
-  // When swithing from other app to this app, try to sync clipboard.
   void trySyncClipboard() {
     gFFI.invokeMethod("try_sync_clipboard");
   }
@@ -259,7 +227,6 @@ class _RemotePageState extends State<RemotePage> with WidgetsBindingObserver {
 
     inputModel.keyboardInputAllowed = false;
 
-    // Ensure soft keyboard is not active before user confirms.
     _showEdit = false;
     gFFI.invokeMethod("enable_soft_keyboard", false);
     _mobileFocusNode.unfocus();
@@ -267,13 +234,7 @@ class _RemotePageState extends State<RemotePage> with WidgetsBindingObserver {
     setState(() {});
   }
 
-  // to-do: It should be better to use transparent color instead of the bgColor.
-  // But for now, the transparent color will cause the canvas to be white.
-  // I'm sure that the white color is caused by the Overlay widget in BlockableOverlay.
-  // But I don't know why and how to fix it.
   Widget emptyOverlay(Color bgColor) => BlockableOverlay(
-        /// the Overlay key will be set with _blockableOverlayState in BlockableOverlay
-        /// see override build() in [BlockableOverlay]
         state: _blockableOverlayState,
         underlying: Container(
           color: bgColor,
@@ -283,15 +244,11 @@ class _RemotePageState extends State<RemotePage> with WidgetsBindingObserver {
   void onSoftKeyboardChanged(bool visible) {
     if (!visible) {
       SystemChrome.setEnabledSystemUIMode(SystemUiMode.manual, overlays: []);
-      // [pi.version.isNotEmpty] -> check ready or not, avoid login without soft-keyboard
       if (gFFI.chatModel.chatWindowOverlayEntry == null &&
           gFFI.ffiModel.pi.version.isNotEmpty) {
         gFFI.invokeMethod("enable_soft_keyboard", false);
       }
 
-      // Workaround for iOS: physical keyboard input fails after virtual keyboard is hidden
-      // https://github.com/flutter/flutter/issues/39900
-      // https://github.com/rustdesk/rustdesk/discussions/11843#discussioncomment-13499698 - Virtual keyboard issue
       if (isIOS) {
         _iosKeyboardWorkaroundTimer?.cancel();
         _iosKeyboardWorkaroundTimer = Timer(Duration(milliseconds: 100), () {
@@ -313,7 +270,6 @@ class _RemotePageState extends State<RemotePage> with WidgetsBindingObserver {
         _mobileFocusNode.requestFocus();
       });
     }
-    // update for Scaffold
     setState(() {});
   }
 
@@ -328,7 +284,6 @@ class _RemotePageState extends State<RemotePage> with WidgetsBindingObserver {
     var subNewValue = newValue.substring(j + 1);
     var subOldValue = oldValue.substring(j + 1);
 
-    // get common prefix of subNewValue and subOldValue
     var common = 0;
     for (;
         common < subOldValue.length &&
@@ -336,15 +291,11 @@ class _RemotePageState extends State<RemotePage> with WidgetsBindingObserver {
             subNewValue[common] == subOldValue[common];
         ++common) {}
 
-    // get newStr from subNewValue
     var newStr = "";
     if (subNewValue.length > common) {
       newStr = subNewValue.substring(common);
     }
 
-    // Set the value to the old value and early return if is still composing. (1 && 2)
-    // 1. The composing range is valid
-    // 2. The new string is shorter than the composing range.
     if (_textController.value.isComposingRangeValid) {
       final composingLength = _textController.value.composing.end -
           _textController.value.composing.start;
@@ -354,12 +305,10 @@ class _RemotePageState extends State<RemotePage> with WidgetsBindingObserver {
       }
     }
 
-    // Delete the different part in the old value.
     for (i = 0; i < subOldValue.length - common; ++i) {
       inputModel.inputKey('VK_BACK');
     }
 
-    // Input the new string.
     if (newStr.length > 1) {
       bind.sessionInputString(sessionId: sessionId, value: newStr);
     } else {
@@ -374,15 +323,9 @@ class _RemotePageState extends State<RemotePage> with WidgetsBindingObserver {
         newValue.isNotEmpty &&
         oldValue[0] == '1' &&
         newValue[0] != '1') {
-      // clipboard
       oldValue = '';
     }
-    // This length-only diff assumes the IME appends at the end. If an IME
-    // leaves the caret inside paired punctuation, later insertions can replay
-    // the closing symbol: "()" -> "(a)" sends ")" instead of "a". This is a
-    // client text-diff issue, independent of the host keyboard layout.
     if (newValue.length == oldValue.length) {
-      // ?
     } else if (newValue.length < oldValue.length) {
       final char = 'VK_BACK';
       inputModel.inputKey(char);
@@ -400,7 +343,6 @@ class _RemotePageState extends State<RemotePage> with WidgetsBindingObserver {
                 content == '《》' ||
                 content == '（）' ||
                 content == '【】')) {
-          // can not only input content[0], because when input ], [ are also auo insert, which cause ] never be input
           bind.sessionInputString(sessionId: sessionId, value: content);
           _openKeyboardUnlocked();
           return;
@@ -412,7 +354,6 @@ class _RemotePageState extends State<RemotePage> with WidgetsBindingObserver {
     }
   }
 
-  // handle mobile virtual keyboard
   void handleSoftKeyboardInput(String newValue) {
     if (!inputModel.keyboardInputAllowed) {
       return;
@@ -461,14 +402,11 @@ class _RemotePageState extends State<RemotePage> with WidgetsBindingObserver {
   void _openKeyboardUnlocked() {
     inputModel.keyboardInputAllowed = true;
     gFFI.invokeMethod("enable_soft_keyboard", true);
-    // destroy first, so that our _value trick can work
     _value = initText;
     _textController.text = _value;
     setState(() => _showEdit = false);
     _timer?.cancel();
     _timer = Timer(kMobileDelaySoftKeyboard, () {
-      // show now, and sleep a while to requestFocus to
-      // make sure edit ready, so that keyboard won't show/hide/show/hide happen
       setState(() => _showEdit = true);
       _timer?.cancel();
       _timer = Timer(kMobileDelaySoftKeyboardFocus, () {
@@ -497,7 +435,6 @@ class _RemotePageState extends State<RemotePage> with WidgetsBindingObserver {
         return false;
       },
       child: Scaffold(
-          // workaround for https://github.com/rustdesk/rustdesk/issues/3131
           floatingActionButtonLocation: keyboardIsVisible
               ? FABLocation(FloatingActionButtonLocation.endFloat, 0, -35)
               : null,
@@ -588,8 +525,6 @@ class _RemotePageState extends State<RemotePage> with WidgetsBindingObserver {
     return RawPointerMouseRegion(
       cursor: ffiModel.keyboard ? SystemMouseCursors.none : MouseCursor.defer,
       inputModel: inputModel,
-      // Disable RawKeyFocusScope before the connecting is established.
-      // The "Delete" key on the soft keyboard may be grabbed when inputting the password dialog.
       child: gFFI.ffiModel.pi.isSet.isTrue
           ? RawKeyFocusScope(
               focusNode: _physicalFocusNode,
@@ -730,25 +665,11 @@ class _RemotePageState extends State<RemotePage> with WidgetsBindingObserver {
                   : TextFormField(
                       textInputAction: TextInputAction.newline,
                       autocorrect: false,
-                      // Flutter 3.16.9 Android.
-                      // `enableSuggestions` causes secure keyboard to be shown.
-                      // https://github.com/flutter/flutter/issues/139143
-                      // https://github.com/flutter/flutter/issues/146540
-                      // enableSuggestions: false,
                       autofocus: true,
                       focusNode: _mobileFocusNode,
                       maxLines: null,
                       controller: _textController,
-                      // trick way to make backspace work always
                       keyboardType: TextInputType.multiline,
-                      // `onChanged` may be called depending on the input method if this widget is wrapped in
-                      // `Focus(onKeyEvent: ..., child: ...)`
-                      // For `Backspace` button in the soft keyboard:
-                      // en/fr input method:
-                      //      1. The button will not trigger `onKeyEvent` if the text field is not empty.
-                      //      2. The button will trigger `onKeyEvent` if the text field is empty.
-                      // ko/zh/ja input method: the button will trigger `onKeyEvent`
-                      //                     and the event will not popup if `KeyEventResult.handled` is returned.
                       onChanged: handleSoftKeyboardInput,
                     ).workaroundFreezeLinuxMint(),
             ),
@@ -939,7 +860,6 @@ class _RemotePageState extends State<RemotePage> with WidgetsBindingObserver {
     });
   }
 
-  /// aka changeTouchMode
   BottomAppBar getGestureHelp() {
     return BottomAppBar(
         child: SingleChildScrollView(
@@ -957,31 +877,12 @@ class _RemotePageState extends State<RemotePage> with WidgetsBindingObserver {
             )));
   }
 
-  // * Currently mobile does not enable map mode
-  // void changePhysicalKeyboardInputMode() async {
-  //   var current = await bind.sessionGetKeyboardMode(id: widget.id) ?? "legacy";
-  //   gFFI.dialogManager.show((setState, close) {
-  //     void setMode(String? v) async {
-  //       await bind.sessionSetKeyboardMode(id: widget.id, value: v ?? "");
-  //       setState(() => current = v ?? '');
-  //       Future.delayed(Duration(milliseconds: 300), close);
-  //     }
-  //
-  //     return CustomAlertDialog(
-  //         title: Text(translate('Physical Keyboard Input Mode')),
-  //         content: Column(mainAxisSize: MainAxisSize.min, children: [
-  //           getRadio('Legacy mode', 'legacy', current, setMode),
-  //           getRadio('Map mode', 'map', current, setMode),
-  //         ]));
-  //   }, clickMaskDismiss: true);
-  // }
 }
 
 class KeyHelpTools extends StatefulWidget {
   final bool keyboardIsVisible;
   final bool showGestureHelp;
 
-  /// need to show by external request, etc [keyboardIsVisible] or [changeTouchMode]
   bool get requestShow => keyboardIsVisible || showGestureHelp;
 
   KeyHelpTools(
@@ -1006,9 +907,7 @@ class _KeyHelpToolsState extends State<KeyHelpTools> {
         style: TextButton.styleFrom(
           minimumSize: Size(0, 0),
           padding: EdgeInsets.symmetric(vertical: 10, horizontal: 9.75),
-          //adds padding inside the button
           tapTargetSize: MaterialTapTargetSize.shrinkWrap,
-          //limits the touch area to the button area
           shape: RoundedRectangleBorder(
             borderRadius: BorderRadius.circular(5.0),
           ),
@@ -1038,7 +937,6 @@ class _KeyHelpToolsState extends State<KeyHelpTools> {
   @override
   Widget build(BuildContext context) {
     final keyboard = HardwareKeyboard.instance;
-    // Keep touch selections visible without physical modifiers opening the bar.
     final hasTouchModifier = (inputModel.ctrl && !keyboard.isControlPressed) ||
         (inputModel.alt && !keyboard.isAltPressed) ||
         (inputModel.shift && !keyboard.isShiftPressed) ||
@@ -1134,7 +1032,6 @@ class _KeyHelpToolsState extends State<KeyHelpTools> {
       wrap('PgDn', () {
         inputModel.inputKey('VK_NEXT');
       }),
-      // to-do: support PrtScr on Mac
       if (isWin || isLinux)
         wrap('PrtScr', () {
           inputModel.inputKey('VK_SNAPSHOT');
@@ -1148,8 +1045,6 @@ class _KeyHelpToolsState extends State<KeyHelpTools> {
           inputModel.inputKey('VK_PAUSE');
         }),
       if (isWin || isLinux)
-        // Maybe it's better to call it "Menu"
-        // https://en.wikipedia.org/wiki/Menu_key
         wrap('Menu', () {
           inputModel.inputKey('Apps');
         }),
@@ -1180,7 +1075,6 @@ class _KeyHelpToolsState extends State<KeyHelpTools> {
       }),
     ];
     final space = size.width > 320 ? 4.0 : 2.0;
-    // 500 ms is long enough for this widget to be built!
     Future.delayed(Duration(milliseconds: 500), () {
       _updateRect();
     });
@@ -1293,9 +1187,6 @@ void showOptions(
     final isDarkTheme = MyTheme.currentThemeMode() == ThemeMode.dark;
     final numColorSelected = Colors.white;
     final numColorUnselected = isDarkTheme ? Colors.grey : Colors.black87;
-    // We can't use `Theme.of(context).primaryColor` here, the color is:
-    // - light theme: 0xff2196f3 (Colors.blue)
-    // - dark theme: 0xff212121 (the canvas color?)
     final numBgSelected =
         Theme.of(context).colorScheme.primary.withOpacity(0.6);
     for (var i = 0; i < pi.displays.length; ++i) {
@@ -1376,7 +1267,6 @@ void showOptions(
                     if (v != null) viewStyle.value = v;
                   }
                 : null)),
-      // Show custom scale controls when custom view style is selected
       Obx(() => viewStyle.value == kRemoteViewStyleCustom
           ? MobileCustomScaleControls(ffi: gFFI)
           : const SizedBox.shrink()),

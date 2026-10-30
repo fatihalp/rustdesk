@@ -9,7 +9,6 @@ use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Storage;
 use Symfony\Component\HttpFoundation\StreamedResponse;
 
-/** Endpoints called by the GitHub Actions packaging workflow. */
 class BuildRunnerController extends Controller
 {
     public function manifest(ClientBuild $build): JsonResponse

@@ -1,25 +1,3 @@
-// flutter/lib/common/widgets/keyboard_shortcuts/page_body.dart
-//
-// Shared body widget for the Keyboard Shortcuts configuration page. Both the
-// desktop (`desktop/pages/desktop_keyboard_shortcuts_page.dart`) and mobile
-// (`mobile/pages/mobile_keyboard_shortcuts_page.dart`) pages render this
-// widget inside their own platform-styled Scaffold + AppBar shell.
-//
-// The body owns:
-//   * the top-level enable/disable toggle (mirrors the General-tab toggle —
-//     same JSON key, same semantics);
-//   * a grouped list of actions, each with its current binding plus
-//     edit / clear icons;
-//   * the JSON read/write helpers under [kShortcutLocalConfigKey] in the
-//     canonical {enabled, bindings:[{action,mods,key}]} shape;
-//   * the recording-dialog round-trip and conflict-replace bookkeeping;
-//   * "Reset to defaults" (called from the platform AppBar).
-//
-// Platform shells supply only:
-//   * the AppBar (with a "Reset to defaults" action that calls
-//     [KeyboardShortcutsPageBodyState.resetToDefaultsWithConfirm]);
-//   * surrounding padding / list-tile vs. dense-row visuals via the
-//     [compact] flag.
 
 import 'dart:convert';
 
@@ -35,27 +13,11 @@ import 'recording_dialog.dart';
 import 'shortcut_actions.dart';
 import 'shortcut_utils.dart';
 
-/// The shared body widget. Render this inside a platform-styled Scaffold.
-///
-/// [compact] toggles the desktop dense-row layout (`true`) versus the mobile
-/// touch-friendly ListTile layout (`false`).
-///
-/// [editButtonHint] is shown as the tooltip on the Edit icon. Mobile shells
-/// use this to clarify that recording requires a physical keyboard.
-///
-/// [headerBanner] is an optional widget rendered above the toggle. Mobile
-/// uses this to show the "Recording requires a physical keyboard" hint.
 class KeyboardShortcutsPageBody extends StatefulWidget {
   final bool compact;
   final String? editButtonHint;
   final Widget? headerBanner;
 
-  /// Whether to render the master Enable + Pass-through toggles inside the
-  /// body. Desktop shells set this to false because the General settings tab
-  /// already exposes both checkboxes (and is the only entry point to this
-  /// page on desktop). Mobile defaults to true: its entry point is a plain
-  /// nav tile in Settings, so this page is the only place the user can
-  /// flip the master switches.
   final bool showMasterToggles;
 
   const KeyboardShortcutsPageBody({
@@ -71,10 +33,7 @@ class KeyboardShortcutsPageBody extends StatefulWidget {
       KeyboardShortcutsPageBodyState();
 }
 
-/// Public state so platform shells can call [resetToDefaultsWithConfirm] from
-/// their AppBar action.
 class KeyboardShortcutsPageBodyState extends State<KeyboardShortcutsPageBody> {
-  // ----- Persistence helpers -----
 
   Map<String, dynamic> _readJson() {
     final raw = bind.mainGetLocalOption(key: kShortcutLocalConfigKey);
@@ -92,17 +51,10 @@ class KeyboardShortcutsPageBodyState extends State<KeyboardShortcutsPageBody> {
   Future<void> _writeJson(Map<String, dynamic> json) async {
     await bind.mainSetLocalOption(
         key: kShortcutLocalConfigKey, value: jsonEncode(json));
-    // Refresh the matcher cache so writes take effect immediately. On native
-    // this hits the Rust matcher; on Web the bridge forwards to the JS-side
-    // matcher in flutter/web/js/.
     bind.mainReloadKeyboardShortcuts();
     if (mounted) setState(() {});
   }
 
-  /// Replace the bindings entry for [actionId] with [binding]. If [binding]
-  /// is null, removes the existing entry. If the user is replacing a
-  /// conflicting binding, [clearActionId] points at the action whose
-  /// (now-stale) binding should be removed in the same write.
   Future<void> _setBinding(
     String actionId, {
     Map<String, dynamic>? binding,
@@ -133,10 +85,6 @@ class KeyboardShortcutsPageBodyState extends State<KeyboardShortcutsPageBody> {
 
   Future<void> _resetToDefaults() async {
     final json = _readJson();
-    // Single source of truth lives in `ShortcutModel.currentPlatformCapabilities`
-    // — the same helper feeds the first-enable seed pass, this Reset action,
-    // and the action-list filter below, so the three can never disagree on
-    // which actions belong on this platform.
     json['bindings'] = filterDefaultBindingsForPlatform(
       jsonDecode(bind.mainGetDefaultKeyboardShortcuts()) as List,
       ShortcutModel.currentPlatformCapabilities(),
@@ -145,28 +93,18 @@ class KeyboardShortcutsPageBodyState extends State<KeyboardShortcutsPageBody> {
   }
 
   String _labelFor(String actionId) {
-    // Intentionally walks the unfiltered list (via the recursive helper, so
-    // both direct entries and subgroup entries are covered) — a stale
-    // cross-platform binding (e.g. Toggle Toolbar carried over from
-    // desktop) should still resolve to its human-readable label in conflict
-    // warnings.
     for (final entry in allActionEntries(kKeyboardShortcutActionGroups)) {
       if (entry.id == actionId) return translate(entry.labelKey);
     }
     return actionId;
   }
 
-  /// Action groups visible on the current platform. Reads the same
-  /// capability set as the seed-defaults / reset-to-defaults paths from
-  /// `ShortcutModel.currentPlatformCapabilities`, so the UI lists exactly
-  /// the actions whose handlers the matcher can dispatch here.
   List<KeyboardShortcutActionGroup> _groupsForCurrentPlatform() {
     return filterKeyboardShortcutActionGroupsForPlatform(
       ShortcutModel.currentPlatformCapabilities(),
     );
   }
 
-  // ----- UI handlers -----
 
   Future<void> _onEdit(KeyboardShortcutActionEntry entry) async {
     final json = _readJson();
@@ -190,7 +128,6 @@ class KeyboardShortcutsPageBodyState extends State<KeyboardShortcutsPageBody> {
     await _setBinding(entry.id, binding: null);
   }
 
-  /// Public — invoked from the platform AppBar action.
   Future<void> resetToDefaultsWithConfirm() async {
     final confirmed = await showDialog<bool>(
       context: context,
@@ -209,7 +146,6 @@ class KeyboardShortcutsPageBodyState extends State<KeyboardShortcutsPageBody> {
     }
   }
 
-  // ----- Build -----
 
   @override
   Widget build(BuildContext context) {
@@ -245,8 +181,6 @@ class KeyboardShortcutsPageBodyState extends State<KeyboardShortcutsPageBody> {
           ),
         ),
         const SizedBox(height: 16),
-        // Bindings list and configuration entry only show when shortcuts are
-        // enabled — there is nothing to configure while the matcher is off.
         if (enabled)
           Column(
             crossAxisAlignment: CrossAxisAlignment.start,
@@ -284,18 +218,8 @@ class KeyboardShortcutsPageBodyState extends State<KeyboardShortcutsPageBody> {
     );
   }
 
-  // One indent unit per nesting level. Both "top item under top heading"
-  // and "subgroup heading under top group" are *one* level deeper than the
-  // top heading, so they share this indent — meaning a top-level direct
-  // item and a sibling subgroup heading line up at exactly the same x.
-  // Subgroup items are *two* levels deeper.
   static const double _kIndentStep = 16.0;
 
-  /// Top-level group: heading at zero indent, then walk `children` in
-  /// declaration order. Direct entries get [_kIndentStep] of indent so
-  /// they read as "items under this heading"; subgroup headings sit at
-  /// the same indent (a subgroup is a sibling of the direct items, just
-  /// with its own nested entries below).
   Widget _buildGroup(BuildContext context, KeyboardShortcutActionGroup group) {
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
@@ -326,9 +250,6 @@ class KeyboardShortcutsPageBodyState extends State<KeyboardShortcutsPageBody> {
         const SizedBox(height: 4),
         for (final entry in subgroup.entries)
           Padding(
-            // Two indent steps: one for "subgroup heading is nested under
-            // top heading" (matches the heading's own indent) and one for
-            // "this entry is under the subgroup heading".
             padding: const EdgeInsets.only(left: _kIndentStep * 2),
             child: _buildEntryRow(context, entry),
           ),
@@ -338,8 +259,6 @@ class KeyboardShortcutsPageBodyState extends State<KeyboardShortcutsPageBody> {
 
   Widget _buildHeading(BuildContext context, String titleKey,
       {required bool isSub}) {
-    // Subgroup heading nests one step under the top heading — same indent
-    // as a top-level direct item, so the two line up at the same x.
     final indent = isSub ? _kIndentStep : 0.0;
     return Padding(
       padding: EdgeInsets.only(left: 8 + indent, right: 8),
@@ -368,7 +287,6 @@ class KeyboardShortcutsPageBodyState extends State<KeyboardShortcutsPageBody> {
         : _buildTouchRow(context, entry);
   }
 
-  /// Desktop dense row: label | shortcut | edit | clear, all in one Row.
   Widget _buildCompactRow(
       BuildContext context, KeyboardShortcutActionEntry entry) {
     final shortcut = ShortcutDisplay.formatFor(entry.id, requireEnabled: false);
@@ -413,7 +331,6 @@ class KeyboardShortcutsPageBodyState extends State<KeyboardShortcutsPageBody> {
     );
   }
 
-  /// Mobile touch row: ListTile with title + subtitle + trailing icons.
   Widget _buildTouchRow(
       BuildContext context, KeyboardShortcutActionEntry entry) {
     final shortcut = ShortcutDisplay.formatFor(entry.id, requireEnabled: false);
@@ -453,9 +370,6 @@ class KeyboardShortcutsPageBodyState extends State<KeyboardShortcutsPageBody> {
   }
 }
 
-/// Small help-icon tooltip used for inline explanations next to a checkbox /
-/// row. Triggers on hover (desktop) and tap (mobile). Public so the desktop
-/// General settings tab can reuse it.
 class InfoTooltipIcon extends StatelessWidget {
   final String tipKey;
   const InfoTooltipIcon({Key? key, required this.tipKey}) : super(key: key);

@@ -30,21 +30,17 @@ enum HardwareBackend {
 
 fn max_repeat_frames(codec: CodecFormat, quality: f32, backend: HardwareBackend) -> usize {
     use HardwareBackend::*;
-    // Measured entries sample quality 0.1, BR_SPEED, BR_BALANCED, and BR_BEST.
-    // For measured entries, Original values come from AI-run tests. Active values
-    // were adjusted by comparing 1080p screenshots captured every 10 repeat outputs.
     let (low, low_to_balanced, balanced_to_best, best) = match (codec, backend) {
-        (CodecFormat::VP8, _) => (20, 20, 20, 30), // Original: (20, 20, 20, 30)
-        (CodecFormat::VP9, _) => (40, 20, 20, 20), // Original: (40, 20, 20, 20)
-        (CodecFormat::H264, Nvenc) => (80, 50, 60, 30), // Original: (270, 50, 60, 30)
-        (CodecFormat::H264, Qsv) => (80, 70, 130, 110), // Original: (80, 70, 130, 110)
-        (CodecFormat::H264, Amf) => (150, 150, 170, 110), // Original: (560, 150, 170, 110)
-        (CodecFormat::H264, Vaapi) => (150, 100, 90, 60), // Original: (330, 100, 90, 60)
-        (CodecFormat::H265, Nvenc) => (160, 90, 60, 30), // Original: (160, 90, 60, 30)
-        (CodecFormat::H265, Qsv) => (150, 30, 30, 30), // Original: (150, 30, 30, 30)
-        (CodecFormat::H265, Amf) => (200, 200, 200, 120), // Original: (580, 200, 200, 120)
-        // The capture loop already repeats ten frames to drain VideoToolbox latency.
-        (CodecFormat::H265, VideoToolbox) => (90, 90, 50, 90), // Original: (230, 90, 50, 90)
+        (CodecFormat::VP8, _) => (20, 20, 20, 30),
+        (CodecFormat::VP9, _) => (40, 20, 20, 20),
+        (CodecFormat::H264, Nvenc) => (80, 50, 60, 30),
+        (CodecFormat::H264, Qsv) => (80, 70, 130, 110),
+        (CodecFormat::H264, Amf) => (150, 150, 170, 110),
+        (CodecFormat::H264, Vaapi) => (150, 100, 90, 60),
+        (CodecFormat::H265, Nvenc) => (160, 90, 60, 30),
+        (CodecFormat::H265, Qsv) => (150, 30, 30, 30),
+        (CodecFormat::H265, Amf) => (200, 200, 200, 120),
+        (CodecFormat::H265, VideoToolbox) => (90, 90, 50, 90),
         (CodecFormat::H264, MediaCodec) => (50, 20, 20, 10),
         (CodecFormat::H265, MediaCodec) => (90, 20, 20, 20),
         (CodecFormat::H264, _) => (90, 60, 60, 30),
@@ -112,7 +108,6 @@ impl<'a> StaticRefresh<'a> {
                 _ => HardwareBackend::Other,
             },
             #[cfg(feature = "vram")]
-            // The FFMPEG VRAM driver selects the encoder from the adapter vendor.
             EncoderCfg::VRAM(config) => match config.feature.vendor {
                 scrap::vram::Driver::NV => HardwareBackend::Nvenc,
                 scrap::vram::Driver::MFX => HardwareBackend::Qsv,
@@ -156,9 +151,6 @@ impl<'a> StaticRefresh<'a> {
     }
 
     pub(super) fn on_frame_encoded(&mut self, result: &FrameEncodeResult) {
-        // VP8/VP9 rate control may drop a frame without an encoding error.
-        // The latest input is still cached, so allow repeats even without output;
-        // otherwise the final update may never be sent once capture becomes idle.
         self.on_encoded(
             !result.send_conn_ids.is_empty()
                 || (matches!(self.codec_format, CodecFormat::VP8 | CodecFormat::VP9)
@@ -240,7 +232,6 @@ impl<'a> StaticRefresh<'a> {
             self.last_encode = if matches!(self.codec_format, CodecFormat::VP8 | CodecFormat::VP9) {
                 Instant::now()
             } else {
-                // Align with the capture loop so encoding time does not skip the next tick.
                 now
             };
             #[cfg(test)]
@@ -285,7 +276,6 @@ impl<'a> StaticRefresh<'a> {
                 .map(|r| r.write_message(&msg, self.width, self.height));
             let send_conn_ids = self.sp.send_video_frame(msg);
             frame_controller.set_send(now, send_conn_ids);
-            // Static refinement must not count as motion for adaptive bitrate.
         }
         Ok(())
     }
@@ -313,7 +303,6 @@ mod tests {
         width: usize,
         height: usize,
     ) -> StaticRefresh<'a> {
-        // The mock encoders simulate each format without a hardware backend.
         let config = EncoderCfg::VPX(VpxEncoderConfig {
             width: width as _,
             height: height as _,
@@ -524,7 +513,6 @@ mod tests {
             1,
         );
         let calls = Rc::new(Cell::new(0));
-        // Deliberately not a D3D resource: neither hook may dereference it.
         let texture = std::ptr::NonNull::<u8>::dangling().as_ptr() as _;
         for _ in 0..60 {
             refresh.on_frame(&EncodeInput::Texture((texture, 0)));

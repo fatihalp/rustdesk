@@ -51,17 +51,14 @@ class PeersModelName {
   static const String group = 'group peer';
 }
 
-/// for peer search text, global obs value
 final peerSearchText = "".obs;
 
-/// for peer sort, global obs value
 RxString? _peerSort;
 RxString get peerSort {
   _peerSort ??= bind.getLocalFlutterOption(k: kOptionPeerSorting).obs;
   return _peerSort!;
 }
 
-// list for listener
 RxList<RxString> get obslist => [peerSearchText, peerSort].obs;
 
 final peerSearchTextController =
@@ -85,7 +82,6 @@ class _PeersView extends StatefulWidget {
   _PeersViewState createState() => _PeersViewState();
 }
 
-/// State for the peer widget.
 class _PeersViewState extends State<_PeersView>
     with WindowListener, WidgetsBindingObserver {
   static const int _maxQueryCount = 3;
@@ -134,11 +130,6 @@ class _PeersViewState extends State<_PeersView>
 
   @override
   void onWindowBlur() {
-    // We need this comparison because window restore (on Windows) also triggers `onWindowBlur()`.
-    // Maybe it's a bug of the window manager, but the source code seems to be correct.
-    //
-    // Although `onWindowRestore()` is called after `onWindowBlur()` in my test,
-    // we need the following comparison to ensure that `_isActive` is true in the end.
     if (isWindows &&
         DateTime.now().difference(_lastWindowRestoreTime) <
             const Duration(milliseconds: 300)) {
@@ -150,8 +141,6 @@ class _PeersViewState extends State<_PeersView>
 
   @override
   void onWindowRestore() {
-    // Window restore (on MacOS and Linux) also triggers `onWindowFocus()`.
-    // But on Windows, it triggers `onWindowBlur()`, mybe it's a bug of the window manager.
     if (!isWindows) return;
     _queryCount = 0;
     _isActive = true;
@@ -160,11 +149,8 @@ class _PeersViewState extends State<_PeersView>
 
   @override
   void onWindowMinimize() {
-    // Window minimize also triggers `onWindowBlur()`.
   }
 
-  // This function is required for mobile.
-  // `onWindowFocus` works fine for desktop.
   @override
   void didChangeAppLifecycleState(AppLifecycleState state) {
     super.didChangeAppLifecycleState(state);
@@ -179,9 +165,6 @@ class _PeersViewState extends State<_PeersView>
 
   @override
   Widget build(BuildContext context) {
-    // We should avoid too many rebuilds. MacOS(m1, 14.6.1) on Flutter 3.19.6.
-    // Continious rebuilds of `ChangeNotifierProvider` will cause memory leak.
-    // Simple demo can reproduce this issue.
     return ChangeNotifierProvider<Peers>.value(
       value: widget.peers,
       child: Consumer<Peers>(builder: (context, peers, child) {
@@ -243,12 +226,6 @@ class _PeersViewState extends State<_PeersView>
                 onVisibilityChanged: onVisibilityChanged,
                 child: widget.peerCardBuilder(peer),
               );
-              // `Provider.of<PeerTabModel>(context)` will causes infinete loop.
-              // Because `gFFI.peerTabModel.setCurrentTabCachedPeers(peers)` will trigger `notifyListeners()`.
-              //
-              // No need to listen the currentTab change event.
-              // Because the currentTab change event will trigger the peers change event,
-              // and the peers change event will trigger _buildPeersView().
               return !isPortrait
                   ? Obx(() => peerCardUiType.value == PeerUiType.list
                       ? Container(height: 45, child: visibilityChild)
@@ -260,9 +237,6 @@ class _PeersViewState extends State<_PeersView>
                   : Container(child: visibilityChild);
             }
 
-            // We should avoid too many rebuilds. Win10(Some machines) on Flutter 3.19.6.
-            // Continious rebuilds of `ListView.builder` will cause memory leak.
-            // Simple demo can reproduce this issue.
             final Widget child = Obx(() => stateGlobal.isPortrait.isTrue
                 ? ListView.builder(
                     itemCount: peers.length,
@@ -364,7 +338,6 @@ class _PeersViewState extends State<_PeersView>
       peers = peers.where((peer) => widget.peerFilter!(peer)).toList();
     }
 
-    // fallback to id sorting
     if (!PeerSortType.values.contains(sortedBy)) {
       sortedBy = PeerSortType.remoteId;
       bind.setLocalFlutterOption(
@@ -529,7 +502,6 @@ class AddressBookPeersView extends BasePeersView {
     if (selectedTags.isEmpty) {
       return true;
     }
-    // The result of a no-tag union with normal tags, still allows normal tags to perform union or intersection operations.
     final selectedNormalTags =
         selectedTags.where((tag) => tag != kUntagged).toList();
     if (selectedTags.contains(kUntagged)) {

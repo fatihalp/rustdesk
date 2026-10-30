@@ -32,7 +32,7 @@ pub(super) struct InstallGate {
 impl InstallGate {
     pub(super) fn new() -> ResultType<Self> {
         let name = format!(
-            r"\\.\pipe\rustdesk-install-{}",
+            r"\\.\pipe\supportdesk-install-{}",
             uuid::Uuid::new_v4().simple()
         );
         let wide_name = wide_string(&name);
@@ -82,15 +82,12 @@ impl InstallGate {
         Ok(())
     }
 
-    // cmd's SET /P must read a line successfully before it opens the BAT. Closing
-    // the pipe without this signal fails the command instead of running the BAT.
     pub(super) fn release(&self, process: HANDLE) -> ResultType<()> {
         let event = unsafe { Owned::new(CreateEventW(None, true, false, None)?) };
         let mut overlapped = OVERLAPPED {
             hEvent: *event,
             ..Default::default()
         };
-        // Windows 7 requires a byte-count pointer even for overlapped writes.
         let mut written = 0;
         if let Err(error) = unsafe {
             WriteFile(
@@ -105,7 +102,6 @@ impl InstallGate {
             }
             self.wait_for_io(&overlapped, process)?;
         }
-        // Keep the server handle alive until cmd exits so the signal stays buffered.
         Ok(())
     }
 
@@ -118,14 +114,11 @@ impl InstallGate {
             return Ok(());
         }
         let error = io::Error::last_os_error();
-        // Retire pending I/O before the stack-allocated OVERLAPPED and event go away.
         if let Err(error) = unsafe { CancelIoEx(*self.pipe, Some(overlapped)) } {
             if error.code() != ERROR_NOT_FOUND.to_hresult() {
                 log::warn!("Failed to cancel installer handoff I/O: {error}");
             }
         }
-        // Cancellation normally completes with ERROR_OPERATION_ABORTED; preserve
-        // the original wait failure after observing that completion.
         let _ = unsafe { GetOverlappedResult(*self.pipe, overlapped, &mut transferred, true) };
         if wait.0 == WAIT_OBJECT_0.0 + 1 {
             bail!("Elevated installer exited before the file handoff completed");

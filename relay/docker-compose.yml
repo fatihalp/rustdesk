@@ -2,7 +2,7 @@ services:
   hbbs:
     image: rustdesk/rustdesk-server:latest
     command: hbbs -r ${RELAY_HOST}:21117
-    container_name: rustdesk-hbbs
+    container_name: supportdesk-hbbs
     restart: unless-stopped
     network_mode: host
     volumes:
@@ -13,7 +13,7 @@ services:
   hbbr:
     image: rustdesk/rustdesk-server:latest
     command: hbbr
-    container_name: rustdesk-hbbr
+    container_name: supportdesk-hbbr
     restart: unless-stopped
     network_mode: host
     volumes:

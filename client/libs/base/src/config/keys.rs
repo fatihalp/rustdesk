@@ -1,7 +1,3 @@
-//! Option keys shared across the app.
-//!
-//! The handful that `hbb_common` itself reads stay defined there and are
-//! re-exported here, so callers always use this one path.
 
 pub use hbb_common::config::keys::*;
 
@@ -25,8 +21,6 @@ pub const OPTION_HIDE_AB_TAGS_PANEL: &str = "hideAbTagsPanel";
 pub const OPTION_ENABLE_CONFIRM_CLOSING_TABS: &str = "enable-confirm-closing-tabs";
 pub const OPTION_ENABLE_OPEN_NEW_CONNECTIONS_IN_TABS: &str = "enable-open-new-connections-in-tabs";
 pub const OPTION_TEXTURE_RENDER: &str = "use-texture-render";
-// Internal health record written by the texture-render watchdog/probe;
-// "failed-*" flips the texture-render default to opt-in on this machine.
 pub const OPTION_TEXTURE_RENDER_HEALTH: &str = "texture-render-health";
 pub const OPTION_ALLOW_D3D_RENDER: &str = "allow-d3d-render";
 pub const OPTION_ENABLE_CHECK_UPDATE: &str = "enable-check-update";
@@ -90,25 +84,13 @@ pub const OPTION_ENABLE_ANDROID_SOFTWARE_ENCODING_HALF_SCALE: &str =
 pub const OPTION_ENABLE_TRUSTED_DEVICES: &str = "enable-trusted-devices";
 pub const OPTION_TRUSTED_DEVICE_EXPIRATION: &str = "trusted-device-expiration-days";
 pub const OPTION_AV1_TEST: &str = "av1-test";
-/// Maximum number of files allowed during a single file transfer request.
-///
-/// Key: `file-transfer-max-files`.
-/// Unit: number of files (not bytes).
-///
-/// Behaviour:
-/// - If set to a positive integer N, at most N files are allowed.
-/// - If set to 0, a safe built-in default is used (see DEFAULT_MAX_VALIDATED_FILES).
-/// - If unset, negative, or non-integer, no explicit limit is enforced for backward compatibility.
 pub const OPTION_FILE_TRANSFER_MAX_FILES: &str = "file-transfer-max-files";
 pub const OPTION_DISABLE_UDP: &str = "disable-udp";
 pub const OPTION_SHOW_VIRTUAL_MOUSE: &str = "show-virtual-mouse";
-// joystick is the virtual mouse.
-// So `OPTION_SHOW_VIRTUAL_MOUSE` should also be set if `OPTION_SHOW_VIRTUAL_JOYSTICK` is set.
 pub const OPTION_SHOW_VIRTUAL_JOYSTICK: &str = "show-virtual-joystick";
 pub const OPTION_ENABLE_FLUTTER_HTTP_ON_RUST: &str = "enable-flutter-http-on-rust";
 pub const OPTION_ALLOW_ASK_FOR_NOTE: &str = "allow-ask-for-note";
 
-// built-in options
 pub const OPTION_DISPLAY_NAME: &str = "display-name";
 pub const OPTION_AVATAR: &str = "avatar";
 pub const OPTION_PRESET_DEVICE_GROUP_NAME: &str = "preset-device-group-name";
@@ -126,7 +108,6 @@ pub const OPTION_HIDE_STOP_SERVICE: &str = "hide-stop-service";
 pub const OPTION_ALLOW_COMMAND_LINE_SETTINGS_WHEN_SETTINGS_DISABLED: &str =
     "allow-command-line-settings-when-settings-disabled";
 
-// Connection punch-through / port-forward options
 pub const OPTION_ENABLE_TCP_PUNCH: &str = "enable-tcp-punch";
 pub const OPTION_ENABLE_UDP_PUNCH: &str = "enable-udp-punch";
 pub const OPTION_ENABLE_IPV6_PUNCH: &str = "enable-ipv6-punch";
@@ -148,7 +129,6 @@ pub const OPTION_USE_RAW_TCP_FOR_API: &str = "use-raw-tcp-for-api";
 pub const OPTION_HIDE_POWERED_BY_ME: &str = "hide-powered-by-me";
 pub const OPTION_MAIN_WINDOW_ALWAYS_ON_TOP: &str = "main-window-always-on-top";
 
-// flutter local options
 pub const OPTION_FLUTTER_REMOTE_MENUBAR_STATE: &str = "remoteMenubarState";
 pub const OPTION_FLUTTER_PEER_SORTING: &str = "peer-sorting";
 pub const OPTION_FLUTTER_PEER_TAB_INDEX: &str = "peer-tab-index";
@@ -164,27 +144,22 @@ pub const OPTION_PRINTER_INCOMING_JOB_ACTION: &str = "printer-incomming-job-acti
 pub const OPTION_PRINTER_ALLOW_AUTO_PRINT: &str = "allow-printer-auto-print";
 pub const OPTION_PRINTER_SELECTED_NAME: &str = "printer-selected-name";
 
-// android floating window options
 pub const OPTION_DISABLE_FLOATING_WINDOW: &str = "disable-floating-window";
 pub const OPTION_FLOATING_WINDOW_SIZE: &str = "floating-window-size";
 pub const OPTION_FLOATING_WINDOW_UNTOUCHABLE: &str = "floating-window-untouchable";
 pub const OPTION_FLOATING_WINDOW_TRANSPARENCY: &str = "floating-window-transparency";
 pub const OPTION_FLOATING_WINDOW_SVG: &str = "floating-window-svg";
 
-// android keep screen on
 pub const OPTION_KEEP_SCREEN_ON: &str = "keep-screen-on";
 
-// Server-side: keep host system awake during incoming sessions (Security setting)
 pub const OPTION_KEEP_AWAKE_DURING_INCOMING_SESSIONS: &str = "keep-awake-during-incoming-sessions";
 
-// Client-side: keep client system awake during outgoing sessions (General setting)
 pub const OPTION_KEEP_AWAKE_DURING_OUTGOING_SESSIONS: &str = "keep-awake-during-outgoing-sessions";
 
 pub const OPTION_DISABLE_GROUP_PANEL: &str = "disable-group-panel";
 pub const OPTION_DISABLE_DISCOVERY_PANEL: &str = "disable-discovery-panel";
 pub const OPTION_PRE_ELEVATE_SERVICE: &str = "pre-elevate-service";
 
-// DEFAULT_DISPLAY_SETTINGS, OVERWRITE_DISPLAY_SETTINGS
 pub const KEYS_DISPLAY_SETTINGS: &[&str] = &[
     OPTION_VIEW_ONLY,
     OPTION_SHOW_MONITORS_TOOLBAR,
@@ -216,7 +191,6 @@ pub const KEYS_DISPLAY_SETTINGS: &[&str] = &[
     OPTION_SYNC_INIT_CLIPBOARD,
     OPTION_TRACKPAD_SPEED,
 ];
-// DEFAULT_LOCAL_SETTINGS, OVERWRITE_LOCAL_SETTINGS
 pub const KEYS_LOCAL_SETTINGS: &[&str] = &[
     OPTION_THEME,
     OPTION_LANGUAGE,
@@ -243,7 +217,6 @@ pub const KEYS_LOCAL_SETTINGS: &[&str] = &[
     OPTION_FLOATING_WINDOW_TRANSPARENCY,
     OPTION_FLOATING_WINDOW_SVG,
     OPTION_KEEP_SCREEN_ON,
-    // Client-side: keep client system awake during outgoing sessions (General setting)
     OPTION_KEEP_AWAKE_DURING_OUTGOING_SESSIONS,
     OPTION_DISABLE_GROUP_PANEL,
     OPTION_DISABLE_DISCOVERY_PANEL,
@@ -269,7 +242,6 @@ pub const KEYS_LOCAL_SETTINGS: &[&str] = &[
     OPTION_ENABLE_FLUTTER_HTTP_ON_RUST,
     OPTION_ALLOW_ASK_FOR_NOTE,
 ];
-// DEFAULT_SETTINGS, OVERWRITE_SETTINGS
 pub const KEYS_SETTINGS: &[&str] = &[
     OPTION_ACCESS_MODE,
     OPTION_ENABLE_KEYBOARD,
@@ -335,7 +307,6 @@ pub const KEYS_SETTINGS: &[&str] = &[
     OPTION_ALLOW_WEBRTC_CC,
 ];
 
-// BUILDIN_SETTINGS
 pub const KEYS_BUILDIN_SETTINGS: &[&str] = &[
     OPTION_DISPLAY_NAME,
     OPTION_AVATAR,
@@ -377,11 +348,6 @@ pub const KEYS_BUILDIN_SETTINGS: &[&str] = &[
 
 #[cfg(test)]
 mod tests {
-    /// The glob above and the constants below share one namespace, and Rust
-    /// silently prefers the explicit item over a glob import. A key defined on
-    /// both sides would therefore compile, with the client and the server
-    /// disagreeing about its string value and nothing to signal it. Keep the
-    /// two sets apart.
     #[test]
     fn key_names_do_not_collide_with_hbb_common() {
         fn names(src: &str) -> Vec<&str> {

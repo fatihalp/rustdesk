@@ -38,24 +38,14 @@ lazy_static! {
 }
 
 #[derive(Serialize, Deserialize)]
-// For KDE Plasma only, because GNOME provides position info.
 struct PipewireDisplayOffsetCache {
-    // We need to compare the displays, because:
-    // 1. On Archlinux KDE Plasma
-    // 2. One display, and connect, remember share choice.
-    // 3. Plug in another monitor.
-    // 4. The portal will reuse the restore token, no new share choice dialog, but the share screen is different.
-    //    The controlling side will see the new monitor.
-    // All displays as one string for easy comparison
-    // name1-x1-y1-width1-height1;name2-x2-y2-width2-height2;...
     display_key: String,
     restore_token: String,
     offsets: Vec<(i32, i32)>,
 }
 
-// KDE Plasma may not provide position info
 static HAS_POSITION_ATTR: AtomicBool = AtomicBool::new(false);
-static IS_SERVER_RUNNING: AtomicU8 = AtomicU8::new(0); // 0: uninitialized, 1:true, 2: false
+static IS_SERVER_RUNNING: AtomicU8 = AtomicU8::new(0);
 
 impl PipewireDisplayOffsetCache {
     fn displays_to_key(displays: &Arc<Displays>) -> String {
@@ -77,8 +67,6 @@ pub fn close_session() {
 
 #[inline]
 pub fn is_rdp_session_hold() -> bool {
-    // try_lock: a request waiting for the user holds the slot (no session yet), and so do the short
-    // looks while a session is set up. Busy answers no session rather than wait.
     matches!(RDP_SESSION_INFO.try_lock(), Ok(info) if info.is_some())
 }
 
@@ -86,7 +74,6 @@ pub fn try_close_session() {
     let mut rdp_info = RDP_SESSION_INFO.lock().unwrap();
     let mut close = false;
     if let Some(rdp_info) = &*rdp_info {
-        // If is server running and restore token is supported, there's no need to keep the session.
         if is_server_running() && rdp_info.is_support_restore_token {
             close = true;
         }
@@ -150,7 +137,6 @@ impl Error for GStreamerError {}
 
 #[derive(Clone)]
 pub struct PipeWireCapturable {
-    // connection needs to be kept alive for recording
     dbus_conn: Arc<SyncConnection>,
     fd: OwnedFd,
     path: u64,
@@ -159,8 +145,6 @@ pub struct PipeWireCapturable {
     pub position: (i32, i32),
     pub logical_size: (usize, usize),
     pub physical_size: (usize, usize),
-    // False when `physical_size` is the portal size standing in for a resolution get_res() could
-    // not read.
     physical_size_measured: bool,
 }
 
@@ -171,8 +155,6 @@ impl PipeWireCapturable {
         resolution: Arc<Mutex<Option<(usize, usize)>>>,
         stream: &PwStreamInfo,
     ) -> Self {
-        // alternative to get screen resolution as stream.size is not always correct ex: on fractional scaling
-        // https://github.com/rustdesk/rustdesk/issues/6116#issuecomment-1817724244
         let measured = get_res(Self {
             dbus_conn: conn.clone(),
             fd: fd.clone(),
@@ -269,12 +251,9 @@ pub struct PipeWireRecorder {
     appsink: AppSink,
     width: usize,
     height: usize,
-    saved_raw_data: Vec<u8>, // for faster compare and copy
+    saved_raw_data: Vec<u8>,
 }
 
-// Element creation fails the same way for a plugin that is not installed as for one that is
-// broken, so the tag does not claim which. Only the name travels to the peer -- it is what
-// says which package to look at -- and the factory's own error stays here in the log.
 fn gst_element(name: &str) -> ResultType<gst::Element> {
     gst::ElementFactory::make(name, None).map_err(|e| {
         error!("Failed to create GStreamer element {}: {}", name, e);
@@ -285,7 +264,6 @@ fn gst_element(name: &str) -> ResultType<gst::Element> {
 impl PipeWireRecorder {
     pub fn new(capturable: PipeWireCapturable) -> ResultType<Self> {
         let pipeline = gst::Pipeline::new(None);
-        // Clock waits on stale capture timestamps can exhaust the compositor's buffers.
         pipeline.use_clock(None::<&gst::Clock>);
 
         let src = gst_element("pipewiresrc")?;
@@ -293,16 +271,8 @@ impl PipeWireRecorder {
         src.set_property("path", &format!("{}", capturable.path))?;
         src.set_property("keepalive_time", &1_000.as_raw_fd())?;
 
-        // For some reason pipewire blocks on destruction of AppSink if this is not set to true,
-        // see: https://gitlab.freedesktop.org/pipewire/pipewire/-/issues/982
         src.set_property("always-copy", &true)?;
 
-        // COSMIC/Wayland fix: insert videoconvert between pipewiresrc and appsink.
-        // xdg-desktop-portal-cosmic's modifier negotiation fails when the downstream
-        // format set is too narrow (appsink only accepts BGRx/RGBx), producing
-        // "no more output formats" / not-negotiated (-4). videoconvert accepts any
-        // system-memory video/x-raw format, widening negotiation so the portal can
-        // settle on a format it can deliver via its SHM path.
         let convert = gst_element("videoconvert")?;
 
         let sink = gst_element("appsink")?;
@@ -327,22 +297,13 @@ impl PipeWireRecorder {
         ));
         appsink.set_caps(Some(&caps));
 
-        // [Workaround]
-        // Crash may occur if there are multiple pipelines started at the same time.
-        // `pipeline.get_state()` can significantly reduce the probability of crashes,
-        // but cannot completely resolve this issue.
-        // Adding a short sleep period can also reduce the probability of crashes.
         debug!(
             "[gstreamer] Setting pipeline {} to PLAYING state...",
             capturable.fd.as_raw_fd()
         );
         pipeline.set_state(gst::State::Playing)?;
 
-        // If `is_server_running()` is false, it means using remote_desktop_portal,
-        // which does not use multiple streams, so no need to wait for state change.
         if is_server_running() {
-            // Wait for the state change to actually complete before proceeding.
-            // The 2000ms timeout for pipeline state change was chosen based on empirical testing.
             let state_change = pipeline.get_state(gst::ClockTime::from_mseconds(2000));
             match state_change {
                 (Ok(_), gst::State::Playing, _) => {
@@ -401,7 +362,6 @@ impl Recorder for PipeWireRecorder {
             let mut crop = buf
                 .get_meta::<gstreamer_video::VideoCropMeta>()
                 .map(|m| m.get_rect());
-            // only crop if necessary
             if Some((0, 0, w as u32, h as u32)) == crop {
                 crop = None;
             }
@@ -412,11 +372,7 @@ impl Recorder for PipeWireRecorder {
                 return Ok(PixelProvider::NONE);
             }
             let buf_size = buf.get_size();
-            // BGRx is 4 bytes per pixel
             if buf_size != (w * h * 4) {
-                // for some reason the width and height of the caps do not guarantee correct buffer
-                // size, so ignore those buffers, see:
-                // https://gitlab.freedesktop.org/pipewire/pipewire/-/issues/985
                 trace!(
                     "Size of mapped buffer: {} does NOT match size of capturable {}x{}@BGRx, \
                     dropping it!",
@@ -425,8 +381,6 @@ impl Recorder for PipeWireRecorder {
                     h
                 );
             } else {
-                // Copy region specified by crop into self.buffer_cropped
-                // TODO: Figure out if ffmpeg provides a zero copy alternative
                 if let Some((x_off, y_off, w_crop, h_crop)) = crop {
                     let x_off = x_off as usize;
                     let y_off = y_off as usize;
@@ -434,7 +388,6 @@ impl Recorder for PipeWireRecorder {
                     let h_crop = h_crop as usize;
                     self.buffer_cropped.clear();
                     let data = buf.as_slice();
-                    // BGRx is 4 bytes per pixel
                     self.buffer_cropped.reserve(w_crop * h_crop * 4);
                     for y in y_off..(y_off + h_crop) {
                         let i = 4 * (w * y + x_off);
@@ -479,15 +432,10 @@ impl Drop for PipeWireRecorder {
         if let Err(err) = self.pipeline.set_state(gst::State::Null) {
             warn!("Failed to stop GStreamer pipeline: {}.", err);
         }
-        // Wait for state change to complete to avoid races during PipeWire teardown.
         let _ = self.pipeline.get_state(gst::ClockTime::from_mseconds(2000));
     }
 }
 
-// The portal handshake is four sequential requests whose outcomes arrive as asynchronous
-// `Response` signals, so where and why it failed is known only inside the signal handler.
-// Recording it here, instead of collapsing every outcome into one `failed` flag, is what lets
-// the app side name the real cause rather than guess it from the error text.
 #[derive(Clone, Copy)]
 enum PortalStage {
     CreateSession = 1,
@@ -519,9 +467,6 @@ impl PortalStage {
     }
 }
 
-// `wl-stage:<stage>:<kind>:<detail>`, parsed by `map_err_scrap` on the app side. The detail
-// reaches the user through a `{}` placeholder in a translated string, so it must not bring
-// braces, control characters or unbounded length of its own.
 const STAGE_TAG: &str = "wl-stage:";
 
 fn stage_err(stage: &str, kind: &str, detail: &str) -> String {
@@ -534,8 +479,6 @@ fn stage_err(stage: &str, kind: &str, detail: &str) -> String {
     format!("{}{}:{}:{}", STAGE_TAG, stage, kind, detail.trim())
 }
 
-// The name alone is usually the generic `org.freedesktop.DBus.Error.Failed`; the message is
-// where a backend says what it objected to. This ends up in the log, so carry both.
 fn dbus_stage_err(stage: &str, err: &dbus::Error) -> String {
     let detail = match (err.name(), err.message()) {
         (Some(name), Some(message)) if !name.is_empty() && !message.is_empty() => {
@@ -556,8 +499,6 @@ fn dbus_stage_err(stage: &str, err: &dbus::Error) -> String {
 struct PortalTrace {
     failed: Arc<AtomicBool>,
     reason: Arc<Mutex<Option<String>>>,
-    // The stage whose `Response` we are still waiting for, so the polling loop can tell a
-    // non-interactive step apart from the one that waits for a human.
     waiting_for: Arc<AtomicU8>,
 }
 
@@ -575,7 +516,6 @@ impl PortalTrace {
         self.failed.store(true, Ordering::SeqCst);
     }
 
-    // The first failure is the cause; whatever follows it is a consequence.
     fn record(&self, tag: String) {
         if let Ok(mut reason) = self.reason.lock() {
             if reason.is_none() {
@@ -653,10 +593,6 @@ where
     })
 }
 
-// The request object path a portal method call will use, derived from our unique
-// bus name and the `handle_token` we pass in the call arguments. Knowing it up
-// front lets us subscribe to the `Response` signal *before* making the call.
-// https://flatpak.github.io/xdg-desktop-portal/docs/doc-org.freedesktop.portal.Request.html
 fn get_request_path(
     conn: &SyncConnection,
     handle_token: &str,
@@ -767,7 +703,6 @@ pub fn get_available_cursor_modes() -> Result<u32, dbus::Error> {
     portal.available_cursor_modes()
 }
 
-// mostly inspired by https://gitlab.gnome.org/-/snippets/39
 pub fn request_remote_desktop(
     capture_cursor: bool,
 ) -> ResultType<(
@@ -812,12 +747,6 @@ pub fn request_remote_desktop(
         }
     }
 
-    // The following code may be improved.
-    // https://flatpak.github.io/xdg-desktop-portal/#:~:text=To%20avoid%20a%20race%20condition
-    // To avoid a race condition
-    // between the caller subscribing to the signal after receiving the reply for the method call and the signal getting emitted,
-    // a convention for Request object paths has been established that allows
-    // the caller to subscribe to the signal before making the method call.
     handle_response(
         &conn,
         get_request_path(&conn, create_session_handle_token)
@@ -842,11 +771,9 @@ pub fn request_remote_desktop(
             .map_err(|e| anyhow!(dbus_stage_err("create-session", &e)))?;
     }
 
-    // wait 3 minutes for user interaction
     for _ in 0..1800 {
         conn.process(Duration::from_millis(100))
             .map_err(|e| anyhow!(dbus_stage_err(trace_res.waiting_stage().as_str(), &e)))?;
-        // Once we got a file descriptor we are done!
         if fd_res.lock().unwrap().is_some() {
             break;
         }
@@ -917,14 +844,12 @@ fn on_create_session_response(
 
         let portal = get_portal(c);
         let mut args: PropMap = HashMap::new();
-        // See `is_server_running()` to understand the following code.
         if is_server_running() {
             if is_support_restore_token {
                 let restore_token = config::LocalConfig::get_option(RESTORE_TOKEN_CONF_KEY);
                 if !restore_token.is_empty() {
                     args.insert(RESTORE_TOKEN.to_string(), Variant(Box::new(restore_token)));
                 }
-                // persist_mode may be configured by the user.
                 args.insert("persist_mode".to_string(), Variant(Box::new(2u32)));
             }
             let select_sources_handle_token = "u3";
@@ -932,11 +857,10 @@ fn on_create_session_response(
                 "handle_token".to_string(),
                 Variant(Box::new(select_sources_handle_token.to_string())),
             );
-            // https://flatpak.github.io/xdg-desktop-portal/docs/doc-org.freedesktop.portal.ScreenCast.html
             if is_server_running() {
                 args.insert("multiple".into(), Variant(Box::new(true)));
             }
-            args.insert("types".into(), Variant(Box::new(1u32))); //| 2u32)));
+            args.insert("types".into(), Variant(Box::new(1u32)));
 
             if capture_cursor {
                 get_available_cursor_modes().ok().map(|modes| {
@@ -964,8 +888,6 @@ fn on_create_session_response(
                 .select_sources(ses.clone(), args)
                 .map_err(|e| DBusError(dbus_stage_err("select-sources", &e)))?;
         } else {
-            // TODO: support persist_mode for remote_desktop_portal
-            // https://flatpak.github.io/xdg-desktop-portal/docs/doc-org.freedesktop.portal.RemoteDesktop.html
 
             let select_devices_handle_token = "u2";
             args.insert(
@@ -1016,11 +938,10 @@ fn on_select_devices_response(
             "handle_token".to_string(),
             Variant(Box::new(select_sources_handle_token.to_string())),
         );
-        // https://flatpak.github.io/xdg-desktop-portal/docs/doc-org.freedesktop.portal.ScreenCast.html
         if is_server_running() {
             args.insert("multiple".into(), Variant(Box::new(true)));
         }
-        args.insert("types".into(), Variant(Box::new(1u32))); //| 2u32)));
+        args.insert("types".into(), Variant(Box::new(1u32)));
 
         let session = session.clone();
         trace.waiting(PortalStage::SelectSources);
@@ -1103,7 +1024,6 @@ fn on_start_response(
 ) -> Result<(), Box<dyn Error>> {
     move |r: OrgFreedesktopPortalRequestResponse, c, _| {
         let portal = get_portal(c);
-        // See `is_server_running()` to understand the following code.
         if is_server_running() {
             if is_support_restore_token {
                 if let Some(restore_token) = r.results.get(RESTORE_TOKEN) {
@@ -1122,8 +1042,6 @@ fn on_start_response(
             .lock()
             .unwrap()
             .append(&mut streams_from_response(r));
-        // Past this point the user has granted the request; anything that fails now is the
-        // hand-over of the PipeWire fd, which is a different thing to go looking at.
         trace.waiting(PortalStage::OpenPipeWireRemote);
         fd.clone().lock().unwrap().replace(
             portal
@@ -1177,15 +1095,6 @@ pub fn get_capturables() -> Result<Vec<PipeWireCapturable>, Box<dyn Error>> {
         .collect())
 }
 
-// If `is_server_running()` is true, then `screencast_portal::start` is called.
-// Otherwise, `remote_desktop_portal::start` is called.
-//
-// If `is_server_running()` is true, `--service` process is running,
-// then we can use uinput as the input method.
-// Otherwise, we have to use remote_desktop_portal's input method.
-//
-// `screencast_portal` supports restore_token and persist_mode if the version is greater than or equal to 4.
-// `remote_desktop_portal` does not support restore_token and persist_mode.
 pub(crate) fn is_server_running() -> bool {
     let v = IS_SERVER_RUNNING.load(Ordering::SeqCst);
     if v > 0 {
@@ -1210,11 +1119,6 @@ pub(crate) fn is_server_running() -> bool {
     is_running
 }
 
-// The logical size reported by portal may be different from the size reported by `get_displays()`.
-// So we need to use the workaround here.
-// 1. openSUSE, KDE Plasma
-// 2. Kubuntu 24.04 TLS, after running `sudo apt install plasma-workspace-wayland`
-// Maybe it's a bug, and we can remove this workaround in the future.
 pub fn try_fix_logical_size(shared_displays: &mut Vec<crate::Display>) {
     if !is_server_running() {
         return;
@@ -1234,8 +1138,6 @@ pub fn try_fix_logical_size(shared_displays: &mut Vec<crate::Display>) {
                         if capturable.physical_size.0 != wd.width as usize
                             || capturable.physical_size.1 != wd.height as usize
                         {
-                            // If "Full Workspace" is selected in the portal dialog,
-                            // the physical size reported by portal may not match the display info.
                             debug!(
                             "Physical size of capturable ({:?}) does not match display info: ({:?}) - ({:?}). Skipping logical size fix.",
                             capturable.position,
@@ -1278,7 +1180,6 @@ pub fn fill_displays(
     let rdp_info = match rdp_connection.as_mut() {
         Some(res) => res,
         None => {
-            // Unreachable
             bail!("RDP session info is None when filling display positions.");
         }
     };
@@ -1331,10 +1232,6 @@ pub fn fill_displays(
     Ok(())
 }
 
-// The origin a stream takes when its position names no output of its size. Only a measured size
-// moves a position: when get_res() failed, the size is the portal size, which can be the mode of
-// another output and says less than the position does, whether the portal sent that position or
-// try_fill_positions restored it from its cache.
 fn reconciled_origin(
     position: (i32, i32),
     size: (usize, usize),
@@ -1347,11 +1244,6 @@ fn reconciled_origin(
     corrected_origin(position, size, outputs)
 }
 
-// The origin for a stream whose position names no output of the stream's size (a rotated output
-// counts in either orientation), when exactly one output has that size. xdg-desktop-portal-hyprland reports every stream at (0, 0):
-// with no output there `sort_streams` dropped the stream, and with another output there the
-// stream took its origin and missed `try_fix_logical_size`, so the pointer landed on the wrong
-// output (#15731). With several outputs of that size the position is kept.
 fn corrected_origin(
     position: (i32, i32),
     size: (usize, usize),
@@ -1508,7 +1400,7 @@ fn compare_left_up_corner(w: usize, d1: &[u8], d2: &[u8]) -> bool {
     if d1.len() != d2.len() {
         return false;
     }
-    let bpp = 4; // BGR0/RGB0
+    let bpp = 4;
     let stride = w.saturating_mul(bpp);
     if stride == 0 || d1.len() < stride || d2.len() < stride {
         return false;
@@ -1522,9 +1414,7 @@ fn compare_left_up_corner(w: usize, d1: &[u8], d2: &[u8]) -> bool {
     let roi_h = std::cmp::min(36, h);
     let mut diff_px = 0usize;
     let total_px = roi_w * roi_h;
-    // Minimum number of differing pixels required to consider images different.
     const MIN_DIFF_PIXELS: usize = 8;
-    // Divisor for threshold calculation: allows up to 1/8 of ROI pixels to differ before returning true.
     const DIFF_THRESHOLD_DIVISOR: usize = 8;
     let threshold = std::cmp::max(MIN_DIFF_PIXELS, total_px / DIFF_THRESHOLD_DIVISOR);
 
@@ -1609,8 +1499,6 @@ fn fill_multi_matched_positions_cursor(
     streams: &mut Vec<PwStreamInfo>,
     multi_matched_indices: Vec<usize>,
 ) -> ResultType<()> {
-    // This creates a new remote desktop session for cursor-based position detection.
-    // The session is temporary, used only for disambiguation, and is dropped after detection completes.
     let (conn, fd, streams_with_cursor, _session, _is_support_restore_token) =
         request_remote_desktop(true)?;
     let conn = Arc::new(conn);
@@ -1624,7 +1512,6 @@ fn fill_multi_matched_positions_cursor(
             streams_with_cursor.get(idx),
         ) {
             (Some(crate::Display::WAYLAND(d)), Some(pw_stream), Some(pw_stream_with_cursor)) => {
-                // Check if only one display matches the size
                 let mut match_count = 0;
                 for (i, wd) in displays.displays.iter().enumerate() {
                     if matched_indices.contains(&i) {
@@ -1664,8 +1551,6 @@ fn fill_multi_matched_positions_cursor(
                     continue;
                 }
 
-                // Move the mouse to a neutral position first,
-                // to avoid interference from previous position.
                 mouse_move_to_(&mouse_move_to, get_cursor_pos, 300, 300);
 
                 let mut rec = PipeWireRecorder::new(PipeWireCapturable {
@@ -1679,7 +1564,6 @@ fn fill_multi_matched_positions_cursor(
                     physical_size: (0, 0),
                     physical_size_measured: false,
                 })?;
-                // Take first frame and copy owned buffer to avoid borrow across second capture
                 let (is_bgr, w, first_buf): (bool, usize, Vec<u8>) =
                     match rec.capture(CAPTURE_TIMEOUT_MS) {
                         Ok(PixelProvider::BGR0(w, _, data1)) => (true, w, data1.to_vec()),
@@ -1734,7 +1618,6 @@ fn fill_multi_matched_positions_cursor(
                                 }
                             }
                             Ok(_) => {
-                                // unreachable
                                 error!("Pixel format changed between captures, cannot disambiguate position.");
                             }
                             Err(e) => {
@@ -1766,12 +1649,10 @@ fn sort_streams(
     streams: &mut Vec<PwStreamInfo>,
 ) {
     if streams.is_empty() {
-        // unreachable
         error!("No streams available to sort.");
         return;
     }
 
-    // put the main display first, then the rest by the order of displays
     let mut display_order: Vec<(i32, i32)> = Vec::new();
     if let Some(d) = displays.displays.get(displays.primary) {
         display_order.push((d.x, d.y));
@@ -1784,13 +1665,10 @@ fn sort_streams(
 
     let mut sorted_streams = Vec::new();
     let mut sorted_shared_displays = Vec::new();
-    // Move matching items in order without cloning
     for (x, y) in display_order.into_iter() {
         for i in 0..streams.len() {
             if streams[i].position.0 == x && streams[i].position.1 == y {
                 sorted_streams.push(streams.remove(i));
-                // shared_displays.len() must be equal to streams.len()
-                // But we still check the length to avoid panic
                 if shared_displays.len() > i {
                     sorted_shared_displays.push(shared_displays.remove(i));
                 }
@@ -1821,15 +1699,12 @@ mod tests {
 
     #[test]
     fn a_portal_position_naming_no_output_of_its_size_moves_to_the_only_one() {
-        // 1920x1080 at the origin, 2880x1800 to its right: xdph puts the right one at (0, 0).
         let pair = [output(0, 0, (1920, 1080)), output(1920, 0, (2880, 1800))];
         assert_eq!(
             corrected_origin((0, 0), (2880, 1800), &pair),
             Some((1920, 0))
         );
-        // A real origin is kept.
         assert_eq!(corrected_origin((1920, 0), (2880, 1800), &pair), None);
-        // Nothing starts at the origin (the hyprland layout in #15731).
         let three = [
             output(0, 120, (1920, 1200)),
             output(1920, 0, (3440, 1440)),
@@ -1839,14 +1714,12 @@ mod tests {
             corrected_origin((0, 0), (3440, 1440), &three),
             Some((1920, 0))
         );
-        // Two outputs of that size cannot be told apart: the position is kept.
         let twins = [
             output(0, 0, (2560, 1600)),
             output(2560, 0, (1920, 1080)),
             output(4480, 0, (1920, 1080)),
         ];
         assert_eq!(corrected_origin((0, 0), (1920, 1080), &twins), None);
-        // A portrait panel turned to landscape keeps its position next to a 1920x1080 output.
         let turned = [
             WaylandDisplayInfo {
                 transform: 90,
@@ -1855,8 +1728,6 @@ mod tests {
             output(1920, 0, (1920, 1080)),
         ];
         assert_eq!(corrected_origin((0, 0), (1920, 1080), &turned), None);
-        // A rotated output that try_fill_positions could not match by its mode is found in its
-        // delivered orientation.
         let turned_right = [
             output(0, 0, (2560, 1440)),
             WaylandDisplayInfo {

@@ -30,7 +30,6 @@ pub mod client {
 
     struct LayoutContext {
         locks: (bool, bool),
-        // None for ordinary input; otherwise whether the shortcut holds Shift.
         shortcut_shift: Option<bool>,
     }
 
@@ -43,9 +42,6 @@ pub mod client {
     pub struct UInputKeyboard {
         conn: Connection,
         rt: Runtime,
-        // Ownership is per character. The Linux connection turns character
-        // downs into clicks; overlapping direct-backend holds can release a
-        // generated modifier still needed by another character.
         layout_keys: HashMap<char, LayoutKey>,
     }
 
@@ -105,7 +101,6 @@ pub mod client {
         }
 
         fn send_layout_key_down(&mut self, pressed: &LayoutKey) -> ResultType<()> {
-            // Character dispatch can release Shift before a repeated key-down.
             for keycode in &pressed.modifiers {
                 self.send_raw_key(*keycode, true)?;
             }
@@ -115,7 +110,6 @@ pub mod client {
         fn release_layout_key(&mut self, pressed: &LayoutKey) -> ResultType<()> {
             let mut result = self.send(Data::Keyboard(DataKeyboard::KeyUp(pressed.key)));
             for keycode in pressed.modifiers.iter().rev() {
-                // Attempt every release even if an earlier send failed.
                 result = result.and(self.send_raw_key(*keycode, false));
             }
             result
@@ -128,7 +122,6 @@ pub mod client {
             let mapping = if layout::is_available() {
                 self.layout_context()?.resolve(chr)?
             } else {
-                // Discovery may finish before key-up; retain the legacy key for release.
                 LayoutKey {
                     key: Key::Layout(chr),
                     modifiers: Vec::new(),
@@ -149,8 +142,6 @@ pub mod client {
                 return Ok(());
             }
             let context = self.layout_context()?;
-            // Keep supported text after a mapping failure and report the first error.
-            // Modifier and IPC failures must still stop the sequence immediately.
             let mut result = Ok(());
             for chr in sequence.chars() {
                 let mapping = match context.resolve(chr) {
@@ -213,19 +204,15 @@ pub mod client {
                     error,
                 )))) => bail!("Failed to query uinput key state: {}", error),
                 Ok(Some(resp)) => {
-                    // FATAL error!!!
                     bail!(
                         "FATAL error, wait keyboard result other response: {:?}",
                         &resp
                     );
                 }
                 Ok(None) => {
-                    // FATAL error!!!
-                    // Maybe wait later
                     bail!("FATAL error, wait keyboard result, receive None",);
                 }
                 Err(e) => {
-                    // FATAL error!!!
                     bail!(
                         "FATAL error, wait keyboard result timeout {}, {}",
                         &e,
@@ -249,7 +236,6 @@ pub mod client {
             match self.send_get_key_state(Data::Keyboard(DataKeyboard::GetKeyState(key))) {
                 Ok(state) => state,
                 Err(e) => {
-                    // unreachable!()
                     log::error!("Failed to get key state {}", &e);
                     false
                 }
@@ -266,7 +252,6 @@ pub mod client {
             Self::log_layout_error(&self.layout_key_sequence(sequence));
         }
 
-        // TODO: handle error???
         fn key_down(&mut self, key: Key) -> enigo::ResultType {
             if let Key::Layout(chr) = key {
                 let result = self.layout_key_down(chr);
@@ -313,8 +298,6 @@ pub mod client {
         pub fn send_refresh(&mut self) -> ResultType<()> {
             self.rt
                 .block_on(self.conn.send(&Data::Mouse(DataMouse::Refresh)))?;
-            // Wait for the service to confirm it recreated the device, so a
-            // failed refresh is distinguishable from a good one.
             match self.rt.block_on(self.conn.next_timeout(IPC_REQUEST_TIMEOUT)) {
                 Ok(Some(Data::Empty)) => Ok(()),
                 Ok(Some(resp)) => bail!("unexpected uinput mouse refresh response: {:?}", &resp),
@@ -339,7 +322,6 @@ pub mod client {
         fn mouse_move_relative(&mut self, x: i32, y: i32) {
             allow_err!(self.send(Data::Mouse(DataMouse::MoveRelative(x, y))));
         }
-        // TODO: handle error???
         fn mouse_down(&mut self, button: MouseButton) -> enigo::ResultType {
             allow_err!(self.send(Data::Mouse(DataMouse::Down(button))));
             Ok(())
@@ -421,7 +403,7 @@ pub mod service {
             (enigo::Key::Space, evdev::Key::KEY_SPACE),
             (enigo::Key::Tab, evdev::Key::KEY_TAB),
             (enigo::Key::UpArrow, evdev::Key::KEY_UP),
-            (enigo::Key::Numpad0, evdev::Key::KEY_KP0),  // check if correct?
+            (enigo::Key::Numpad0, evdev::Key::KEY_KP0),
             (enigo::Key::Numpad1, evdev::Key::KEY_KP1),
             (enigo::Key::Numpad2, evdev::Key::KEY_KP2),
             (enigo::Key::Numpad3, evdev::Key::KEY_KP3),
@@ -435,29 +417,23 @@ pub mod service {
             (enigo::Key::Clear, evdev::Key::KEY_CLEAR),
             (enigo::Key::Alt, evdev::Key::KEY_LEFTALT),
             (enigo::Key::Pause, evdev::Key::KEY_PAUSE),
-            (enigo::Key::Kana, evdev::Key::KEY_KATAKANA),  // check if correct?
-            (enigo::Key::Hangul, evdev::Key::KEY_HANGEUL),  // check if correct?
-            // (enigo::Key::Junja, evdev::Key::KEY_JUNJA),     // map?
-            // (enigo::Key::Final, evdev::Key::KEY_FINAL),     // map?
+            (enigo::Key::Kana, evdev::Key::KEY_KATAKANA),
+            (enigo::Key::Hangul, evdev::Key::KEY_HANGEUL),
             (enigo::Key::Hanja, evdev::Key::KEY_HANJA),
-            // (enigo::Key::Kanji, evdev::Key::KEY_KANJI),      // map?
-            // (enigo::Key::Convert, evdev::Key::KEY_CONVERT),
             (enigo::Key::Select, evdev::Key::KEY_SELECT),
             (enigo::Key::Print, evdev::Key::KEY_PRINT),
-            // (enigo::Key::Execute, evdev::Key::KEY_EXECUTE),
             (enigo::Key::Snapshot, evdev::Key::KEY_SYSRQ),
             (enigo::Key::Insert, evdev::Key::KEY_INSERT),
             (enigo::Key::Help, evdev::Key::KEY_HELP),
             (enigo::Key::Sleep, evdev::Key::KEY_SLEEP),
-            // (enigo::Key::Separator, evdev::Key::KEY_SEPARATOR),
             (enigo::Key::Scroll, evdev::Key::KEY_SCROLLLOCK),
             (enigo::Key::NumLock, evdev::Key::KEY_NUMLOCK),
             (enigo::Key::RWin, evdev::Key::KEY_RIGHTMETA),
-            (enigo::Key::Apps, evdev::Key::KEY_COMPOSE),    // it's a little strange that the key is mapped to KEY_COMPOSE, not KEY_MENU
+            (enigo::Key::Apps, evdev::Key::KEY_COMPOSE),
             (enigo::Key::Multiply, evdev::Key::KEY_KPASTERISK),
             (enigo::Key::Add, evdev::Key::KEY_KPPLUS),
             (enigo::Key::Subtract, evdev::Key::KEY_KPMINUS),
-            (enigo::Key::Decimal, evdev::Key::KEY_KPCOMMA),   // KEY_KPDOT and KEY_KPCOMMA are exchanged?
+            (enigo::Key::Decimal, evdev::Key::KEY_KPCOMMA),
             (enigo::Key::Divide, evdev::Key::KEY_KPSLASH),
             (enigo::Key::Equals, evdev::Key::KEY_KPEQUAL),
             (enigo::Key::NumpadEnter, evdev::Key::KEY_KPENTER),
@@ -515,11 +491,8 @@ pub mod service {
                 ('/', (evdev::Key::KEY_SLASH, false)),
                 (';', (evdev::Key::KEY_SEMICOLON, false)),
                 ('\'', (evdev::Key::KEY_APOSTROPHE, false)),
-                // Space is intentionally in both KEY_MAP_LAYOUT (char-to-evdev for text input)
-                // and KEY_MAP (Key::Space for key events). Both maps serve different lookup paths.
                 (' ', (evdev::Key::KEY_SPACE, false)),
 
-                // Shift + key
                 ('A', (evdev::Key::KEY_A, true)),
                 ('B', (evdev::Key::KEY_B, true)),
                 ('C', (evdev::Key::KEY_C, true)),
@@ -569,15 +542,9 @@ pub mod service {
                 ('"', (evdev::Key::KEY_APOSTROPHE, true)),
             ]);
 
-        // ((minx, maxx), (miny, maxy))
         static ref RESOLUTION: Mutex<((i32, i32), (i32, i32))> = Mutex::new(((0, 0), (0, 0)));
     }
 
-    /// Input text on Wayland using layout-independent methods.
-    /// ASCII chars (0x20-0x7E): Portal keysym or uinput fallback
-    /// Non-ASCII chars: skipped — this runs in the --service (root) process where clipboard
-    /// operations are unreliable (typically no user session environment).
-    /// Non-ASCII input is normally handled by the --server process via input_text_via_clipboard_server.
     fn input_text_wayland(text: &str, keyboard: &mut VirtualDevice) {
         let portal_info = {
             let session_info = RDP_SESSION_INFO.lock().unwrap();
@@ -589,7 +556,6 @@ pub mod service {
         for c in text.chars() {
             let keysym = char_to_keysym(c);
             if can_input_via_keysym(c, keysym) {
-                // Try Portal first — down+up on the same channel
                 if let Some((ref conn, ref session)) = portal_info {
                     let portal = scrap::wayland::pipewire::get_portal(conn);
                     if portal
@@ -608,7 +574,6 @@ pub mod service {
                         continue;
                     }
                 }
-                // Portal unavailable or failed, fallback to uinput (down+up together)
                 let key = enigo::Key::Layout(c);
                 if let Ok((evdev_key, is_shift)) = map_key(&key) {
                     let mut shift_pressed = false;
@@ -636,9 +601,6 @@ pub mod service {
         }
     }
 
-    /// Send a single key down or up event for a Layout character.
-    /// Used by KeyDown/KeyUp to maintain correct press/release semantics.
-    /// `down`: true for key press, false for key release.
     fn input_char_wayland_key_event(chr: char, down: bool, keyboard: &mut VirtualDevice) {
         let keysym = char_to_keysym(chr);
         let portal_state: u32 = if down { 1 } else { 0 };
@@ -659,11 +621,9 @@ pub mod service {
                     return;
                 }
             }
-            // Portal unavailable or failed, fallback to uinput
             let key = enigo::Key::Layout(chr);
             if let Ok((evdev_key, is_shift)) = map_key(&key) {
                 if down {
-                    // Press: Shift↓ (if needed) → Key↓
                     if is_shift {
                         let shift_down =
                             InputEvent::new(EventType::KEY, evdev::Key::KEY_LEFTSHIFT.code(), 1);
@@ -674,7 +634,6 @@ pub mod service {
                     let key_down = InputEvent::new(EventType::KEY, evdev_key.code(), 1);
                     allow_err!(keyboard.emit(&[key_down]));
                 } else {
-                    // Release: Key↑ → Shift↑ (if needed)
                     let key_up = InputEvent::new(EventType::KEY, evdev_key.code(), 0);
                     allow_err!(keyboard.emit(&[key_up]));
                     if is_shift {
@@ -687,8 +646,6 @@ pub mod service {
                 }
             }
         } else {
-            // Non-ASCII: no reliable down/up semantics available.
-            // Clipboard paste is atomic and handled elsewhere.
             log::debug!(
                 "Skipping non-ASCII character key {} in uinput service",
                 if down { "down" } else { "up" }
@@ -696,34 +653,25 @@ pub mod service {
         }
     }
 
-    /// Check if character can be input via keysym (ASCII printable with valid keysym).
     #[inline]
     pub(crate) fn can_input_via_keysym(c: char, keysym: i32) -> bool {
-        // ASCII printable: 0x20 (space) to 0x7E (tilde)
         (c as u32 >= 0x20 && c as u32 <= 0x7E) && keysym != 0
     }
 
-    /// Convert a Unicode character to X11 keysym.
     pub(crate) fn char_to_keysym(c: char) -> i32 {
         let codepoint = c as u32;
         if codepoint == 0 {
-            // Null character has no keysym
             0
         } else if (0x20..=0x7E).contains(&codepoint) {
-            // ASCII printable (0x20-0x7E): keysym == Unicode codepoint
             codepoint as i32
         } else if (0xA0..=0xFF).contains(&codepoint) {
-            // Latin-1 supplement (0xA0-0xFF): keysym == Unicode codepoint (per X11 keysym spec)
             codepoint as i32
         } else {
-            // Everything else (control chars 0x01-0x1F, DEL 0x7F, and all other non-ASCII Unicode):
-            // keysym = 0x01000000 | codepoint (X11 Unicode keysym encoding)
             (0x0100_0000 | codepoint) as i32
         }
     }
 
     fn create_uinput_keyboard() -> ResultType<VirtualDevice> {
-        // TODO: ensure keys here
         let mut keys = AttributeSet::<evdev::Key>::new();
         for i in evdev::Key::KEY_ESC.code()..(evdev::Key::BTN_TRIGGER_HAPPY40.code() + 1) {
             let key = evdev::Key::new(i);
@@ -738,7 +686,7 @@ pub mod service {
         let mut miscs = AttributeSet::<evdev::MiscType>::new();
         miscs.insert(evdev::MiscType::MSC_SCAN);
         let keyboard = VirtualDeviceBuilder::new()?
-            .name("RustDesk UInput Keyboard")
+            .name("SupportDesk UInput Keyboard")
             .with_keys(&keys)?
             .with_leds(&leds)?
             .with_miscs(&miscs)?
@@ -758,12 +706,6 @@ pub mod service {
                         return Ok((k.clone(), is_shift.clone()));
                     }
                 }
-                // enigo::Key::Raw(c) => {
-                //     let k = evdev::Key::new(c);
-                //     if !format!("{:?}", &k).contains("unknown key") {
-                //         return Ok(k.clone());
-                //     }
-                // }
                 _ => {}
             }
         }
@@ -789,9 +731,6 @@ pub mod service {
         log::trace!("handle_keyboard received: {}", data_desc);
         match data {
             DataKeyboard::Sequence(seq) => {
-                // Normally handled by --server process (input_text_via_clipboard_server).
-                // Fallback: input_text_wayland handles ASCII via keysym/uinput;
-                // non-ASCII will be skipped (no clipboard access in --service process).
                 if !seq.is_empty() {
                     input_text_wayland(seq, keyboard);
                 }
@@ -854,7 +793,6 @@ pub mod service {
                     match keyboard.get_led_state() {
                         Ok(leds) => leds.contains(evdev::LedType::LED_CAPSL),
                         Err(_e) => {
-                            // log::debug!("Failed to get led state {}", &_e);
                             false
                         }
                     }
@@ -862,7 +800,6 @@ pub mod service {
                     match keyboard.get_led_state() {
                         Ok(leds) => leds.contains(evdev::LedType::LED_NUML),
                         Err(_e) => {
-                            // log::debug!("Failed to get led state {}", &_e);
                             false
                         }
                     }
@@ -897,7 +834,6 @@ pub mod service {
                                 "Failed to query uinput layout modifier state: {}",
                                 error
                             );
-                            // Unknown modifier state must not be treated as released.
                             ipc_send_data(
                                 stream,
                                 &Data::KeyboardResponse(
@@ -908,7 +844,6 @@ pub mod service {
                             return;
                         }
                         Err(_e) => {
-                            // log::debug!("Failed to get key state: {}", &_e);
                             false
                         }
                     }
@@ -965,7 +900,6 @@ pub mod service {
                 allow_err!(mouse.click_button(&btn))
             }
             DataMouse::ScrollX(_length) => {
-                // TODO: not supported for now
             }
             DataMouse::ScrollY(length) => {
                 let mut length = *length;
@@ -985,7 +919,6 @@ pub mod service {
                 }
             }
             DataMouse::Refresh => {
-                // unreachable!()
             }
         }
     }
@@ -1077,12 +1010,9 @@ pub mod service {
                                             match mouce::UInputMouseManager::new(rng_x, rng_y) {
                                                 Ok(m) => {
                                                     mouse = m;
-                                                    // Ack: device adopted the new range.
                                                     allow_err!(stream.send(&Data::Empty).await);
                                                 }
                                                 Err(e) => {
-                                                    // Keep the current device; withhold the ack
-                                                    // so the client times out and retries.
                                                     log::error!(
                                                         "Failed to recreate uinput mouse, keeping current: {}",
                                                         e
@@ -1112,7 +1042,6 @@ pub mod service {
                     res = stream.next() => {
                         match res {
                             Err(_err) => {
-                                // log::info!("UInput controller ipc connection closed: {}", err);
                                 break;
                             }
                             Ok(Some(data)) => {
@@ -1169,7 +1098,6 @@ pub mod service {
         true
     }
 
-    /// Start uinput service.
     async fn start_service<F: FnOnce(ipc::Connection) + Copy>(postfix: &str, handler: F) {
         match new_listener(postfix).await {
             Ok(mut incoming) => {
@@ -1195,21 +1123,18 @@ pub mod service {
         }
     }
 
-    /// Start uinput keyboard service.
     #[tokio::main(flavor = "current_thread")]
     pub async fn start_service_keyboard() {
         log::info!("start uinput keyboard service");
         start_service(IPC_POSTFIX_KEYBOARD, spawn_keyboard_handler).await;
     }
 
-    /// Start uinput mouse service.
     #[tokio::main(flavor = "current_thread")]
     pub async fn start_service_mouse() {
         log::info!("start uinput mouse service");
         start_service(IPC_POSTFIX_MOUSE, spawn_mouse_handler).await;
     }
 
-    /// Start uinput mouse service.
     #[tokio::main(flavor = "current_thread")]
     pub async fn start_service_control() {
         log::info!("start uinput control service");
@@ -1227,7 +1152,6 @@ pub mod service {
     }
 }
 
-// https://github.com/emrebicer/mouce
 mod mouce {
     use std::{
         fs::File,
@@ -1243,7 +1167,6 @@ mod mouce {
 
     pub const O_NONBLOCK: c_int = 2048;
 
-    /// ioctl and uinput definitions
     const UI_ABS_SETUP: c_ulong = 1075598596;
     const UI_SET_EVBIT: c_ulong = 1074025828;
     const UI_SET_KEYBIT: c_ulong = 1074025829;
@@ -1272,15 +1195,8 @@ mod mouce {
     pub const BTN_TASK: c_int = 0x117;
     const SYN_REPORT: c_int = 0x00;
     const EV_SYN: c_int = 0x00;
-    // libinput's evdev_tag_external_mouse() tags any BUS_USB/BUS_BLUETOOTH
-    // pointer as an external mouse, which makes desktop environments'
-    // "disable touchpad when an external mouse is present" setting suspend
-    // the real touchpad whenever this virtual device is created, even
-    // though nothing is physically plugged in. BUS_VIRTUAL correctly
-    // identifies this as the software-only device it is.
     const BUS_VIRTUAL: c_ushort = 0x06;
 
-    /// uinput types
     #[repr(C)]
     struct UInputSetup {
         id: InputId,
@@ -1367,13 +1283,11 @@ mod mouce {
             };
             let fd = manager.uinput_file.as_raw_fd();
             unsafe {
-                // For press events (also needed for mouse movement)
                 ioctl(fd, UI_SET_EVBIT, EV_KEY);
                 ioctl(fd, UI_SET_KEYBIT, BTN_LEFT);
                 ioctl(fd, UI_SET_KEYBIT, BTN_RIGHT);
                 ioctl(fd, UI_SET_KEYBIT, BTN_MIDDLE);
 
-                // For mouse movement
                 ioctl(fd, UI_SET_EVBIT, EV_ABS);
                 ioctl(fd, UI_SET_ABSBIT, ABS_X);
                 ioctl(
@@ -1418,7 +1332,6 @@ mod mouce {
             let mut usetup = UInputSetup {
                 id: InputId {
                     bustype: BUS_VIRTUAL,
-                    // Random vendor and product
                     vendor: 0x2222,
                     product: 0x3333,
                     version: 0,
@@ -1432,7 +1345,6 @@ mod mouce {
                 .map(|ch| ch as c_char)
                 .collect();
 
-            // Fill the rest of the name buffer with empty chars
             for _ in 0..UINPUT_MAX_NAME_SIZE - device_bytes.len() {
                 device_bytes.push('\0' as c_char);
             }
@@ -1444,16 +1356,11 @@ mod mouce {
                 ioctl(fd, UI_DEV_CREATE);
             }
 
-            // On UI_DEV_CREATE the kernel will create the device node for this
-            // device. We are inserting a pause here so that userspace has time
-            // to detect, initialize the new device, and can start listening to
-            // the event, otherwise it will not notice the event we are about to send.
             thread::sleep(Duration::from_millis(300));
 
             Ok(manager)
         }
 
-        /// Write the given event to the uinput file
         fn emit(&self, r#type: c_int, code: c_int, value: c_int) -> Result<()> {
             let mut event = InputEvent {
                 time: TimeVal {
@@ -1480,28 +1387,13 @@ mod mouce {
             Ok(())
         }
 
-        /// Syncronize the device
         fn syncronize(&self) -> Result<()> {
             self.emit(EV_SYN, SYN_REPORT, 0)?;
-            // Give uinput some time to update the mouse location,
-            // otherwise it fails to move the mouse on release mode
-            // A delay of 1 milliseconds seems to be enough for it
             thread::sleep(Duration::from_millis(1));
             Ok(())
         }
 
-        /// Move the mouse relative to the current position
         fn move_relative_(&self, x: i32, y: i32) -> Result<()> {
-            // uinput does not move the mouse in pixels but uses `units`. I couldn't
-            // find information regarding to this uinput `unit`, but according to
-            // my findings 1 unit corresponds to exactly 2 pixels.
-            //
-            // To achieve the expected behavior; divide the parameters by 2
-            //
-            // This seems like there is a bug in this crate, but the
-            // behavior is the same on other projects that make use of
-            // uinput. e.g. `ydotool`. When you try to move your mouse,
-            // it will move 2x further pixels
             self.emit(EV_REL, REL_X as c_int, (x as f32 / 2.).ceil() as c_int)?;
             self.emit(EV_REL, REL_Y as c_int, (y as f32 / 2.).ceil() as c_int)?;
             self.syncronize()
@@ -1521,13 +1413,6 @@ mod mouce {
         }
 
         pub fn move_to(&self, x: usize, y: usize) -> Result<()> {
-            // // For some reason, absolute mouse move events are not working on uinput
-            // // (as I understand those events are intended for touch events)
-            // //
-            // // As a work around solution; first set the mouse to top left, then
-            // // call relative move function to simulate an absolute move event
-            //self.move_relative(i32::MIN, i32::MIN)?;
-            //self.move_relative(x as i32, y as i32)
 
             self.emit(EV_ABS, ABS_X as c_int, x as c_int)?;
             self.emit(EV_ABS, ABS_Y as c_int, y as c_int)?;
@@ -1569,7 +1454,6 @@ mod mouce {
         fn drop(&mut self) {
             let fd = self.uinput_file.as_raw_fd();
             unsafe {
-                // Destroy the device, the file is closed automatically by the File module
                 ioctl(fd, UI_DEV_DESTROY as c_ulong);
             }
         }

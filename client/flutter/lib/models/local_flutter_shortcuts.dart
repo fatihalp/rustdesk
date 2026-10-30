@@ -7,14 +7,7 @@ import '../common/widgets/keyboard_shortcuts/shortcut_constants.dart';
 
 class LocalFlutterShortcutDispatcher {
   final void Function(String) onTriggered;
-  // Keys whose press fired a shortcut and whose release has not arrived yet.
-  // Ownership is physical: it is shared by every session, because a shortcut
-  // can switch focus or close its own session before the key is released, and
-  // it is never dropped with a session. A key whose release is missed heals
-  // itself: its next press is consumed as a repeat and that release removes it.
   static final _firedKeys = <PhysicalKeyboardKey>{};
-  // Actions waiting for the release of the key that fired them, with the
-  // session that fired them. See [kShortcutActionsRunOnKeyUp].
   static final _keyUpActions =
       <PhysicalKeyboardKey, (LocalFlutterShortcutDispatcher, String)>{};
   static final _clipboardModifierReleases =
@@ -27,8 +20,6 @@ class LocalFlutterShortcutDispatcher {
 
   LocalFlutterShortcutDispatcher({required this.onTriggered});
 
-  /// Drops this session's pending actions and modifier replay. Fired keys
-  /// stay owned until their release, whichever session receives it.
   void clear() {
     _keyUpActions.removeWhere((_, pending) => identical(pending.$1, this));
     _clipboardModifierReleases
@@ -91,7 +82,6 @@ class LocalFlutterShortcutDispatcher {
   }
 
   bool _isModifier(PhysicalKeyboardKey key) {
-    // HID keyboard modifier usages are contiguous.
     return key.usbHidUsage >= PhysicalKeyboardKey.controlLeft.usbHidUsage &&
         key.usbHidUsage <= PhysicalKeyboardKey.metaRight.usbHidUsage;
   }
@@ -145,8 +135,6 @@ class LocalFlutterShortcutDispatcher {
       }
       return true;
     }
-    // Safari can omit the previous Cmd-held keyup. A fresh browser keydown
-    // starts a new press; KeyRepeatEvent must still belong to the old chord.
     if (kIsWeb && defaultTargetPlatform == TargetPlatform.macOS && down) {
       _firedKeys.remove(key);
     }
@@ -156,9 +144,6 @@ class LocalFlutterShortcutDispatcher {
     if (action == null) return false;
     _firedKeys.add(key);
     if (viewOnly) _viewOnlyShortcutPending = true;
-    // macOS browsers can omit letter keyups while Cmd is held. Like the JS
-    // input source, dispatch on keydown there; remote cleanup still runs first.
-    // Web clipboard reads also need the key-down's browser user activation.
     final runOnKeyUp =
         !(kIsWeb && defaultTargetPlatform == TargetPlatform.macOS) &&
             (kShortcutActionsRunOnKeyUp.contains(action) ||
@@ -171,7 +156,6 @@ class LocalFlutterShortcutDispatcher {
     if (runOnKeyUp &&
         action == kShortcutActionSendClipboardKeystrokes &&
         releaseModifiers != null) {
-      // The release can precede completion of the asynchronous FFI calls.
       final release = Future<void>.sync(releaseModifiers);
       _clipboardModifierReleases[key] = (this, release);
       unawaited(_trigger(null, () => release));
@@ -181,8 +165,6 @@ class LocalFlutterShortcutDispatcher {
     return true;
   }
 
-  /// Releases the remote modifiers, then runs [action] unless it is null or
-  /// this session was cleared meanwhile.
   Future<void> _trigger(
       String? action, Future<void> Function()? releaseModifiers) async {
     final generation = _generation;
@@ -197,8 +179,6 @@ class LocalFlutterShortcutDispatcher {
               kShortcutActionsRunOnKeyUp.contains(action) ||
               (!kIsWeb && action == kShortcutActionSendClipboardKeystrokes)) &&
           _forwardedKeyReleases.isNotEmpty) {
-        // Focus changes and view-only can keep physical keyups from the peer.
-        // Mode changes can encode later keyups differently from their keydowns.
         final releases = _forwardedKeyReleases.values.toList();
         _forwardedKeyReleases.clear();
         await Future.wait(releases.map((release) => Future<void>.sync(release)));

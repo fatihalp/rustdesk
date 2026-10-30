@@ -19,8 +19,6 @@ static MISSING_LOGICAL_SIZE_WARNED: std::sync::atomic::AtomicBool =
 
 const COMMAND_TIMEOUT: Duration = Duration::from_millis(1000);
 
-// drm builds only: an unnamed-endpoint failure there forks the probe child, and the pollers
-// turn every few hundred milliseconds. Every other failure is one cheap in-process error.
 #[cfg(feature = "drm")]
 const FAILED_LOOKUP_BACKOFF: Duration = Duration::from_secs(5);
 
@@ -36,10 +34,6 @@ pub struct Displays {
     pub displays: Vec<WaylandDisplayInfo>,
 }
 
-// We need this helper to run commands with a timeout, as some commands may hang.
-// `kscreen-doctor -o` is known to hang when:
-// 1. On Archlinux, Both GNOME and KDE Plasma are installed.
-// 2. Run this command in a GNOME session.
 fn run_with_timeout(
     program: &str,
     args: &[&str],
@@ -83,10 +77,6 @@ fn run_with_timeout(
     }
 }
 
-// There are some limitations with xrandr method:
-// 1. It only works when XWayland is running.
-// 2. The distro may not have xrandr installed by default.
-// 3. xrandr may not report "primary" in its output. eg. openSUSE Leap 15.6 KDE Plasma.
 fn try_xrandr_primary() -> Option<String> {
     let output = Command::new("xrandr").output().ok()?;
     if !output.status.success() {
@@ -121,17 +111,11 @@ fn try_kscreen_primary() -> Option<String> {
 
     let text = String::from_utf8_lossy(&output.stdout);
 
-    // Remove ANSI color codes
     let re_ansi = Regex::new(r"\x1b\[[0-9;]*m").ok()?;
     let clean_text = re_ansi.replace_all(&text, "");
 
-    // Split the text into blocks, each starting with "Output:".
-    // The first element of the split will be empty, so we skip it.
     for block in clean_text.split("Output:").skip(1) {
-        // Check if this block describes the primary monitor.
         if block.contains("priority 1") {
-            // The monitor name is the second piece of text in the block, after the ID.
-            // e.g., " 1 eDP-1 enabled..." -> "eDP-1"
             if let Some(name) = block.split_whitespace().nth(1) {
                 return Some(name.to_string());
             }
@@ -164,10 +148,6 @@ fn try_gdbus_primary() -> Option<String> {
 
     let text = String::from_utf8_lossy(&output.stdout);
 
-    // Match logical monitor entries with primary=true
-    // Pattern: (x, y, scale, transform, true, [('connector-name', ...), ...], ...)
-    // Use regex to find entries where 5th field is true, then extract connector name
-    // Example matched text: "(0, 0, 1.5, 0, true, [('HDMI-1', 'MHH', 'Monitor', '0x00000000')], ...)"
     let re = Regex::new(r"\([^()]*,\s*true,\s*\[\('([^']+)'").ok()?;
 
     if let Some(captures) = re.captures(&text) {
@@ -196,8 +176,6 @@ fn backed_off() -> bool {
     !lookup_allowed(failed_at, Instant::now())
 }
 
-// Mirrors the probe module's gate, latch included: connecting consumes WAYLAND_SOCKET, so a
-// once-named endpoint must stay named for the life of the process.
 #[cfg(feature = "drm")]
 fn endpoint_named() -> bool {
     use std::sync::atomic::{AtomicBool, Ordering};
@@ -211,14 +189,10 @@ fn endpoint_named() -> bool {
     WAS_NAMED.load(Ordering::Acquire)
 }
 
-// Enumerates and keeps the failure stamp current. Suppresses nothing itself: one-shot callers
-// (session init, pipewire) must always get a fresh read, or a transient failure latches.
 fn enumerate_displays() -> hbb_common::ResultType<Vec<WaylandDisplayInfo>> {
-    // Read before connecting, which consumes WAYLAND_SOCKET.
     #[cfg(feature = "drm")]
     let named = endpoint_named();
     let probed = get_wayland_displays();
-    // Only the failure that would fork stamps; a named endpoint fails cheaply in-process.
     #[cfg(feature = "drm")]
     {
         *LAST_FAILED_LOOKUP.lock().unwrap() = (probed.is_err() && !named).then(Instant::now);
@@ -233,15 +207,11 @@ fn enumerate_displays() -> hbb_common::ResultType<Vec<WaylandDisplayInfo>> {
     probed
 }
 
-// True when a lookup now could neither hit the cache nor probe. Pollers skip their turn on
-// it and keep their last published state; one-shot callers must not consult it.
 #[cfg(feature = "drm")]
 pub fn wayland_lookup_suppressed() -> bool {
     DISPLAYS.lock().unwrap().is_none() && backed_off()
 }
 
-// Whether any failure stamp exists, expired or not: pollers use it to tell a first failure
-// from one that has already persisted across a backoff.
 #[cfg(feature = "drm")]
 pub fn wayland_failure_stamped() -> bool {
     LAST_FAILED_LOOKUP.lock().unwrap().is_some()
@@ -292,20 +262,11 @@ pub fn get_displays() -> Arc<Displays> {
 #[inline]
 pub fn clear_wayland_displays_cache() {
     let _ = DISPLAYS.lock().unwrap().take();
-    // The failure stamp survives on purpose: it describes the seat, not the cache, and the
-    // capturer rebuild loop clears about once a second.
 }
 
-// Bumped ONLY by the layout-drift edge in display_service (its single owner), never by cache
-// clears: session inits and hotplug workers clear the cache too, and a bump there tears down
-// every OTHER live capturer on a multi-display session. A capturer records this at build and
-// treats a later bump as "the layout changed under me, rebuild" — the only trigger a rotation
-// has, since it changes neither the CRTC mode nor the framebuffer size (rustdesk#15886).
 #[cfg(feature = "drm")]
 static SNAPSHOT_GENERATION: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
 
-/// Whether no snapshot has been cached: the signature of an enumeration that failed at session
-/// build (an `Err` is deliberately not cached), as opposed to a session that started healthy.
 #[cfg(feature = "drm")]
 pub fn wayland_snapshot_missing() -> bool {
     DISPLAYS.lock().unwrap().is_none()
@@ -321,15 +282,11 @@ pub fn wayland_snapshot_generation() -> u64 {
     SNAPSHOT_GENERATION.load(std::sync::atomic::Ordering::Acquire)
 }
 
-// Return (min_x, max_x, min_y, max_y)
 pub fn get_desktop_rect_for_uinput() -> Option<(i32, i32, i32, i32)> {
     let wayland_displays = get_displays();
     desktop_rect_of(&wayland_displays.displays)
 }
 
-// The desktop rect and per-display logical rects, read live from the compositor in a single
-// roundtrip (drm builds may skip a turn during the failure backoff). Skips the displays cache
-// and the primary-monitor detection, cheap enough to poll. rustdesk/rustdesk#15601
 pub fn get_layout_for_uinput_live() -> Option<((i32, i32, i32, i32), Vec<DisplayRect>)> {
     #[cfg(feature = "drm")]
     if backed_off() {
@@ -352,8 +309,6 @@ fn desktop_rect_of(displays: &[WaylandDisplayInfo]) -> Option<(i32, i32, i32, i3
         return None;
     }
 
-    // For compatibility, if only one display, we use the physical size for `uinput`.
-    // Otherwise, we use the logical size for `uinput`.
     if displays.len() == 1 {
         let d = &displays[0];
         let (w, h) = oriented_physical(d);
@@ -372,11 +327,6 @@ fn desktop_rect_of(displays: &[WaylandDisplayInfo]) -> Option<(i32, i32, i32, i3
         } else if d.transform == 90 || d.transform == 270 {
             oriented_physical(d)
         } else {
-            // When `logical_size` is None, we cannot obtain the correct desktop rectangle.
-            // This may occur if the Wayland compositor does not provide logical size information,
-            // or if display information is incomplete. We fall back to physical size, which provides
-            // usable dimensions, but may not always be correct depending on compositor behavior.
-            // Warn only once, the live path polls this while a session is active.
             if !MISSING_LOGICAL_SIZE_WARNED.swap(true, std::sync::atomic::Ordering::Relaxed) {
                 warn!(
                     "Display at ({}, {}) is missing logical_size; falling back to physical size ({}, {}).",
@@ -391,9 +341,6 @@ fn desktop_rect_of(displays: &[WaylandDisplayInfo]) -> Option<(i32, i32, i32, i3
     Some((min_x, max_x, min_y, max_y))
 }
 
-/// One display's logical rectangle in the desktop coordinate space the client uses:
-/// logical origin plus logical size, falling back to physical size when the compositor
-/// reports no logical size (matching `desktop_rect_of`).
 #[derive(Clone, Debug, PartialEq)]
 pub struct DisplayRect {
     pub name: String,
@@ -401,13 +348,9 @@ pub struct DisplayRect {
     pub y: i32,
     pub w: i32,
     pub h: i32,
-    // Carried so the drift comparison sees 0<->180 and 90<->270 flips, whose rects are
-    // otherwise identical; the remap itself matches by name and containment, never by this.
     pub transform: i32,
 }
 
-/// Physical size in delivered orientation: a 90/270 output scans out WxH but is captured,
-/// advertised and pointed at as HxW.
 fn oriented_physical(d: &WaylandDisplayInfo) -> (i32, i32) {
     if d.transform == 90 || d.transform == 270 {
         (d.height, d.width)
@@ -416,16 +359,11 @@ fn oriented_physical(d: &WaylandDisplayInfo) -> (i32, i32) {
     }
 }
 
-/// The logical rectangles of a display list, for a caller that already has the list.
 pub fn logical_rects_of_displays(displays: &[WaylandDisplayInfo]) -> Vec<DisplayRect> {
     logical_rects_of(displays)
 }
 
 fn logical_rects_of(displays: &[WaylandDisplayInfo]) -> Vec<DisplayRect> {
-    // Match `desktop_rect_of`: a single display uses its physical size (its scale is
-    // reported as 1.0 to the client), multiple displays use logical size. This keeps a
-    // single display a no-op for the remap (its origin never shifts) and keeps the rects
-    // in the same coordinate space the client's coordinates are expressed in.
     let single = displays.len() == 1;
     displays
         .iter()
@@ -447,25 +385,10 @@ fn logical_rects_of(displays: &[WaylandDisplayInfo]) -> Vec<DisplayRect> {
         .collect()
 }
 
-// Per-display logical rects from the cached init snapshot. The client's injected
-// coordinates are `local + origin` in this layout, so it is the baseline to map from.
 pub fn get_display_rects_for_uinput() -> Vec<DisplayRect> {
     logical_rects_of(&get_displays().displays)
 }
 
-/// Remap an injected coordinate from the layout the client still believes in
-/// (`baseline`, captured at session init) to the current compositor layout (`live`).
-///
-/// A single-display client sends whole-desktop coordinates: `local + baseline_origin[d]`
-/// for whichever display `d` it is following. If that display's origin or logical size
-/// has since changed (e.g. another monitor was rescaled, shifting this one), the
-/// coordinate lands offset. We find the baseline display the point falls in, then map
-/// the point into the same display's live rectangle, matched by connector name (or, when
-/// the compositor reports no names, by index while the display count is unchanged).
-///
-/// Returns the input unchanged when the point is outside every baseline display or the
-/// matched display is gone, so a failed match never moves the cursor further off than
-/// leaving it alone. https://github.com/rustdesk/rustdesk/issues/15601
 pub fn remap_to_live_layout(
     x: i32,
     y: i32,
@@ -480,9 +403,6 @@ pub fn remap_to_live_layout(
         return (x, y);
     };
     let matched = if b.name.is_empty() {
-        // Nameless compositor: index-match, but only while the count is unchanged. A
-        // named display that is simply gone from the live layout must fall through to
-        // "unchanged" below, not get index-matched to whatever now sits at its index.
         if baseline.len() == live.len() {
             live.get(bi)
         } else {
@@ -494,12 +414,6 @@ pub fn remap_to_live_layout(
     let Some(l) = matched else {
         return (x, y);
     };
-    // Map the point into the live rectangle, preserving position within the display so a
-    // scale change on the followed display itself is corrected too, not only a shift.
-    // Scale by (extent - 1) so both endpoints land exactly: the client clamps its
-    // coordinate to `[origin, origin + w - 1]`, and mapping that span to the live span's
-    // `[0, w' - 1]` keeps the far edge reachable (hot corners) in both directions, and
-    // stays an exact shift when the size is unchanged.
     let nx = map_axis(x, b.x, b.w, l.x, l.w);
     let ny = map_axis(y, b.y, b.h, l.y, l.h);
     (nx, ny)
@@ -543,7 +457,6 @@ mod tests {
 
     #[test]
     fn test_desktop_rect_multi_display_uses_logical_size() {
-        // Laptop panel at 155% below two stacked externals at 100%.
         let displays = [
             display(0, 718, 2880, 1800, Some((1859, 1162))),
             display(1859, 0, 1920, 1080, Some((1920, 1080))),
@@ -554,8 +467,6 @@ mod tests {
 
     #[test]
     fn a_single_rotated_display_swaps_the_uinput_rect() {
-        // Review finding 1 on rustdesk#15889: the single-display branch served the unrotated
-        // mode, so the pointer could not reach ~44% of a portrait screen.
         let mut d = display(0, 0, 1920, 1080, None);
         d.transform = 90;
         assert_eq!(desktop_rect_of(&[d.clone()]), Some((0, 1080, 0, 1920)));
@@ -574,11 +485,6 @@ mod tests {
         }
     }
 
-    // The reported failure: connect to the second display, rescale the primary.
-    // Baseline: two 2560-wide displays side by side, both at 100%.
-    // Live: the primary (DP-1) rescaled to 125% -> 2048 logical wide, so the second
-    // display (DP-2) shifts left from x=2560 to x=2048. A client following DP-2 keeps
-    // sending coordinates offset by DP-2's old origin (2560).
     #[test]
     fn test_remap_primary_rescale_shifts_second_display() {
         let baseline = [
@@ -589,18 +495,13 @@ mod tests {
             rect("DP-1", 0, 0, 2048, 1440),
             rect("DP-2", 2048, 0, 2560, 1440),
         ];
-        // Top-left of DP-2: client sends (2560, 0), should land at live DP-2 origin.
         assert_eq!(remap_to_live_layout(2560, 0, &baseline, &live), (2048, 0));
-        // Middle of DP-2 keeps its fractional position.
         assert_eq!(
             remap_to_live_layout(3840, 720, &baseline, &live),
             (3328, 720)
         );
     }
 
-    // The far edge of the followed display stays reachable when it is enlarged, so hot
-    // corners keep working. Baseline DP-1 is 2048 wide, live DP-1 is 2560 wide; the
-    // client's last column (2047) must map to the live last column (2559), not 2558.
     #[test]
     fn test_remap_enlarged_display_reaches_far_edge() {
         let baseline = [rect("DP-1", 0, 0, 2048, 1440), rect("DP-2", 2048, 0, 1920, 1080)];
@@ -609,8 +510,6 @@ mod tests {
         assert_eq!(remap_to_live_layout(0, 0, &baseline, &live), (0, 0));
     }
 
-    // A single display uses physical size in both baseline and live (scale reported as
-    // 1.0), so it never drifts and the remap is a no-op even across a rescale.
     #[test]
     fn test_logical_rects_single_display_uses_physical() {
         let displays = [display(0, 0, 2560, 1440, Some((2048, 1152)))];

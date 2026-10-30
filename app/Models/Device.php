@@ -9,7 +9,7 @@ use Illuminate\Database\Eloquent\Relations\BelongsTo;
 class Device extends Model
 {
     protected $fillable = [
-        'client_app_id', 'rustdesk_id', 'uuid', 'hostname', 'username', 'os',
+        'client_app_id', 'supportdesk_id', 'uuid', 'hostname', 'username', 'os',
         'platform', 'cpu', 'memory', 'client_version', 'ip_address',
         'unattended_password', 'active_connections', 'notes',
         'first_seen_at', 'last_seen_at',
@@ -54,14 +54,13 @@ class Device extends Model
         };
     }
 
-    /** Command for the technician's RustDesk, no password prompt. */
     public function connectCommand(): ?string
     {
         if (! $this->unattended_password) {
             return null;
         }
 
-        return sprintf('rustdesk --connect %s --password %s', $this->rustdesk_id, $this->unattended_password);
+        return sprintf('supportdesk --connect %s --password %s', $this->supportdesk_id, $this->unattended_password);
     }
 
     public function connectUri(): ?string
@@ -70,6 +69,6 @@ class Device extends Model
             return null;
         }
 
-        return sprintf('rustdesk://connection/new/%s?password=%s', $this->rustdesk_id, rawurlencode($this->unattended_password));
+        return sprintf('supportdesk://connection/new/%s?password=%s', $this->supportdesk_id, rawurlencode($this->unattended_password));
     }
 }

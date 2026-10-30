@@ -431,7 +431,7 @@ class _DesktopHomePageState extends State<DesktopHomePage>
     if (!bind.isCustomClient() &&
         updateUrl.isNotEmpty &&
         !isCardClosed &&
-        bind.mainUriPrefixSync().contains('rustdesk')) {
+        bind.mainUriPrefixSync().contains('supportdesk')) {
       final isToUpdate = (isWindows || isMacOS) && bind.mainIsInstalled();
       String btnText = isToUpdate ? 'Update' : 'Download';
       GestureTapCallback onPressed = () async {
@@ -463,14 +463,14 @@ class _DesktopHomePageState extends State<DesktopHomePage>
         return buildInstallCard(
             "", bind.isOutgoingOnly() ? "" : "install_tip", "Install",
             () async {
-          await rustDeskWinManager.closeAllSubWindows();
+          await supportDeskWinManager.closeAllSubWindows();
           bind.mainGotoInstall();
         });
       } else if (bind.mainIsInstalledLowerVersion()) {
         return buildInstallCard(
             "Status", "Your installation is lower version.", "Click to upgrade",
             () async {
-          await rustDeskWinManager.closeAllSubWindows();
+          await supportDeskWinManager.closeAllSubWindows();
           bind.mainUpdateMe();
         });
       }
@@ -480,8 +480,6 @@ class _DesktopHomePageState extends State<DesktopHomePage>
         return buildInstallCard("Permissions", "config_screen", "Configure",
             () async {
           bind.mainIsCanScreenRecording(prompt: true);
-          // macOS shows the request prompt only once per app, so later
-          // presses would do nothing without opening the settings pane.
           launchUrl(Uri.parse(
               'x-apple.systempreferences:com.apple.preference.security?Privacy_ScreenCapture'));
           watchIsCanScreenRecording = true;
@@ -506,22 +504,12 @@ class _DesktopHomePageState extends State<DesktopHomePage>
           bind.mainIsInstalledDaemon(prompt: true);
         });
       }
-      //// Disable microphone configuration for macOS. We will request the permission when needed.
-      // else if ((await osxCanRecordAudio() !=
-      //     PermissionAuthorizeType.authorized)) {
-      //   return buildInstallCard("Permissions", "config_microphone", "Configure",
-      //       () async {
-      //     osxRequestAudio();
-      //     watchIsCanRecordAudio = true;
-      //   });
-      // }
     } else if (isLinux) {
       if (bind.isOutgoingOnly()) {
         return Container();
       }
       final LinuxCards = <Widget>[];
       if (bind.isSelinuxEnforcing()) {
-        // Check is SELinux enforcing, but show user a tip of is SELinux enabled for simple.
         final keyShowSelinuxHelpTip = "show-selinux-help-tip";
         if (bind.mainGetLocalOption(key: keyShowSelinuxHelpTip) != 'N') {
           LinuxCards.add(buildInstallCard(
@@ -562,8 +550,7 @@ class _DesktopHomePageState extends State<DesktopHomePage>
         alignment: Alignment.centerRight,
         child: OutlinedButton(
           onPressed: () {
-            SystemNavigator.pop(); // Close the application
-            // https://github.com/flutter/flutter/issues/66631
+            SystemNavigator.pop();
             if (isWindows) {
               exit(0);
             }
@@ -726,10 +713,6 @@ class _DesktopHomePageState extends State<DesktopHomePage>
       if (watchIsInputMonitoring) {
         if (bind.mainIsCanInputMonitoring(prompt: false)) {
           watchIsInputMonitoring = false;
-          // Do not notify for now.
-          // Monitoring may not take effect until the process is restarted.
-          // rustDeskWinManager.call(
-          //     WindowType.RemoteDesktop, kWindowDisableGrabKeyboard, '');
           setState(() {});
         }
       }
@@ -749,7 +732,7 @@ class _DesktopHomePageState extends State<DesktopHomePage>
       }
     });
     Get.put<RxBool>(svcStopped, tag: 'stop-service');
-    rustDeskWinManager.registerActiveWindowListener(onActiveWindowChanged);
+    supportDeskWinManager.registerActiveWindowListener(onActiveWindowChanged);
 
     screenToMap(window_size.Screen screen) => {
           'frame': {
@@ -775,7 +758,7 @@ class _DesktopHomePageState extends State<DesktopHomePage>
       return false;
     }
 
-    rustDeskWinManager.setMethodHandler((call, fromWindowId) async {
+    supportDeskWinManager.setMethodHandler((call, fromWindowId) async {
       if (!isChattyMethod(call.method)) {
         debugPrint(
           "[Main] call ${call.method} with args ${call.arguments} from window $fromWindowId");
@@ -790,9 +773,9 @@ class _DesktopHomePageState extends State<DesktopHomePage>
       } else if (call.method == kWindowActionRebuild) {
         reloadCurrentWindow();
       } else if (call.method == kWindowEventShow) {
-        await rustDeskWinManager.registerActiveWindow(call.arguments["id"]);
+        await supportDeskWinManager.registerActiveWindow(call.arguments["id"]);
       } else if (call.method == kWindowEventHide) {
-        await rustDeskWinManager.unregisterActiveWindow(call.arguments['id']);
+        await supportDeskWinManager.unregisterActiveWindow(call.arguments['id']);
       } else if (call.method == kWindowConnect) {
         await connectMainDesktop(
           call.arguments['id'],
@@ -824,7 +807,7 @@ class _DesktopHomePageState extends State<DesktopHomePage>
           debugPrint("Failed to parse window type '${call.arguments}': $e");
         }
         if (windowId != null && windowType != null) {
-          await rustDeskWinManager.moveTabToNewWindow(
+          await supportDeskWinManager.moveTabToNewWindow(
               windowId, args[1], args[2], windowType);
         }
       } else if (call.method == kWindowEventOpenMonitorSession) {
@@ -835,13 +818,13 @@ class _DesktopHomePageState extends State<DesktopHomePage>
         final displayCount = args['display_count'] as int;
         final windowType = args['window_type'] as int;
         final screenRect = parseParamScreenRect(args);
-        await rustDeskWinManager.openMonitorSession(
+        await supportDeskWinManager.openMonitorSession(
             windowId, peerId, display, displayCount, screenRect, windowType);
       } else if (call.method == kWindowEventRemoteWindowCoords) {
         final windowId = int.tryParse(call.arguments);
         if (windowId != null) {
           return jsonEncode(
-              await rustDeskWinManager.getOtherRemoteWindowCoords(windowId));
+              await supportDeskWinManager.getOtherRemoteWindowCoords(windowId));
         }
       }
     });
@@ -903,7 +886,6 @@ void setPasswordDialog({VoidCallback? notEmptyCallback}) async {
     DigitValidationRule(),
     UppercaseValidationRule(),
     LowercaseValidationRule(),
-    // SpecialCharacterValidationRule(),
     MinCharactersValidationRule(8),
   ];
   final maxLength = bind.mainMaxEncryptLen();

@@ -14,7 +14,7 @@ use winapi::{
         BITMAPINFOHEADER,
         BI_RGB,
         CAPTUREBLT,
-        DIB_RGB_COLORS, //CAPTUREBLT,
+        DIB_RGB_COLORS,
         HGDI_ERROR,
         RGBQUAD,
         SRCCOPY,
@@ -33,20 +33,6 @@ pub struct CapturerGDI {
 
 impl CapturerGDI {
     pub fn new(name: &[u16], width: i32, height: i32) -> Result<Self, Box<dyn std::error::Error>> {
-        /* or Enumerate monitors with EnumDisplayMonitors,
-        https://stackoverflow.com/questions/34987695/how-can-i-get-an-hmonitor-handle-from-a-display-device-name
-            #[no_mangle]
-            pub extern "C" fn callback(m: HMONITOR, dc: HDC, rect: LPRECT, lp: LPARAM) -> BOOL {}
-        */
-        /*
-        shared::windef::HMONITOR,
-        winuser::{GetMonitorInfoW, GetSystemMetrics, MONITORINFOEXW},
-        let mut mi: MONITORINFOEXW = std::mem::MaybeUninit::uninit().assume_init();
-        mi.cbSize = size_of::<MONITORINFOEXW>() as _;
-        if GetMonitorInfoW(m, &mut mi as *mut MONITORINFOEXW as _) == 0 {
-            return Err(format!("Failed to get monitor information of: {:?}", m).into());
-        }
-        */
         unsafe {
             if name.is_empty() {
                 return Err("Empty display name".into());
@@ -56,7 +42,6 @@ impl CapturerGDI {
                 return Err("Failed to create dc from monitor name".into());
             }
 
-            // Create a Windows Bitmap, and copy the bits into it
             let dc = CreateCompatibleDC(screen_dc);
             if dc.is_null() {
                 DeleteDC(screen_dc);
@@ -98,7 +83,7 @@ impl CapturerGDI {
                 self.screen_dc,
                 0,
                 0,
-                SRCCOPY | CAPTUREBLT, // CAPTUREBLT enable layered window but also make cursor blinking
+                SRCCOPY | CAPTUREBLT,
             );
             if res == 0 {
                 return Err("Failed to copy screen to Windows buffer".into());
@@ -132,7 +117,6 @@ impl CapturerGDI {
                 }],
             };
 
-            // copy bits into Vec
             let res = GetDIBits(
                 self.dc,
                 self.bmp,

@@ -38,7 +38,6 @@ class ServerPage extends StatefulWidget implements PageShape {
 class _DropDownAction extends StatelessWidget {
   _DropDownAction();
 
-  // should only have one action
   final actions = [
     PopupMenuButton<String>(
         tooltip: "",
@@ -507,7 +506,6 @@ class ServerInfo extends StatelessWidget {
     return PaddingCard(
         title: translate('Your Device'),
         child: Column(
-          // ID
           children: [
             Row(children: [
               const Icon(Icons.perm_identity,
@@ -530,7 +528,6 @@ class ServerInfo extends StatelessWidget {
                     copyToClipboard(model.serverId.value.text.trim());
                   })
             ]).marginOnly(left: 39, bottom: 10),
-            // Password
             Row(children: [
               const Icon(Icons.lock_outline, color: Colors.grey, size: iconSize)
                   .marginOnly(right: iconMarginRight),
@@ -583,7 +580,7 @@ class _PermissionCheckerState extends State<PermissionChecker> {
                 title: Text(translate('Change Path')),
                 content: Column(mainAxisSize: MainAxisSize.min, children: [
                   ListTile(
-                    title: Text(translate('RustDesk storage')),
+                    title: Text(translate('SupportDesk storage')),
                     onTap: () => close(true),
                   ),
                   ListTile(

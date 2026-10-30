@@ -3,9 +3,7 @@
 	<?include ../Includes.wxi?>
 
 	<Fragment>
-		<!-- Regs for shortcuts are defined in "Fragments/ShortcutProperties.wxs" -->
-		<!-- Component that persists the property values to the registry so they are available during an upgrade/modify -->
-		<Property Id="CURRENT_SHARE_RDP" Secure="yes">
+						<Property Id="CURRENT_SHARE_RDP" Secure="yes">
 			<RegistrySearch Id="CurrentShareRdpSearch" Root="HKLM" Key="Software\$(var.Product)\InstallState\$(var.Product)" Name="share_rdp" Type="raw" />
 		</Property>
 		<Property Id="LEGACY_SHARE_RDP" Secure="yes">
@@ -64,9 +62,7 @@
 					<RegistryValue Type="string" Name="InstallLocation" Value="[INSTALLFOLDER_INNER]" />
 					<RegistryValue Type="integer" Name="WindowsInstaller" Value="1" />
 					<RegistryValue Type="string" Name="MsiProductCode" Value="[ProductCode]" KeyPath="yes" />
-					<!--$InstallStateStart$-->
-					<!--$InstallStateEnd$-->
-				</RegistryKey>
+														</RegistryKey>
 			</Component>
 
 		</DirectoryRef>

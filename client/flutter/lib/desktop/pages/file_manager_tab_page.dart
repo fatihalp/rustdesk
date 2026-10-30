@@ -13,7 +13,6 @@ import 'package:get/get.dart';
 
 import '../../models/platform_model.dart';
 
-/// File Transfer for multi tabs
 class FileManagerTabPage extends StatefulWidget {
   final Map<String, dynamic> params;
 
@@ -65,10 +64,9 @@ class _FileManagerTabPageState extends State<FileManagerTabPage> {
   void initState() {
     super.initState();
 
-    rustDeskWinManager.setMethodHandler((call, fromWindowId) async {
+    supportDeskWinManager.setMethodHandler((call, fromWindowId) async {
       debugPrint(
           "[FileTransfer] call ${call.method} with args ${call.arguments} from window $fromWindowId to ${windowId()}");
-      // for simplify, just replace connectionId
       if (call.method == kWindowEventNewFileTransfer) {
         final args = jsonDecode(call.arguments);
         final id = args['id'];

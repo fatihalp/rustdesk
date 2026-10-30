@@ -22,7 +22,7 @@ use std::time::{Duration, Instant};
 
 lazy_static! {
     static ref JVM: RwLock<Option<JavaVM>> = RwLock::new(None);
-    static ref MAIN_SERVICE_CTX: RwLock<Option<GlobalRef>> = RwLock::new(None); // MainService -> video service / audio service / info
+    static ref MAIN_SERVICE_CTX: RwLock<Option<GlobalRef>> = RwLock::new(None);
     static ref APPLICATION_CONTEXT: RwLock<Option<GlobalRef>> = RwLock::new(None);
     static ref VIDEO_RAW: Mutex<FrameRaw> = Mutex::new(FrameRaw::new("video", MAX_VIDEO_FRAME_TIMEOUT));
     static ref AUDIO_RAW: Mutex<FrameRaw> = Mutex::new(FrameRaw::new("audio", MAX_AUDIO_FRAME_TIMEOUT));
@@ -72,8 +72,6 @@ impl FrameRaw {
         self.last_update = Instant::now();
     }
 
-    // take inner data as slice
-    // release when success
     fn take<'a>(&mut self, dst: &mut Vec<u8>, last: &mut Vec<u8>) -> Option<()> {
         if self.enable.not() {
             return None;
@@ -232,12 +230,12 @@ pub struct MediaCodecInfo {
     pub name: String,
     pub is_encoder: bool,
     #[serde(default)]
-    pub hw: Option<bool>, // api 29+
+    pub hw: Option<bool>,
     pub mime_type: String,
     pub surface: bool,
     pub nv12: bool,
     #[serde(default)]
-    pub low_latency: Option<bool>, // api 30+, decoder
+    pub low_latency: Option<bool>,
     pub min_bitrate: u32,
     pub max_bitrate: u32,
     pub min_width: usize,
@@ -249,8 +247,8 @@ pub struct MediaCodecInfo {
 #[derive(Debug, Deserialize, Clone)]
 pub struct MediaCodecInfos {
     pub version: usize,
-    pub w: usize, // aligned
-    pub h: usize, // aligned
+    pub w: usize,
+    pub h: usize,
     pub codecs: Vec<MediaCodecInfo>,
 }
 
@@ -273,25 +271,6 @@ pub fn clear_codec_info() {
     *MEDIA_CODEC_INFOS.write().unwrap() = None;
 }
 
-// another way to fix "reference table overflow" error caused by new_string and call_main_service_pointer_input frequently calld
-// is below, but here I change kind from string to int for performance
-/*
-        env.with_local_frame(10, || {
-            let kind = env.new_string(kind)?;
-            env.call_method(
-                ctx,
-                "rustPointerInput",
-                "(Ljava/lang/String;III)V",
-                &[
-                    JValue::Object(&JObject::from(kind)),
-                    JValue::Int(mask),
-                    JValue::Int(x),
-                    JValue::Int(y),
-                ],
-            )?;
-            Ok(JObject::null())
-        })?;
-*/
 pub fn call_main_service_pointer_input(kind: &str, mask: i32, x: i32, y: i32) -> JniResult<()> {
     if let (Some(jvm), Some(ctx)) = (
         JVM.read().unwrap().as_ref(),
@@ -441,12 +420,6 @@ pub fn call_main_service_set_by_name(
     }
 }
 
-// Difference between MainService, MainActivity, JNI_OnLoad:
-//  jvm is the same, ctx is differen and ctx of JNI_OnLoad is null.
-//  cpal: all three works
-//  Service(GetByName, ...): only ctx from MainService works, so use 2 init context functions
-// On app start: JNI_OnLoad or MainActivity init context
-// On service start first time: MainService replace the context
 
 fn init_ndk_context(java_vm: *mut c_void, context_jobject: *mut c_void) {
     let mut lock = NDK_CONTEXT_INITED.lock().unwrap();
@@ -481,7 +454,6 @@ fn try_init_rustls_platform_verifier(env: &mut JNIEnv, context_jobject: *mut c_v
     }
 }
 
-// https://cjycode.com/flutter_rust_bridge/guides/how-to/ndk-init
 #[no_mangle]
 pub extern "C" fn JNI_OnLoad(vm: jni::JavaVM, res: *mut std::os::raw::c_void) -> jni::sys::jint {
     if let Ok(env) = vm.get_env() {

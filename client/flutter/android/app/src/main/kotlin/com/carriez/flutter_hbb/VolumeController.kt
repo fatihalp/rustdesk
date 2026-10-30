@@ -1,6 +1,5 @@
 package com.carriez.flutter_hbb
 
-// Inspired by https://github.com/yosemiteyss/flutter_volume_controller/blob/main/android/src/main/kotlin/com/yosemiteyss/flutter_volume_controller/VolumeController.kt
 
 import android.media.AudioManager
 import android.os.Build

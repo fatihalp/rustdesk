@@ -20,7 +20,6 @@ impl SincAudioResampler {
             ));
         }
         let mut error = 0;
-        // SAFETY: src_new allocates independent state; this owner releases it in Drop.
         let state = unsafe {
             sys::src_new(
                 sys::SRC_SINC_BEST_QUALITY as _,
@@ -83,7 +82,6 @@ impl SincAudioResampler {
         };
         output.resize(end, 0.0);
         data.data_out = output[start..].as_mut_ptr();
-        // SAFETY: state is exclusively owned; disjoint slices cover the declared frame counts.
         let error = unsafe { sys::src_process(self.state.as_ptr(), &mut data) };
         let generated = data.output_frames_gen as usize * channels;
         output.truncate(start + generated);
@@ -96,7 +94,6 @@ impl SincAudioResampler {
 
 impl Drop for SincAudioResampler {
     fn drop(&mut self) {
-        // SAFETY: this owner holds the only handle returned by src_new.
         unsafe { sys::src_delete(self.state.as_ptr()) };
     }
 }

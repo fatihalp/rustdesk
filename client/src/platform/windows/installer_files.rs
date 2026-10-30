@@ -24,8 +24,6 @@ use windows::{
     },
 };
 
-// Stage data before elevation instead of relaunching a verifier from a portable
-// directory whose executable or DLLs could be replaced while UAC is pending.
 pub(super) struct ProtectedInstallFile {
     path: PathBuf,
     cleanup_handle: Option<Owned<HANDLE>>,
@@ -62,7 +60,6 @@ impl ProtectedInstallFile {
             duplicate_cleanup_handle(&file)
         })();
         let cleanup_handle = result.map_err(|error| {
-            // The initial handle can remove an incomplete file without reopening its protected path.
             if let Err(cleanup_error) = delete_staged_file(HANDLE(file.as_raw_handle())) {
                 log::warn!(
                     "Failed to remove incomplete installer file {}: {cleanup_error}",
@@ -82,15 +79,12 @@ impl ProtectedInstallFile {
     }
 
     pub(super) fn release(&mut self) {
-        // cmd.exe cannot read/copy these files while a DELETE handle is open.
-        // The handoff gate keeps it waiting until every staged handle is closed.
         drop(self.cleanup_handle.take());
     }
 }
 
 impl Drop for ProtectedInstallFile {
     fn drop(&mut self) {
-        // Cancellation cannot reopen the protected path with DELETE permission.
         let result = match &self.cleanup_handle {
             Some(handle) => delete_staged_file(**handle),
             None => match fs::remove_file(&self.path) {
@@ -109,8 +103,6 @@ impl Drop for ProtectedInstallFile {
 
 fn create_protected_file(path: &Path) -> ResultType<File> {
     let mut descriptor = PSECURITY_DESCRIPTOR::default();
-    // Restrict OWNER RIGHTS at creation so the unelevated creator cannot reopen
-    // the file for writing or grant itself that permission after staging.
     unsafe {
         ConvertStringSecurityDescriptorToSecurityDescriptorW(
             w!("D:P(A;;FA;;;SY)(A;;FA;;;BA)(A;;FRFX;;;OW)"),
@@ -151,7 +143,6 @@ fn create_protected_file(path: &Path) -> ResultType<File> {
 
 fn duplicate_cleanup_handle(file: &File) -> ResultType<Owned<HANDLE>> {
     let mut handle = HANDLE::default();
-    // Retain deletion capability, not a writable handle, while waiting for UAC.
     unsafe {
         let process = GetCurrentProcess();
         DuplicateHandle(
@@ -208,11 +199,10 @@ mod tests {
     #[test]
     fn cancelled_staging_removes_files_without_parent_delete_permission() {
         use windows::Win32::Security::{ImpersonateLoggedOnUser, RevertToSelf};
-        let root = std::env::temp_dir().join(format!("rustdesk-cancel-{}", uuid::Uuid::new_v4()));
+        let root = std::env::temp_dir().join(format!("supportdesk-cancel-{}", uuid::Uuid::new_v4()));
         fs::create_dir(&root).unwrap();
         let path = root.join("package.tmp");
         let file = ProtectedInstallFile::new(&path, b"cancelled update").unwrap();
-        // Omit DELETE_CHILD as in Windows Temp, but retain fixture ACL control.
         set_parent_acl(&root, w!("D:P(A;;0x1600af;;;OW)"));
         unsafe {
             let token = ordinary_owner_token();
@@ -254,17 +244,17 @@ mod tests {
     #[test]
     fn staged_files_protect_contents_and_remove_unverified_data() {
         const HASH: &str = "304ca1638c5effa6832e0e15b958a8f74847efe4df9c3f3187216e921c168fed";
-        let root = std::env::temp_dir().join(format!("rustdesk-staging-{}", uuid::Uuid::new_v4()));
+        let root = std::env::temp_dir().join(format!("supportdesk-staging-{}", uuid::Uuid::new_v4()));
         fs::create_dir(&root).unwrap();
         let path = root.join("input.tmp");
         let file =
-            ProtectedInstallFile::create(&path, &mut io::Cursor::new(b"rustdesk"), Some(HASH))
+            ProtectedInstallFile::create(&path, &mut io::Cursor::new(b"supportdesk"), Some(HASH))
                 .unwrap();
         assert_eq!(
             ordinary_owner_access(file.path()),
             (FILE_GENERIC_READ | FILE_GENERIC_EXECUTE).0
         );
-        assert_eq!(fs::read(file.path()).unwrap(), b"rustdesk");
+        assert_eq!(fs::read(file.path()).unwrap(), b"supportdesk");
         assert!(ProtectedInstallFile::new(&path, b"replacement").is_err());
         let rejected = root.join("rejected.tmp");
         assert!(ProtectedInstallFile::create(

@@ -1,16 +1,4 @@
-// both soundio and cpal use wasapi on windows and coreaudio on mac, they do not support loopback.
-// libpulseaudio support loopback because pulseaudio is a standalone audio service with some
-// configuration, but need to install the library and start the service on OS, not a good choice.
-// windows: https://docs.microsoft.com/en-us/windows/win32/coreaudio/loopback-recording
-// mac: https://github.com/mattingalls/Soundflower
-// https://docs.microsoft.com/en-us/windows/win32/api/audioclient/nn-audioclient-iaudioclient
-// https://github.com/ExistentialAudio/BlackHole
 
-// if pactl not work, please run
-// sudo apt-get --purge --reinstall install pulseaudio
-// https://askubuntu.com/questions/403416/how-to-listen-live-sounds-from-input-from-external-sound-card
-// https://wiki.debian.org/audio-loopback
-// https://github.com/krruzic/pulsectl
 
 use super::*;
 #[cfg(not(any(target_os = "linux", target_os = "android")))]
@@ -21,7 +9,7 @@ use magnum_opus::{Channels::*, Encoder};
 use std::sync::atomic::{AtomicBool, Ordering};
 
 pub const NAME: &'static str = "audio";
-pub const AUDIO_DATA_SIZE_U8: usize = 960 * 4; // 10ms in 48000 stereo
+pub const AUDIO_DATA_SIZE_U8: usize = 960 * 4;
 static RESTARTING: AtomicBool = AtomicBool::new(false);
 
 lazy_static::lazy_static! {
@@ -81,9 +69,6 @@ pub fn restart() {
 mod pa_impl {
     use super::*;
 
-    /// Reading the sample bytes back as `f32` needs a 4-byte aligned pointer.
-    /// Returns an aligned copy only when `data` is not already aligned; `None`
-    /// means the caller can reinterpret `data` where it is, with no copy.
     fn align_to_32_if_needed(data: &[u8]) -> Option<hbb_common::mem::AlignedU8Vec> {
         if (data.as_ptr() as usize & 3) == 0 {
             return None;
@@ -95,12 +80,8 @@ mod pa_impl {
 
     #[tokio::main(flavor = "current_thread")]
     pub async fn run(sp: EmptyExtraFieldService) -> ResultType<()> {
-        hbb_common::sleep(0.1).await; // one moment to wait for _pa ipc
+        hbb_common::sleep(0.1).await;
         RESTARTING.store(false, Ordering::SeqCst);
-        // The `_pa` ipc is served by the cm, which is not started at a login
-        // screen, so connecting there fails and logs an error every second.
-        // Wait here instead; audio starts once a user logs in. Poll slowly,
-        // `is_prelogin` spawns a process on every call.
         #[cfg(target_os = "linux")]
         while crate::platform::is_prelogin() {
             if !sp.ok() {
@@ -136,9 +117,6 @@ mod pa_impl {
 
             #[cfg(target_os = "linux")]
             {
-                // The `_pa` peer closing surfaces as `Err` here. Dropping it left the loop polling
-                // a dead socket -- one 0-byte read per poll, ready at once and never `Pending` --
-                // which burned a full core for the rest of the process lifetime.
                 let data = stream.next_raw().await?;
                 if data.len() == 0 {
                     send_f32(&zero_audio_frame, &mut encoder, &sp);
@@ -152,8 +130,6 @@ mod pa_impl {
                 let data: Vec<u8> = data.into();
                 let aligned = align_to_32_if_needed(&data);
                 let bytes = aligned.as_deref().unwrap_or(&data[..]);
-                // SAFETY: `bytes` is 4-byte aligned (either checked above or freshly
-                // allocated with align 4), and only whole f32s are read from it.
                 let data = unsafe {
                     std::slice::from_raw_parts::<f32>(bytes.as_ptr() as _, bytes.len() / 4)
                 };
@@ -162,13 +138,8 @@ mod pa_impl {
 
             #[cfg(target_os = "android")]
             if scrap::android::ffi::get_audio_raw(&mut android_data, &mut vec![]).is_some() {
-                // Keep `android_data` as the reusable receive buffer: overwriting it with
-                // an exact-capacity aligned buffer only made the next `get_audio_raw`
-                // reallocate it, which dropped the alignment again.
                 let aligned = align_to_32_if_needed(&android_data);
                 let bytes = aligned.as_deref().unwrap_or(&android_data[..]);
-                // SAFETY: `bytes` is 4-byte aligned (either checked above or freshly
-                // allocated with align 4), and only whole f32s are read from it.
                 let data = unsafe {
                     std::slice::from_raw_parts::<f32>(bytes.as_ptr() as _, bytes.len() / 4)
                 };
@@ -278,7 +249,6 @@ mod cpal_impl {
     pub fn run(sp: EmptyExtraFieldService, state: &mut State) -> ResultType<()> {
         if let Some(stream) = &state.stream {
             if stream.errors.needs_restart() {
-                // Recreate on the service thread, outside the capture callbacks.
                 log::warn!("Recreating audio capture stream after an error");
                 super::restart();
             }
@@ -402,15 +372,6 @@ mod cpal_impl {
         if !audio_input.is_empty() {
             return get_audio_input(&audio_input);
         }
-        // The pinned CPAL uses event-driven WASAPI loopback here. Windows versions
-        // before Windows 10 1703 do not signal capture events, so system audio does
-        // not work on Win7. #16095 kept the same CPAL revision and loopback path;
-        // this limitation predates that PR.
-        // Ordinary microphone input is supported on Win7 and uses the branch above.
-        // #16095 added its callback-to-encoder wake dependency; see CapturePcmSender::wake
-        // for the new scheduling risk, whose audible impact on Win7 is unmeasured.
-        // https://learn.microsoft.com/en-us/windows/win32/coreaudio/loopback-recording
-        // https://learn.microsoft.com/en-us/windows/win32/coreaudio/capturesharedeventdriven
         let device = HOST
             .default_output_device()
             .with_context(|| "Failed to get default output device for loopback")?;
@@ -475,7 +436,6 @@ mod cpal_impl {
         use cpal::SampleFormat::*;
         let (device, config) = get_device()?;
         let sp = sp.clone();
-        // Sample rate must be one of 8000, 12000, 16000, 24000, or 48000.
         let sample_rate_0 = config.sample_rate().0;
         let sample_rate = if sample_rate_0 < 12000 {
             8000
@@ -546,7 +506,6 @@ mod cpal_impl {
         T: cpal::SizedSample,
         f32: cpal::FromSample<T>,
     {
-        // Starting capture does not guarantee sample delivery or audible data.
         if !received_samples && !data.is_empty() {
             log::info!(
                 "Audio capture received first PCM block: {} samples",
@@ -624,9 +583,6 @@ fn create_format_msg(sample_rate: u32, channels: u16) -> Message {
     msg
 }
 
-// Use a per-encoder counter for the Noise(Zero) Gate Attack Time.
-// every audio data length is set to 480
-// MAX_AUDIO_ZERO_COUNT=800 is similar as Gate Attack Time 3~5s(Linux) || 6~8s(Windows)
 const MAX_AUDIO_ZERO_COUNT: u16 = 800;
 
 struct AudioEncoder {
@@ -664,9 +620,6 @@ fn send_f32(data: &[f32], encoder: &mut AudioEncoder, sp: &GenericService) {
     }
     #[cfg(target_os = "android")]
     {
-        // the permitted opus data size are 120, 240, 480, 960, 1920, and 2880
-        // if data size is bigger than BATCH_SIZE, AND is an integer multiple of BATCH_SIZE
-        // then upload in batches
         const BATCH_SIZE: usize = 960;
         let input_size = data.len();
         if input_size > BATCH_SIZE && input_size % BATCH_SIZE == 0 {

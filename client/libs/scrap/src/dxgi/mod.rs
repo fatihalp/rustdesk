@@ -63,7 +63,7 @@ pub struct Capturer {
     rotated: Vec<u8>,
     gdi_capturer: Option<CapturerGDI>,
     gdi_buffer: Vec<u8>,
-    saved_raw_data: Vec<u8>, // for faster compare and copy
+    saved_raw_data: Vec<u8>,
     output_texture: bool,
     adapter_desc1: DXGI_ADAPTER_DESC1,
     rotate: Rotate,
@@ -89,10 +89,10 @@ impl Capturer {
                 D3D11CreateDevice(
                     display.adapter.0 as *mut _,
                     D3D_DRIVER_TYPE_UNKNOWN,
-                    ptr::null_mut(), // No software rasterizer.
-                    0,               // No device flags.
-                    ptr::null_mut(), // Feature levels.
-                    0,               // Feature levels' length.
+                    ptr::null_mut(),
+                    0,
+                    ptr::null_mut(),
+                    0,
                     D3D11_SDK_VERSION,
                     &mut device,
                     ptr::null_mut(),
@@ -129,33 +129,9 @@ impl Capturer {
                     hres
                 }
 
-                // NVFBC(NVIDIA Capture SDK) which xpra used already deprecated, https://developer.nvidia.com/capture-sdk
 
-                // also try high version DXGI for better performance, e.g.
-                // https://docs.microsoft.com/zh-cn/windows/win32/direct3ddxgi/dxgi-1-2-improvements
-                // dxgi-1-6 may too high, only support win10 (2018)
-                // https://docs.microsoft.com/zh-cn/windows/win32/api/dxgiformat/ne-dxgiformat-dxgi_format
-                // DXGI_FORMAT_420_OPAQUE
-                // IDXGIOutputDuplication::GetFrameDirtyRects and IDXGIOutputDuplication::GetFrameMoveRects
-                // can help us update screen incrementally
 
-                /* // not supported on my PC, try in the future
-                use winapi::shared::dxgiformat::DXGI_FORMAT_B8G8R8A8_UNORM;
 
-                let format : Vec<DXGI_FORMAT> = vec![DXGI_FORMAT_B8G8R8A8_UNORM, DXGI_FORMAT_420_OPAQUE];
-                (*display.inner).DuplicateOutput1(
-                    device as *mut _,
-                    0 as UINT,
-                    2 as UINT,
-                    format.as_ptr(),
-                    &mut duplication
-                )
-                */
-
-                // if above not work, I think below should not work either, try later
-                // https://developer.nvidia.com/capture-sdk deprecated
-                // examples using directx + nvideo sdk for GPU-accelerated video encoding/decoding
-                // https://github.com/NVIDIA/video-sdk-samples
             });
         }
 
@@ -191,11 +167,6 @@ impl Capturer {
         })
     }
 
-    // Asks for the float desktop that HDR mode composes so it can be tone-mapped;
-    // the legacy call would hand back DXGI's clipped BGRA8 conversion instead.
-    // Only where IDXGIOutput6 (Windows 10 1703) exists, since that is what later
-    // tells an HDR desktop from a WCG one; Microsoft's duplication sample gates
-    // the float request the same way.
     unsafe fn duplicate_output(
         display: &Display,
         device: *mut ID3D11Device,
@@ -255,9 +226,6 @@ impl Capturer {
         }
     }
 
-    // Drops the tone-map and re-duplicates the output the legacy way, so DXGI
-    // hands over clipped BGRA8 (the pre-HDR behaviour). If re-duplication fails,
-    // switch to GDI before returning. The caller sees WouldBlock and asks again.
     unsafe fn abandon_tonemap<T>(&mut self, err: io::Error) -> io::Result<T> {
         if hdr::is_permanent(&err) {
             hdr::UNAVAILABLE.store(true, std::sync::atomic::Ordering::Relaxed);
@@ -466,7 +434,6 @@ impl Capturer {
         Ok((rect.pBits, rect.Pitch))
     }
 
-    // copy from GPU memory to system memory
     unsafe fn ohgodwhat(&mut self, frame: *mut IDXGIResource) -> io::Result<*mut IDXGISurface> {
         let mut texture: *mut ID3D11Texture2D = ptr::null_mut();
         (*frame).QueryInterface(
@@ -526,9 +493,6 @@ impl Capturer {
 
     fn get_pixelbuffer<'a>(&'a mut self, timeout: UINT) -> io::Result<&'a [u8]> {
         unsafe {
-            // Release last frame.
-            // No error checking needed because we don't care.
-            // None of the errors crash anyway.
             let result = {
                 if let Some(gdi_capturer) = &self.gdi_capturer {
                     match gdi_capturer.frame(&mut self.gdi_buffer) {
@@ -708,10 +672,6 @@ impl Capturer {
             return Ok(());
         }
         let mut first_error = None;
-        // Unmap before ReleaseFrame invalidates the desktop surface; use the same
-        // order for staging surfaces. Cleanup advances Mapped -> Acquired -> Idle,
-        // while Idle is a no-op. Advance state even on errors to avoid retrying
-        // cleanup, but still attempt ReleaseFrame if unmapping fails.
         unsafe {
             if self.frame_state == FrameState::Mapped {
                 let result = if self.fastlane {
@@ -763,9 +723,7 @@ impl Drop for Capturer {
 pub struct Displays {
     factory: ComPtr<IDXGIFactory1>,
     adapter: ComPtr<IDXGIAdapter1>,
-    /// Index of the CURRENT adapter.
     nadapter: UINT,
-    /// Index of the NEXT display to fetch.
     ndisplay: UINT,
 }
 
@@ -777,7 +735,6 @@ impl Displays {
         let factory = factory as *mut IDXGIFactory1;
         let mut adapter = ptr::null_mut();
         unsafe {
-            // On error, our adapter is null, so it's fine.
             (*factory).EnumAdapters1(0, &mut adapter);
         };
 
@@ -806,7 +763,6 @@ impl Displays {
             {
                 continue;
             }
-            // let is_primary = (d.StateFlags & DISPLAY_DEVICE_PRIMARY_DEVICE) > 0;
             let mut disp = Display {
                 inner: ComPtr(std::ptr::null_mut()),
                 adapter: ComPtr(std::ptr::null_mut()),
@@ -841,17 +797,12 @@ impl Displays {
         all
     }
 
-    // No Adapter => Some(None)
-    // Non-Empty Adapter => Some(Some(OUTPUT))
-    // End of Adapter => None
     fn read_and_invalidate(&mut self) -> Option<Option<Display>> {
-        // If there is no adapter, there is nothing left for us to do.
 
         if self.adapter.is_null() {
             return Some(None);
         }
 
-        // Otherwise, we get the next output of the current adapter.
 
         let output = unsafe {
             let mut output = ptr::null_mut();
@@ -859,19 +810,15 @@ impl Displays {
             ComPtr(output)
         };
 
-        // If the current adapter is done, we free it.
-        // We return None so the caller gets the next adapter and tries again.
 
         if output.is_null() {
             self.adapter = ComPtr(ptr::null_mut());
             return None;
         }
 
-        // Advance to the next display.
 
         self.ndisplay += 1;
 
-        // We get the display's details.
 
         let desc = unsafe {
             #[allow(invalid_value)]
@@ -880,15 +827,12 @@ impl Displays {
             desc
         };
 
-        // We cast it up to the version needed for desktop duplication.
 
         let mut inner: *mut IDXGIOutput1 = ptr::null_mut();
         unsafe {
             (*output.0).QueryInterface(&IID_IDXGIOutput1, &mut inner as *mut *mut _ as *mut *mut _);
         }
 
-        // If it's null, we have an error.
-        // So we act like the adapter is done.
 
         if inner.is_null() {
             self.adapter = ComPtr(ptr::null_mut());
@@ -914,7 +858,6 @@ impl Iterator for Displays {
         if let Some(res) = self.read_and_invalidate() {
             res
         } else {
-            // We need to replace the adapter.
 
             self.ndisplay = 0;
             self.nadapter += 1;
@@ -928,7 +871,6 @@ impl Iterator for Displays {
             if let Some(res) = self.read_and_invalidate() {
                 res
             } else {
-                // All subsequent adapters will also be empty.
                 None
             }
         }
@@ -942,10 +884,6 @@ pub struct Display {
     gdi: bool,
 }
 
-// optimized for updated region
-// https://github.com/dchapyshev/aspia/blob/master/source/base/desktop/win/dxgi_output_duplicator.cc
-// rotation
-// https://github.com/bryal/dxgcap-rs/blob/master/src/lib.rs
 
 impl Display {
     pub fn width(&self) -> LONG {
@@ -1023,7 +961,6 @@ fn wrap_hresult(x: HRESULT) -> io::Result<()> {
         DXGI_ERROR_SESSION_DISCONNECTED => ConnectionAborted,
         E_INVALIDARG => InvalidInput,
         _ => {
-            // 0x8000ffff https://www.auslogics.com/en/articles/windows-10-update-error-0x8000ffff-fixed/
             return Err(io::Error::new(Other, format!("Error code: {:#X}", x)));
         }
     })

@@ -1,11 +1,3 @@
-/*
- * getifaddrs()/freeifaddrs() for Android: bionic only exports them from API 24,
- * while the jniLibs are built against the API 21 sysroot (flutter/ndk_*.sh) and
- * webrtc-util calls them whenever WebRTC gathers ICE candidates.
- *
- * Only AF_INET and AF_INET6 entries are reported; the AF_PACKET ones the real
- * getifaddrs() also returns have no reader in this build.
- */
 
 #include <errno.h>
 #include <stdlib.h>
@@ -20,9 +12,7 @@
 #include <linux/netlink.h>
 #include <linux/rtnetlink.h>
 
-/* Refuse a single netlink datagram larger than this rather than grow forever. */
 #define RD_NL_MAX_BUF (1024 * 1024)
-/* A dump that never terminates must not hang the caller. */
 #define RD_NL_MAX_DATAGRAMS 4096
 
 typedef int (*rd_nl_cb)(struct nlmsghdr *nlh, void *ctx);
@@ -39,8 +29,6 @@ struct rd_link_table {
     size_t cap;
 };
 
-/* One allocation per reported address; `ifa` first so freeifaddrs() can free
- * the node it is handed. */
 struct rd_ifaddrs_storage {
     struct ifaddrs ifa;
     struct sockaddr_storage addr;
@@ -64,9 +52,6 @@ static void rd_parse_rtattr(struct rtattr *rta, int len, struct rtattr **tb, int
     }
 }
 
-/* `len` must stay signed: NLMSG_NEXT subtracts the *aligned* length, which
- * overshoots on an unaligned trailing message, and only a negative remainder
- * stops NLMSG_OK from reading past the buffer. */
 static int rd_nl_parse(char *buf, int len, unsigned short reply_type, unsigned int seq,
                        rd_nl_cb cb, void *ctx, int *done)
 {
@@ -91,7 +76,6 @@ static int rd_nl_parse(char *buf, int len, unsigned short reply_type, unsigned i
             continue;
         if (cb(nlh, ctx) != 0)
             return -1;
-        /* A non-multipart reply is the whole answer; nothing follows it. */
         if ((nlh->nlmsg_flags & NLM_F_MULTI) == 0) {
             *done = 1;
             return 0;
@@ -140,8 +124,6 @@ static int rd_nl_dump(int fd, unsigned short request_type, unsigned short reply_
     }
 
     while (!done) {
-        /* MSG_PEEK|MSG_TRUNC reports the datagram's real size, so an
-         * undersized buffer costs a resize instead of a silent truncation. */
         ssize_t n = recv(fd, buf, cap, MSG_PEEK | MSG_TRUNC);
         if (n < 0) {
             if (errno == EINTR)
@@ -202,7 +184,6 @@ static int rd_link_cb(struct nlmsghdr *nlh, void *ctx)
         payload = 0;
     rd_parse_rtattr(IFLA_RTA(ifi), payload, tb, IFLA_IFNAME);
 
-    /* An interface we cannot name is of no use: callers dereference ifa_name. */
     if (tb[IFLA_IFNAME] == NULL || (int)RTA_PAYLOAD(tb[IFLA_IFNAME]) <= 0)
         return 0;
 
@@ -283,7 +264,6 @@ static int rd_addr_cb(struct nlmsghdr *nlh, void *ctx)
     if (ifa->ifa_family != AF_INET && ifa->ifa_family != AF_INET6)
         return 0;
 
-    /* Without the link entry there is no name, and callers deref ifa_name. */
     link = rd_link_find(c->links, ifa->ifa_index);
     if (link == NULL)
         return 0;
@@ -293,8 +273,6 @@ static int rd_addr_cb(struct nlmsghdr *nlh, void *ctx)
         payload = 0;
     rd_parse_rtattr(IFA_RTA(ifa), payload, tb, IFA_BROADCAST);
 
-    /* On a point-to-point link IFA_ADDRESS holds the peer and IFA_LOCAL the
-     * local address; ipv6 only ever sets IFA_ADDRESS. */
     if (ifa->ifa_family == AF_INET)
         ra = tb[IFA_LOCAL] ? tb[IFA_LOCAL] : tb[IFA_ADDRESS];
     else
@@ -338,7 +316,6 @@ static int rd_addr_cb(struct nlmsghdr *nlh, void *ctx)
 
         sin6->sin6_family = AF_INET6;
         memcpy(&sin6->sin6_addr, RTA_DATA(ra), 16);
-        /* A link-local address is not routable without its scope id. */
         if (IN6_IS_ADDR_LINKLOCAL(&sin6->sin6_addr) ||
             IN6_IS_ADDR_MC_LINKLOCAL(&sin6->sin6_addr))
             sin6->sin6_scope_id = ifa->ifa_index;

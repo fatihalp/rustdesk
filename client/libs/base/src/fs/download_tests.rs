@@ -11,7 +11,7 @@ impl DownloadDir {
             .unwrap()
             .as_nanos();
         let path = std::env::temp_dir().join(format!(
-            "rustdesk_download_{}_{nonce}_{sequence}",
+            "supportdesk_download_{}_{nonce}_{sequence}",
             std::process::id()
         ));
         std::fs::create_dir(&path).unwrap();

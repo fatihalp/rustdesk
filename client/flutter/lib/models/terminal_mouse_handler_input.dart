@@ -1,8 +1,5 @@
 part of 'terminal_mouse_handler.dart';
 
-/// xterm 4.0.0 encodes wheel buttons as 68..71; the extra bit reads as a Shift
-/// modifier, so strict full-screen apps ignore the report and never scroll.
-/// Upstream fix: TerminalStudio/xterm.dart#238.
 class WheelButtonFixMouseHandler implements TerminalMouseHandler {
   const WheelButtonFixMouseHandler({
     this.positionProvider,
@@ -21,8 +18,6 @@ class WheelButtonFixMouseHandler implements TerminalMouseHandler {
       }
       return defaultMouseHandler(event);
     }
-    // Same gate as UpDownMouseHandler: only the scroll modes report a wheel,
-    // and a wheel release is never reported, so the report is always a press.
     if (!event.state.mouseMode.reportScroll ||
         event.buttonState == TerminalMouseButtonState.up) {
       return null;
@@ -31,7 +26,6 @@ class WheelButtonFixMouseHandler implements TerminalMouseHandler {
   }
 
   String _reportWheel(TerminalMouseEvent event) {
-    // Wheel buttons 4..7 go on the wire as 64..67, but `id` is 64 + 4..7.
     final button = event.button.id - 4;
     final position = positionProvider?.call() ?? event.position;
     return encodeTerminalMouseReport(

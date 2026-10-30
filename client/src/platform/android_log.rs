@@ -22,7 +22,6 @@ const ERROR_INTERVAL: Duration = Duration::from_secs(60);
 const DEFAULT_LOG_MAX_BYTES: u64 = 16 * 1024 * 1024;
 const DEFAULT_LOG_FILE_COUNT: usize = 90;
 
-// The first bridge request initializes Kotlin's persisted log-folder selection.
 static PUBLIC_LOGS_ENABLED: AtomicBool = AtomicBool::new(true);
 
 #[no_mangle]
@@ -70,7 +69,6 @@ impl DocumentWriter {
 
 impl LogWriter for DocumentWriter {
     fn write(&self, now: &mut DeferredNow, record: &Record) -> io::Result<()> {
-        // JNI logs while detaching threads; calling back into JNI there is unsafe.
         if record.target() == "jni" || record.target().starts_with("jni::") {
             logcat().log(record);
             return Ok(());
@@ -131,7 +129,6 @@ fn logcat() -> android_logger::AndroidLogger {
 fn report_error(error: &dyn std::fmt::Display) {
     static ERRORS: LogThrottle = LogThrottle::new(ERROR_INTERVAL);
     if let Some(count) = ERRORS.due() {
-        // Reporting through log::error! here would call this writer recursively.
         logcat().log(
             &Record::builder()
                 .level(Level::Error)

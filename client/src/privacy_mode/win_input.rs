@@ -30,7 +30,6 @@ fn do_hook(tx: Sender<String>) -> ResultType<(HHOOK, HHOOK)> {
 
     let mut cur_hook_thread_id = CUR_HOOK_THREAD_ID.lock().unwrap();
     if *cur_hook_thread_id != 0 {
-        // unreachable!
         tx.send("Already hooked".to_owned())?;
         return Ok(invalid_ret);
     }
@@ -78,7 +77,6 @@ fn do_hook(tx: Sender<String>) -> ResultType<(HHOOK, HHOOK)> {
         let hook_mouse = SetWindowsHookExA(WH_MOUSE_LL, Some(privacy_mode_hook_mouse), hm_mouse, 0);
         if hook_mouse.is_null() {
             if FALSE == UnhookWindowsHookEx(hook_keyboard) {
-                // Fatal error
                 log::error!(
                     " UnhookWindowsHookEx keyboard, error {}",
                     Error::last_os_error()
@@ -109,7 +107,6 @@ pub fn hook() -> ResultType<()> {
                     hook_mouse = hooks.1;
                 }
                 Err(e) => {
-                    // Fatal error
                     allow_err!(tx.send(format!("Unexpected err when hook {}", e)));
                     return;
                 }
@@ -139,7 +136,6 @@ pub fn hook() -> ResultType<()> {
             }
 
             if FALSE == UnhookWindowsHookEx(hook_keyboard as _) {
-                // Fatal error
                 log::error!(
                     "Failed UnhookWindowsHookEx keyboard, error {}",
                     Error::last_os_error()
@@ -147,7 +143,6 @@ pub fn hook() -> ResultType<()> {
             }
 
             if FALSE == UnhookWindowsHookEx(hook_mouse as _) {
-                // Fatal error
                 log::error!(
                     "Failed UnhookWindowsHookEx mouse, error {}",
                     Error::last_os_error()
@@ -204,25 +199,20 @@ pub extern "system" fn privacy_mode_hook_keyboard(
 
     unsafe {
         if (*ks).dwExtraInfo != enigo::ENIGO_INPUT_EXTRA_VALUE {
-            // Disable alt key. Alt + Tab will switch windows.
             if (*ks).flags & LLKHF_ALTDOWN == LLKHF_ALTDOWN {
                 return 1;
             }
 
             match w_param2 {
                 WM_KEYDOWN => {
-                    // Disable all keys other than P and Ctrl.
                     if ![80, 162, 163].contains(&(*ks).vkCode) {
                         return 1;
                     }
 
-                    // NOTE: GetKeyboardState may not work well...
 
-                    // Check if Ctrl + P is pressed
                     let cltr_down = (GetKeyState(VK_CONTROL) as u16) & (0x8000 as u16) > 0;
                     let key = LOBYTE((*ks).vkCode as _);
                     if cltr_down && (key == 'p' as u8 || key == 'P' as u8) {
-                        // Ctrl + P is pressed, turn off privacy mode
                         if let Some(Err(e)) = super::turn_off_privacy(
                             super::INVALID_PRIVACY_MODE_CONN_ID,
                             Some(super::PrivacyModeState::OffByPeer),

@@ -32,9 +32,6 @@ lazy_static::lazy_static! {
     static ref VIDEO: Arc<Mutex<Option<Video>>> = Default::default();
 }
 
-/// SciterHandler
-/// * element
-/// * close_state  for file path when close
 #[derive(Clone, Default)]
 pub struct SciterHandler {
     element: Arc<Mutex<Option<Element>>>,
@@ -105,7 +102,6 @@ impl SciterHandler {
                         value.set_item(k, impls);
                     }
                     _ => {
-                        // ignore for now
                     }
                 }
             }
@@ -125,7 +121,6 @@ impl InvokeUiSession for SciterHandler {
         let mut colors: Vec<u8> = cd.colors.into();
         if colors.iter().filter(|x| **x != 0).next().is_none() {
             log::info!("Fix transparent");
-            // somehow all 0 images shows black rect, here is a workaround
             colors[3] = 1;
         }
         let mut png = Vec::new();
@@ -147,10 +142,6 @@ impl InvokeUiSession for SciterHandler {
     fn set_display(&self, x: i32, y: i32, w: i32, h: i32, cursor_embedded: bool, scale: f64) {
         let scale = if scale <= 0.0 { 1.0 } else { scale };
         self.call("setDisplay", &make_args!(x, y, w, h, cursor_embedded, scale));
-        // https://sciter.com/forums/topic/color_spaceiyuv-crash
-        // Nothing spectacular in decoder – done on CPU side.
-        // So if you can do BGRA translation on your side – the better.
-        // BGRA is used as internal image format so it will not require additional transformations.
         VIDEO.lock().unwrap().as_mut().map(|v| {
             v.stop_streaming().ok();
             let ok = v.start_streaming((w, h), COLOR_SPACE::Rgb32, None);
@@ -323,7 +314,6 @@ impl InvokeUiSession for SciterHandler {
     }
 
     fn set_platform_additions(&self, _data: &str) {
-        // Ignore for sciter version.
     }
 
     fn set_current_display(&self, _disp_idx: i32) {
@@ -394,7 +384,6 @@ impl InvokeUiSession for SciterHandler {
         self.call("onVoiceCallIncoming", &make_args!());
     }
 
-    /// RGBA is directly rendered by [on_rgba]. No need to store the rgba for the sciter ui.
     fn get_rgba(&self, _display: usize) -> *const u8 {
         std::ptr::null()
     }
@@ -414,8 +403,6 @@ impl InvokeUiSession for SciterHandler {
     }
 
     fn handle_terminal_response(&self, _response: TerminalResponse) {
-        // Terminal support is not implemented for Sciter UI
-        // This is a stub implementation to satisfy the trait requirements
     }
 }
 
@@ -450,7 +437,6 @@ impl sciter::EventHandler for SciterSession {
         });
     }
 
-    // https://github.com/sciter-sdk/rust-sciter/blob/master/examples/video.rs
     fn on_event(
         &mut self,
         _root: HELEMENT,
@@ -760,10 +746,6 @@ impl SciterSession {
     fn get_key_event(&self, down_or_up: i32, name: &str, code: i32) -> Option<KeyEvent> {
         let mut key_event = KeyEvent::new();
         if down_or_up == 2 {
-            /* windows send both keyup/keydown and keychar, so here we avoid keychar
-               for <= 0xFF, best practice should only avoid those not on keyboard, but
-               for now, we have no way to test, so avoid <= 0xFF totally
-            */
             if code <= 0xFF {
                 return None;
             }
@@ -781,7 +763,7 @@ impl SciterSession {
         } else {
             if cfg!(target_os = "macos") {
                 match code {
-                    0x4C => key_event.set_control_key(ControlKey::NumpadEnter), // numpad enter
+                    0x4C => key_event.set_control_key(ControlKey::NumpadEnter),
                     0x69 => key_event.set_control_key(ControlKey::Snapshot),
                     0x72 => key_event.set_control_key(ControlKey::Help),
                     0x6E => key_event.set_control_key(ControlKey::Apps),
@@ -818,7 +800,7 @@ impl SciterSession {
             } else if cfg!(target_os = "linux") {
                 match code {
                     65300 => key_event.set_control_key(ControlKey::Scroll),
-                    65421 => key_event.set_control_key(ControlKey::NumpadEnter), // numpad enter
+                    65421 => key_event.set_control_key(ControlKey::NumpadEnter),
                     65407 => key_event.set_control_key(ControlKey::NumLock),
                     65515 => key_event.set_control_key(ControlKey::Meta),
                     65516 => key_event.set_control_key(ControlKey::RWin),

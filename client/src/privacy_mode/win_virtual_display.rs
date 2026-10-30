@@ -85,7 +85,6 @@ impl PrivacyModeImpl {
         }
     }
 
-    // mainly from https://github.com/rustdesk-org/rustdesk/blob/44c3a52ca8502cf53b58b59db130611778d34dbe/libs/scrap/src/dxgi/mod.rs#L365
     fn set_displays(&mut self) {
         self.displays.clear();
         self.virtual_displays.clear();
@@ -172,7 +171,6 @@ impl PrivacyModeImpl {
     }
 
     fn set_primary_display(&mut self) -> ResultType<String> {
-        // Multiple virtual displays with different origins are tested.
         let display = &self.virtual_displays[0];
         let display_name = std::string::String::from_utf16(&display.name)?;
 
@@ -195,8 +193,6 @@ impl PrivacyModeImpl {
                 );
             }
 
-            // Windows 24H2 requires the virtual display to be set first.
-            // No idea why, maybe the same issue: https://developercommunity.visualstudio.com/t/Windows-11-Enterprise-24H2-using-WinApi/10851936?sort=newest
             let flags = CDS_UPDATEREGISTRY | CDS_NORESET;
             let offx = new_primary_dm.u1.s2().dmPosition.x;
             let offy = new_primary_dm.u1.s2().dmPosition.y;
@@ -233,7 +229,6 @@ impl PrivacyModeImpl {
                 if (dd.StateFlags & DISPLAY_DEVICE_ATTACHED_TO_DESKTOP) == 0 {
                     continue;
                 }
-                // Skip the virtual display.
                 if dd.DeviceName == display.name {
                     continue;
                 }
@@ -273,23 +268,12 @@ impl PrivacyModeImpl {
                     bail!("Failed ChangeDisplaySettingsEx, {}", err);
                 }
 
-                // If we want to set dpi, the following references may be helpful.
-                // And setting dpi should be called after changing the display settings.
-                // https://stackoverflow.com/questions/35233182/how-can-i-change-windows-10-display-scaling-programmatically-using-c-sharp
-                // https://github.com/lihas/windows-DPI-scaling-sample/blob/master/DPIHelper/DpiHelper.cpp
-                //
-                // But the official API does not provide a way to get/set dpi.
-                // https://learn.microsoft.com/en-us/windows/win32/api/wingdi/ne-wingdi-displayconfig_device_info_type
-                // https://github.com/lihas/windows-DPI-scaling-sample/blob/738ac18b7a7ce2d8fdc157eb825de9cb5eee0448/DPIHelper/DpiHelper.h#L37
             }
         }
 
         Ok(display_name)
     }
 
-    // NOTE: We can't detect if the other virtual displays are physical displays or not.
-    // We can only use `DeviceString` == `virtual_display_manager::get_cur_device_string()` to detect if the display is a virtual display.
-    // The other virtual displays can't be restored after exiting the privacy mode on Windows 24H2.
     fn disable_physical_displays(&self) -> ResultType<()> {
         for display in &self.displays {
             let mut dm = display.dm.clone();
@@ -330,10 +314,6 @@ impl PrivacyModeImpl {
         }]
     }
 
-    // This function will wait at most 6 seconds for the virtual displays to be ready.
-    // It's ok to wait, because:
-    // 1. A new thread is created to handle the async privacy mode.
-    // 2. The user is usually not in a hurry to turn on the privacy mode.
     pub fn ensure_virtual_display(&mut self, is_async_mode: bool) -> ResultType<()> {
         if self.virtual_displays.is_empty() {
             let displays =
@@ -342,7 +322,6 @@ impl PrivacyModeImpl {
                 thread::sleep(Duration::from_secs(1));
             }
             self.set_displays();
-            // No physical displays, no need to use the privacy mode.
             if self.displays.is_empty() {
                 virtual_display_manager::plug_out_monitor_indices(&displays, false, false)?;
                 bail!(NO_PHYSICAL_DISPLAYS);
@@ -367,22 +346,6 @@ impl PrivacyModeImpl {
     #[inline]
     fn commit_change_display(flags: DWORD) -> ResultType<()> {
         unsafe {
-            // use winapi::{
-            //     shared::windef::HDESK,
-            //     um::{
-            //         processthreadsapi::GetCurrentThreadId,
-            //         winnt::MAXIMUM_ALLOWED,
-            //         winuser::{CloseDesktop, GetThreadDesktop, OpenInputDesktop, SetThreadDesktop},
-            //     },
-            // };
-            // let mut desk_input: HDESK = NULL as _;
-            // let desk_current: HDESK = GetThreadDesktop(GetCurrentThreadId());
-            // if !desk_current.is_null() {
-            //     desk_input = OpenInputDesktop(0, FALSE, MAXIMUM_ALLOWED);
-            //     if desk_input.is_null() {
-            //         SetThreadDesktop(desk_input);
-            //     }
-            // }
 
             let rc = ChangeDisplaySettingsExW(NULL as _, NULL as _, NULL as _, flags, NULL as _);
             if rc != DISP_CHANGE_SUCCESSFUL {
@@ -390,12 +353,6 @@ impl PrivacyModeImpl {
                 bail!("Failed ChangeDisplaySettingsEx, {}", err);
             }
 
-            // if !desk_current.is_null() {
-            //     SetThreadDesktop(desk_current);
-            // }
-            // if !desk_input.is_null() {
-            //     CloseDesktop(desk_input);
-            // }
         }
         Ok(())
     }
@@ -410,15 +367,8 @@ impl PrivacyModeImpl {
         if is_virtual_display_added {
             self.restore_plug_out_monitor();
         } else {
-            // https://github.com/rustdesk/rustdesk/pull/12114#issuecomment-2983054370
-            // No virtual displays added, we need to change the display combination to force the display settings to be reloaded.
-            // This function changes the user behavior of the virtual displays.
-            // But it makes the privacy mode more stable.
-            // No need to restore the virtual displays. It's easy to notice that the virtual displays are plugged out.
             let _ = virtual_display_manager::plug_out_monitor(-1, true, false);
 
-            // We can't replug the virtual dislays here.
-            // TODO: plug out + plug in the virtual displays (`IDD_IMPL_AMYUNI`) in a short time makes the server side crash.
         }
     }
 
@@ -487,7 +437,6 @@ impl PrivacyMode for PrivacyModeImpl {
         let primary_display_name = guard.set_primary_display()?;
         guard.disable_physical_displays()?;
         Self::commit_change_display(CDS_RESET)?;
-        // Explicitly set the resolution(virtual display) to 1920x1080.
         allow_err!(crate::platform::change_resolution(
             &primary_display_name,
             1920,
@@ -506,7 +455,6 @@ impl PrivacyMode for PrivacyModeImpl {
             reset_config_reg_connectivity();
         };
 
-        // OpenInputDesktop and block the others' input ?
         guard.conn_id = conn_id;
         guard.succeeded = true;
 
@@ -524,8 +472,6 @@ impl PrivacyMode for PrivacyModeImpl {
         super::win_input::unhook()?;
         let _tmp_ignore_changed_holder = crate::display_service::temp_ignore_displays_changed();
         self.restore();
-        // We need to force restore the registry connectivity.
-        // This is because the registry connection may be changed by `self.restore()`, but will not be fully restored.
         restore_reg_connectivity(false, true);
 
         if self.conn_id != INVALID_PRIVACY_MODE_CONN_ID {

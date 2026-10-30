@@ -28,8 +28,6 @@ class _TerminalScrollPhysics extends ScrollPhysics {
 
   @override
   bool shouldAcceptUserOffset(ScrollMetrics position) {
-    // A retained main-screen offset can make this inner scrollable win the
-    // trackpad gesture, starving xterm's outer alternate-screen scroll handler.
     if (terminal().isUsingAltBuffer) return false;
     return super.shouldAcceptUserOffset(position);
   }

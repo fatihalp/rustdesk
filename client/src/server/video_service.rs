@@ -1,22 +1,7 @@
-// 24FPS (actually 23.976FPS) is what video professionals ages ago determined to be the
-// slowest playback rate that still looks smooth enough to feel real.
-// Our eyes can see a slight difference and even though 30FPS actually shows
-// more information and is more realistic.
-// 60FPS is commonly used in game, teamviewer 12 support this for video editing user.
 
-// how to capture with mouse cursor:
-// https://docs.microsoft.com/zh-cn/windows/win32/direct3ddxgi/desktop-dup-api?redirectedfrom=MSDN
 
-// RECORD: The following Project has implemented audio capture, hardware codec and mouse cursor drawn.
-// https://github.com/PHZ76/DesktopSharing
 
-// dxgi memory leak issue
-// https://stackoverflow.com/questions/47801238/memory-leak-in-creating-direct2d-device
-// but per my test, it is more related to AcquireNextFrame,
-// https://forums.developer.nvidia.com/t/dxgi-outputduplication-memory-leak-when-using-nv-but-not-amd-drivers/108582
 
-// to-do:
-// https://slhck.info/video/2017/03/01/rate-control.html
 
 use super::{display_service::check_display_changed, service::ServiceTmpl, video_qos::VideoQoS, *};
 #[cfg(target_os = "linux")]
@@ -125,11 +110,6 @@ type FrameFetchedNotifierReceiver = Arc<TokioMutex<UnboundedReceiver<(i32, Optio
 lazy_static::lazy_static! {
     static ref FRAME_FETCHED_NOTIFIERS: Mutex<HashMap<usize, (FrameFetchedNotifierSender, FrameFetchedNotifierReceiver)>> = Mutex::new(HashMap::default());
 
-    // display_idx -> set of conn id.
-    // Used to record which connections need to be notified when
-    // 1. A new frame is received from a web client.
-    //   Because web client does not send the display index in message `VideoReceived`.
-    // 2. The client is closing.
     static ref DISPLAY_CONN_IDS: Arc<Mutex<HashMap<usize, HashSet<i32>>>> = Default::default();
     pub static ref VIDEO_QOS: Arc<Mutex<VideoQoS>> = Default::default();
     pub static ref IS_UAC_RUNNING: Arc<Mutex<bool>> = Default::default();
@@ -225,8 +205,6 @@ impl VideoFrameController {
         let mut receiver_guard = receiver.lock().await;
         match tokio::time::timeout(timeout_dur, receiver_guard.recv()).await {
             Err(_) => {
-                // break if timeout
-                // log::error!("blocking wait frame receiving timeout {}", timeout_millis);
             }
             Ok(Some((id, instant))) => {
                 if let Some(tm) = instant {
@@ -235,7 +213,6 @@ impl VideoFrameController {
                 fetched_conn_ids.insert(id);
             }
             Ok(None) => {
-                // this branch would never be reached
             }
         }
         while !receiver_guard.is_empty() {
@@ -319,7 +296,6 @@ pub fn new(source: VideoSource, idx: usize) -> GenericService {
     vs.sp
 }
 
-// Capturer object is expensive, avoiding to create it frequently.
 fn create_capturer(
     privacy_mode_id: i32,
     display: Display,
@@ -333,10 +309,6 @@ fn create_capturer(
     if privacy_mode_id > 0 {
         #[cfg(windows)]
         {
-            // Windows Mode 1 can cover every local monitor with overlay windows,
-            // but the legacy magnifier capture backend is still single-monitor
-            // constrained. Keep display-switch gating aligned with that backend
-            // limit, not just the overlay coverage.
             if let Some(c1) = crate::privacy_mode::win_mag::create_capturer(
                 privacy_mode_id,
                 display.origin(),
@@ -371,7 +343,6 @@ fn create_capturer(
     };
 }
 
-// This function works on privacy mode. Windows only for now.
 pub fn test_create_capturer(
     privacy_mode_id: i32,
     display_idx: usize,
@@ -404,7 +375,6 @@ pub fn test_create_capturer(
     }
 }
 
-// Note: This function is extremely expensive, do not call it frequently.
 #[cfg(windows)]
 fn check_uac_switch(privacy_mode_id: i32, capturer_privacy_mode_id: i32) -> ResultType<()> {
     if capturer_privacy_mode_id != INVALID_PRIVACY_MODE_CONN_ID
@@ -596,22 +566,15 @@ fn get_capturer(
 
 fn run(vs: VideoService) -> ResultType<()> {
     let mut _raii = Raii::new(vs.idx, vs.sp.name());
-    // Wayland only support one video capturer for now. It is ok to call ensure_inited() here.
-    //
-    // ensure_inited() is needed because clear() may be called.
-    // to-do: wayland ensure_inited should pass current display index.
-    // But for now, we do not support multi-screen capture on wayland.
     #[cfg(target_os = "linux")]
     super::wayland::ensure_inited()?;
     #[cfg(target_os = "linux")]
     let _wayland_call_on_ret = {
-        // Increment active display count when starting
         let _display_count = super::wayland::increment_active_display_count();
 
         SimpleCallOnReturn {
             b: true,
             f: Box::new(|| {
-                // Decrement active display count and only clear if this was the last display
                 let remaining_count = super::wayland::decrement_active_display_count();
                 if remaining_count == 0 {
                     super::wayland::clear();
@@ -631,9 +594,6 @@ fn run(vs: VideoService) -> ResultType<()> {
     let sp = vs.sp;
     let mut c = get_capturer(vs.source, display_idx, last_portable_service_running)?;
     #[cfg(windows)]
-    // ACCESS_LOST marks the next successful capturer creation as a recovery. This timestamp is
-    // consumed once and temporarily holds off the normal WouldBlock-to-GDI fallback, giving the
-    // replacement DXGI capturer time to produce its first frame. Normal startup is unaffected.
     let dxgi_recovery_started = dxgi_recovery_state
         .lock()
         .unwrap()
@@ -729,7 +689,6 @@ fn run(vs: VideoService) -> ResultType<()> {
     let repeat_encode_max = 10;
     let mut encode_fail_counter = 0;
     let mut first_frame = true;
-    // Set once the encoder emits its first packet; until then it may legitimately return nothing.
     let mut encoder_warmed_up = false;
     let capture_width = c.width;
     let capture_height = c.height;
@@ -757,9 +716,6 @@ fn run(vs: VideoService) -> ResultType<()> {
             &mut second_instant,
             &sp.name(),
         )?;
-        // On macOS, a refresh here would destroy a hardware encoder that has been fed a frame but
-        // not yet produced its first packet, restarting the warm-up forever. Defer until it has;
-        // one that never does is still switched away from by max_fail_times in handle_one_frame.
         if sp.is_option_true(OPTION_REFRESH)
             && refresh_allowed(first_frame, encoder_warmed_up, encoder.latency_free())
         {
@@ -806,8 +762,6 @@ fn run(vs: VideoService) -> ResultType<()> {
         let now = time::Instant::now();
         if vs.source.is_monitor() && last_check_displays.elapsed().as_millis() > 1000 {
             last_check_displays = now;
-            // This check may be redundant, but it is better to be safe.
-            // The previous check in `sp.is_option_true(OPTION_REFRESH)` block may be enough.
             try_broadcast_display_changed(&sp, display_idx, &c, false)?;
         }
 
@@ -837,8 +791,6 @@ fn run(vs: VideoService) -> ResultType<()> {
                             },
                             scrap::Frame::Texture(_) => {
                                 if restore_vram {
-                                    // Already set one time, just ignore to break infinite loop.
-                                    // Though it's unreachable, this branch is kept to avoid infinite loop.
                                     (
                                         "Please change codec and try again.".to_owned(),
                                         0,
@@ -919,19 +871,10 @@ fn run(vs: VideoService) -> ResultType<()> {
                     would_block_count += 1;
                     if !is_x11() {
                         if would_block_count >= 100 {
-                            // to-do: Unknown reason for WouldBlock 100 times (seconds = 100 * 1 / fps)
-                            // https://github.com/rustdesk/rustdesk/blob/63e6b2f8ab51743e77a151e2b7ff18816f5fa2fb/libs/scrap/src/common/wayland.rs#L81
-                            //
-                            // Do not reset the capturer for now, as it will cause the prompt to show every few minutes.
-                            // https://github.com/rustdesk/rustdesk/issues/4276
-                            //
-                            // super::wayland::clear();
-                            // bail!("Wayland capturer none 100 times, try restart capture");
                         }
                     }
                 }
                 if !encoder.latency_free() && yuv.len() > 0 {
-                    // yun.len() > 0 means the frame is not texture.
                     if repeat_encode_counter < repeat_encode_max {
                         repeat_encode_counter += 1;
                         let send_conn_ids = handle_one_frame(
@@ -965,14 +908,11 @@ fn run(vs: VideoService) -> ResultType<()> {
             }
             Err(err) => {
                 #[cfg(windows)]
-                // The display-change check can restart capture before error handling below.
                 let recovery_attempt = if !c.is_gdi() && err.kind() == ConnectionReset {
                     dxgi_recovery_state.lock().unwrap().next_attempt()
                 } else {
                     None
                 };
-                // This check may be redundant, but it is better to be safe.
-                // The previous check in `sp.is_option_true(OPTION_REFRESH)` block may be enough.
                 if vs.source.is_monitor() {
                     try_broadcast_display_changed(&sp, display_idx, &c, true)?;
                 }
@@ -1014,7 +954,6 @@ fn run(vs: VideoService) -> ResultType<()> {
                 check_privacy_mode_changed(&sp, display_idx, &c)?;
             }
             frame_controller.try_wait_next(&mut fetched_conn_ids, 300);
-            // break if all connections have received current frame
             if fetched_conn_ids.len() >= frame_controller.send_conn_ids.len() {
                 break;
             }
@@ -1022,7 +961,6 @@ fn run(vs: VideoService) -> ResultType<()> {
         DISPLAY_CONN_IDS.lock().unwrap().remove(&display_idx);
 
         let elapsed = now.elapsed();
-        // may need to enable frame(timeout)
         log::trace!("{:?} {:?}", time::Instant::now(), elapsed);
         if elapsed < spf {
             std::thread::sleep(spf - elapsed);
@@ -1111,7 +1049,6 @@ fn get_encoder_config(
     }
     #[cfg(feature = "vram")]
     Encoder::update(scrap::codec::EncodingUpdate::Check);
-    // https://www.wowza.com/community/t/the-correct-keyframe-interval-in-obs-studio/95162
     let keyframe_interval = if record { Some(240) } else { None };
     let negotiated_codec = Encoder::negotiated_codec();
     match negotiated_codec {
@@ -1212,8 +1149,7 @@ fn get_recorder(
 fn check_change_scale(hardware: bool) -> ResultType<()> {
     use base::config::keys::OPTION_ENABLE_ANDROID_SOFTWARE_ENCODING_HALF_SCALE as SCALE_SOFT;
 
-    // isStart flag is set at the end of startCapture() in Android, wait it to be set.
-    let n = 60; // 3s
+    let n = 60;
     for i in 0..n {
         if scrap::is_start() == Some(true) {
             log::info!("start flag is set");
@@ -1240,7 +1176,6 @@ fn check_change_scale(hardware: bool) -> ResultType<()> {
     log::info!("old_scale: {old_scale}, new_scale: {new_scale}");
     if old_scale != new_scale {
         log::info!("switch due to scale changed, {old_scale} -> {new_scale}");
-        // switch is not a must, but it is better to do so.
         bail!("SWITCH");
     }
     Ok(())
@@ -1269,7 +1204,6 @@ fn check_privacy_mode_changed(
 
 #[inline]
 fn refresh_allowed(unfed: bool, warmed_up: bool, latency_free: bool) -> bool {
-    // Only VideoToolbox has been seen to need this; other platforms keep refreshing as before.
     !cfg!(target_os = "macos") || unfed || warmed_up || latency_free
 }
 
@@ -1288,7 +1222,6 @@ fn handle_one_frame(
     height: usize,
 ) -> ResultType<static_refresh::FrameEncodeResult> {
     sp.snapshot(|sps| {
-        // so that new sub and old sub share the same encoder after switch
         if sps.has_subscribes() {
             log::info!("switch due to new subscriber");
             bail!("SWITCH");
@@ -1317,7 +1250,6 @@ fn handle_one_frame(
         Err(e) => {
             vpx_no_output = e.is::<scrap::VpxNoOutput>();
             *encode_fail_counter += 1;
-            // Encoding errors are not frequent except on Android
             if !cfg!(target_os = "android") {
                 log::error!("encode fail: {e:?}, times: {}", *encode_fail_counter,);
             }
@@ -1327,7 +1259,6 @@ fn handle_one_frame(
                 3
             };
             let repeat = !encoder.latency_free();
-            // repeat encoders can reach max_fail_times on the first frame
             if (first && !repeat) || *encode_fail_counter >= max_fail_times {
                 *encode_fail_counter = 0;
                 if encoder.is_hardware() {
@@ -1386,7 +1317,6 @@ fn try_broadcast_display_changed(
     refresh: bool,
 ) -> ResultType<()> {
     if refresh {
-        // Get display information immediately.
         crate::display_service::check_displays_changed().ok();
     }
     if let Some(display) = check_display_changed(
@@ -1400,7 +1330,6 @@ fn try_broadcast_display_changed(
         {
             let msg_out = Arc::new(msg_out);
             sp.send_shared(msg_out.clone());
-            // switch display may occur before the first video frame, add snapshot to send to new subscribers
             sp.snapshot(move |sps| {
                 sps.send_shared(msg_out.clone());
                 Ok(())
@@ -1479,7 +1408,6 @@ fn check_qos(
             allow_err!(encoder.set_quality(*ratio));
             video_qos.store_bitrate(encoder.bitrate());
         } else {
-            // Now only vaapi doesn't support changing quality
             if !video_qos.in_vbr_state() && !video_qos.latest_quality().is_custom() {
                 log::info!("switch to change quality");
                 bail!("SWITCH");
@@ -1510,7 +1438,6 @@ pub fn set_take_screenshot(source: VideoSource, display_idx: usize, sid: String,
     );
 }
 
-// We need to this function, because the `stride` may be larger than `width * 4`.
 fn get_rgba_from_pixelbuf<'a>(pixbuf: &scrap::PixelBuffer<'a>) -> ResultType<Vec<u8>> {
     let w = pixbuf.width();
     let h = pixbuf.height();
@@ -1579,14 +1506,12 @@ mod tests {
 
     #[test]
     fn refresh_waits_for_hw_encoder_warmup() {
-        // Deferred on macOS only; everywhere else a refresh is always allowed.
         assert_eq!(
             refresh_allowed(false, false, false),
             !cfg!(target_os = "macos")
         );
         assert!(refresh_allowed(false, true, false));
         assert!(refresh_allowed(false, false, true));
-        // Nothing fed yet: no warm-up to lose, and a refresh can restart a stalled capturer.
         assert!(refresh_allowed(true, false, false));
     }
 }

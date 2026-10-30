@@ -25,7 +25,6 @@ import '../../models/platform_model.dart';
 
 class _MenuTheme {
   static const Color blueColor = MyTheme.button;
-  // kMinInteractiveDimension
   static const double height = 20.0;
   static const double dividerHeight = 12.0;
 }
@@ -107,7 +106,7 @@ class _ViewCameraTabPageState extends State<ViewCameraTabPage> {
       _update_remote_count();
     }
     tabController.onRemoved = (_, id) => onRemoveId(id);
-    rustDeskWinManager.setMethodHandler(_remoteMethodHandler);
+    supportDeskWinManager.setMethodHandler(_remoteMethodHandler);
   }
 
   @override
@@ -228,7 +227,6 @@ class _ViewCameraTabPageState extends State<ViewCameraTabPage> {
         : Obx(() => SubWindowDragToResizeArea(
               key: contentKey,
               child: tabWidget,
-              // Specially configured for a better resize area and remote control.
               childPadding: kDragToResizeAreaPadding,
               resizeEdgeSize: stateGlobal.resizeEdgeSize.value,
               enableResizeEdges: subWindowManagerEnableResizeEdges,
@@ -236,7 +234,6 @@ class _ViewCameraTabPageState extends State<ViewCameraTabPage> {
             ));
   }
 
-  // Note: Some dup code to ../widgets/remote_toolbar
   Widget _tabMenuBuilder(String key, CancelFunc cancelFunc) {
     final List<MenuEntryBase<String>> menu = [];
     const EdgeInsets padding = EdgeInsets.only(left: 8.0, right: 5.0);
@@ -326,11 +323,6 @@ class _ViewCameraTabPageState extends State<ViewCameraTabPage> {
 
   void onRemoveId(String id) async {
     if (tabController.state.value.tabs.isEmpty) {
-      // Keep calling until the window status is hidden.
-      //
-      // Workaround for Windows:
-      // If you click other buttons and close in msgbox within a very short period of time, the close may fail.
-      // `await WindowController.fromWindowId(windowId()).close();`.
       Future<void> loopCloseWindow() async {
         int c = 0;
         final windowController = WindowController.fromWindowId(windowId());
@@ -389,7 +381,6 @@ class _ViewCameraTabPageState extends State<ViewCameraTabPage> {
         "[View Camera Page] call ${call.method} with args ${call.arguments} from window $fromWindowId");
 
     dynamic returnValue;
-    // for simplify, just replace connectionId
     if (call.method == kWindowEventNewViewCamera) {
       final args = jsonDecode(call.arguments);
       final id = args['id'];
@@ -441,7 +432,6 @@ class _ViewCameraTabPageState extends State<ViewCameraTabPage> {
         ),
       ));
     } else if (call.method == kWindowDisableGrabKeyboard) {
-      // ???
     } else if (call.method == "onDestroy") {
       tabController.clear();
     } else if (call.method == kWindowActionRebuild) {
@@ -473,7 +463,6 @@ class _ViewCameraTabPageState extends State<ViewCameraTabPage> {
           .toList()
           .join(';');
     } else if (call.method == kWindowEventGetCachedSessionData) {
-      // Ready to show new window and close old tab.
       final args = jsonDecode(call.arguments);
       final id = args['id'];
       final close = args['close'];

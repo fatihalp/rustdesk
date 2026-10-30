@@ -8,7 +8,7 @@ import 'package:flutter_hbb/models/platform_model.dart';
 import 'package:flutter_hbb/models/server_model.dart';
 import 'package:flutter_test/flutter_test.dart';
 
-class _Binding extends Fake implements RustdeskImpl {
+class _Binding extends Fake implements SupportdeskImpl {
   final options = <String, String>{};
 
   @override

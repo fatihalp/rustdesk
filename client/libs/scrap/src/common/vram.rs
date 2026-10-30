@@ -28,10 +28,6 @@ use hwcodec::{
 #[cfg(test)]
 mod repeat_tests;
 
-// https://www.reddit.com/r/buildapc/comments/d2m4ny/two_graphics_cards_two_monitors/
-// https://www.reddit.com/r/techsupport/comments/t2v9u6/dual_monitor_setup_with_dual_gpu/
-// https://cybersided.com/two-monitors-two-gpus/
-// https://learn.microsoft.com/en-us/windows/win32/api/d3d12/nf-d3d12-id3d12device-getadapterluid#remarks
 lazy_static::lazy_static! {
     static ref ENOCDE_NOT_USE: Arc<Mutex<HashMap<String, bool>>> = Default::default();
     static ref FALLBACK_GDI_DISPLAYS: Arc<Mutex<HashSet<String>>> = Default::default();
@@ -108,8 +104,6 @@ impl EncoderApi for VRamEncoder {
             frame.texture()?
         };
         if rotation != 0 {
-            // to-do: support rotation
-            // Both the encoder and display(w,h) information need to be changed.
             bail!("rotation not supported");
         }
         let mut vf = VideoFrame::new();
@@ -147,7 +141,6 @@ impl EncoderApi for VRamEncoder {
     }
 
     fn yuvfmt(&self) -> EncodeYuvFormat {
-        // useless
         EncodeYuvFormat {
             pixfmt: Pixfmt::BGRA,
             w: self.ctx.d.width as _,
@@ -206,7 +199,6 @@ impl VRamEncoder {
             .filter(|e| e.luid == device.luid)
             .collect();
         if v.len() > 0 {
-            // prefer ffmpeg
             if let Some(ctx) = v.iter().find(|c| c.driver == Driver::FFMPEG) {
                 return Some(ctx.clone());
             }
@@ -239,7 +231,6 @@ impl VRamEncoder {
             .filter(|c| c.data_format == data_format)
             .collect();
         if crate::hwcodec::HwRamEncoder::try_get(format).is_some() {
-            // has fallback, no need to require all adapters support
             v
         } else {
             let Ok(displays) = crate::Display::all() else {
@@ -319,7 +310,6 @@ impl VRamDecoder {
     pub fn try_get(format: CodecFormat, luid: Option<i64>) -> Option<DecodeContext> {
         let v: Vec<_> = Self::available(format, luid);
         if v.len() > 0 {
-            // prefer ffmpeg
             if let Some(ctx) = v.iter().find(|c| c.driver == Driver::FFMPEG) {
                 return Some(ctx.clone());
             }

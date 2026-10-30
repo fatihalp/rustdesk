@@ -1,13 +1,11 @@
 use base::platform::windows::is_windows_version_or_greater;
 use hbb_common::{bail, ResultType};
 
-// This string is defined here.
-//  https://github.com/rustdesk-org/RustDeskIddDriver/blob/b370aad3f50028b039aad211df60c8051c4a64d6/RustDeskIddDriver/RustDeskIddDriver.inf#LL73C1-L73C40
-pub const RUSTDESK_IDD_DEVICE_STRING: &'static str = "RustDeskIddDriver Device\0";
+pub const SUPPORTDESK_IDD_DEVICE_STRING: &'static str = "RustDeskIddDriver Device\0";
 pub const AMYUNI_IDD_DEVICE_STRING: &'static str = "USB Mobile Monitor Virtual Display\0";
 
 const IDD_IMPL: &str = IDD_IMPL_AMYUNI;
-const IDD_IMPL_RUSTDESK: &str = "rustdesk_idd";
+const IDD_IMPL_SUPPORTDESK: &str = "supportdesk_idd";
 const IDD_IMPL_AMYUNI: &str = "amyuni_idd";
 const IDD_PLUG_OUT_ALL_INDEX: i32 = -1;
 
@@ -17,7 +15,7 @@ pub fn is_amyuni_idd() -> bool {
 
 pub fn get_cur_device_string() -> &'static str {
     match IDD_IMPL {
-        IDD_IMPL_RUSTDESK => RUSTDESK_IDD_DEVICE_STRING,
+        IDD_IMPL_SUPPORTDESK => SUPPORTDESK_IDD_DEVICE_STRING,
         IDD_IMPL_AMYUNI => AMYUNI_IDD_DEVICE_STRING,
         _ => "",
     }
@@ -36,7 +34,7 @@ pub fn is_virtual_display_supported() -> bool {
 
 pub fn plug_in_headless() -> ResultType<()> {
     match IDD_IMPL {
-        IDD_IMPL_RUSTDESK => rustdesk_idd::plug_in_headless(),
+        IDD_IMPL_SUPPORTDESK => supportdesk_idd::plug_in_headless(),
         IDD_IMPL_AMYUNI => amyuni_idd::plug_in_headless(),
         _ => bail!("Unsupported virtual display implementation."),
     }
@@ -49,11 +47,11 @@ pub fn get_platform_additions() -> serde_json::Map<String, serde_json::Value> {
     }
     map.insert("idd_impl".into(), serde_json::json!(IDD_IMPL));
     match IDD_IMPL {
-        IDD_IMPL_RUSTDESK => {
-            let virtual_displays = rustdesk_idd::get_virtual_displays();
+        IDD_IMPL_SUPPORTDESK => {
+            let virtual_displays = supportdesk_idd::get_virtual_displays();
             if !virtual_displays.is_empty() {
                 map.insert(
-                    "rustdesk_virtual_displays".into(),
+                    "supportdesk_virtual_displays".into(),
                     serde_json::json!(virtual_displays),
                 );
             }
@@ -72,7 +70,7 @@ pub fn get_platform_additions() -> serde_json::Map<String, serde_json::Value> {
 #[inline]
 pub fn plug_in_monitor(idx: u32, modes: Vec<virtual_display::MonitorMode>) -> ResultType<()> {
     match IDD_IMPL {
-        IDD_IMPL_RUSTDESK => rustdesk_idd::plug_in_index_modes(idx, modes),
+        IDD_IMPL_SUPPORTDESK => supportdesk_idd::plug_in_index_modes(idx, modes),
         IDD_IMPL_AMYUNI => amyuni_idd::plug_in_monitor(),
         _ => bail!("Unsupported virtual display implementation."),
     }
@@ -80,13 +78,13 @@ pub fn plug_in_monitor(idx: u32, modes: Vec<virtual_display::MonitorMode>) -> Re
 
 pub fn plug_out_monitor(index: i32, force_all: bool, force_one: bool) -> ResultType<()> {
     match IDD_IMPL {
-        IDD_IMPL_RUSTDESK => {
+        IDD_IMPL_SUPPORTDESK => {
             let indices = if index == IDD_PLUG_OUT_ALL_INDEX {
-                rustdesk_idd::get_virtual_displays()
+                supportdesk_idd::get_virtual_displays()
             } else {
                 vec![index as _]
             };
-            rustdesk_idd::plug_out_peer_request(&indices)
+            supportdesk_idd::plug_out_peer_request(&indices)
         }
         IDD_IMPL_AMYUNI => amyuni_idd::plug_out_monitor(index, force_all, force_one),
         _ => bail!("Unsupported virtual display implementation."),
@@ -95,7 +93,7 @@ pub fn plug_out_monitor(index: i32, force_all: bool, force_one: bool) -> ResultT
 
 pub fn plug_in_peer_request(modes: Vec<Vec<virtual_display::MonitorMode>>) -> ResultType<Vec<u32>> {
     match IDD_IMPL {
-        IDD_IMPL_RUSTDESK => rustdesk_idd::plug_in_peer_request(modes),
+        IDD_IMPL_SUPPORTDESK => supportdesk_idd::plug_in_peer_request(modes),
         IDD_IMPL_AMYUNI => {
             amyuni_idd::plug_in_monitor()?;
             Ok(vec![0])
@@ -110,7 +108,7 @@ pub fn plug_out_monitor_indices(
     force_one: bool,
 ) -> ResultType<()> {
     match IDD_IMPL {
-        IDD_IMPL_RUSTDESK => rustdesk_idd::plug_out_peer_request(indices),
+        IDD_IMPL_SUPPORTDESK => supportdesk_idd::plug_out_peer_request(indices),
         IDD_IMPL_AMYUNI => {
             for _idx in indices.iter() {
                 amyuni_idd::plug_out_monitor(0, force_all, force_one)?;
@@ -123,13 +121,13 @@ pub fn plug_out_monitor_indices(
 
 pub fn reset_all() -> ResultType<()> {
     match IDD_IMPL {
-        IDD_IMPL_RUSTDESK => rustdesk_idd::reset_all(),
+        IDD_IMPL_SUPPORTDESK => supportdesk_idd::reset_all(),
         IDD_IMPL_AMYUNI => amyuni_idd::reset_all(),
         _ => bail!("Unsupported virtual display implementation."),
     }
 }
 
-pub mod rustdesk_idd {
+pub mod supportdesk_idd {
     use super::windows;
     use hbb_common::{allow_err, bail, lazy_static, log, ResultType};
     use std::{
@@ -137,7 +135,6 @@ pub mod rustdesk_idd {
         sync::{Arc, Mutex},
     };
 
-    // virtual display index range: 0 - 2 are reserved for headless and other special uses.
     const VIRTUAL_DISPLAY_INDEX_FOR_HEADLESS: u32 = 0;
     const VIRTUAL_DISPLAY_START_FOR_PEER: u32 = 1;
     const VIRTUAL_DISPLAY_MAX_COUNT: u32 = 5;
@@ -168,7 +165,6 @@ pub mod rustdesk_idd {
                     bail!("Create device failed {}", e);
                 }
             }
-            // Reboot is not required for this case.
             let mut _reboot_required = false;
             virtual_display::install_update_driver(&mut _reboot_required)?;
             self.is_driver_installed = true;
@@ -195,7 +191,7 @@ pub mod rustdesk_idd {
 
     #[inline]
     fn get_device_names() -> Vec<String> {
-        windows::get_device_names(Some(super::RUSTDESK_IDD_DEVICE_STRING))
+        windows::get_device_names(Some(super::SUPPORTDESK_IDD_DEVICE_STRING))
     }
 
     pub fn plug_in_headless() -> ResultType<()> {
@@ -238,7 +234,6 @@ pub mod rustdesk_idd {
                 );
                 return "".to_string();
             }
-            // Sleep is needed here to wait for the virtual display to be ready.
             std::thread::sleep(std::time::Duration::from_millis(50));
         }
         log::error!("Failed to get diff device names after plugin virtual display",);
@@ -412,12 +407,6 @@ pub mod amyuni_idd {
         static ref LAST_PLUG_IN_HEADLESS_TIME: Arc<Mutex<Option<Instant>>> = Arc::new(Mutex::new(None));
     }
     const VIRTUAL_DISPLAY_MAX_COUNT: usize = 4;
-    // The count of virtual displays plugged in.
-    // This count is not accurate, because:
-    // 1. The virtual display driver may also be controlled by other processes.
-    // 2. RustDesk may crash and restart, but the virtual displays are kept.
-    //
-    // to-do: Maybe a better way is to add an option asking the user if plug out all virtual displays on disconnect.
     static VIRTUAL_DISPLAY_COUNT: atomic::AtomicUsize = atomic::AtomicUsize::new(0);
 
     fn get_deviceinstaller64_work_dir() -> ResultType<Option<Vec<u8>>> {
@@ -447,7 +436,6 @@ pub mod amyuni_idd {
             if crate::platform::windows::is_x64() {
                 log::info!("Uninstalling driver by deviceinstaller64.exe");
                 install_if_x86_on_x64(&work_dir, "remove usbmmidd")?;
-                // Sleep some time to wait for the driver to be uninstalled.
                 std::thread::sleep(Duration::from_secs(2));
                 return Ok(());
             }
@@ -459,8 +447,6 @@ pub mod amyuni_idd {
         Ok(())
     }
 
-    // SetupDiCallClassInstaller() will always fail if current_exe() is built as x86 and running on x64.
-    // So we need to call another x64 version exe to install and uninstall the driver.
     fn install_if_x86_on_x64(work_dir: &[u8], args: &str) -> ResultType<()> {
         const SW_HIDE: i32 = 0;
         let mut args = args.bytes().collect::<Vec<_>>();
@@ -484,8 +470,6 @@ pub mod amyuni_idd {
         Ok(())
     }
 
-    // If the driver is installed by "deviceinstaller64.exe", the driver will be installed asynchronously.
-    // The caller must wait some time before using the driver.
     fn check_install_driver(is_async: &mut bool) -> ResultType<()> {
         let _l = LOCK.lock().unwrap();
         let drivers = windows::get_display_drivers();
@@ -551,10 +535,7 @@ pub mod amyuni_idd {
                 std::thread::sleep(Duration::from_millis(30));
             }
         }
-        // No need to consider concurrency here.
         if add {
-            // If the monitor is plugged in, increase the count.
-            // Though there's already a check of `VIRTUAL_DISPLAY_MAX_COUNT`, it's still better to check here for double ensure.
             if VIRTUAL_DISPLAY_COUNT.load(atomic::Ordering::SeqCst) < VIRTUAL_DISPLAY_MAX_COUNT {
                 VIRTUAL_DISPLAY_COUNT.fetch_add(1, atomic::Ordering::SeqCst);
             }
@@ -566,8 +547,6 @@ pub mod amyuni_idd {
         Ok(())
     }
 
-    // `std::thread::sleep()` with a timeout is acceptable here.
-    // Because user can wait for a while to plug in a monitor.
     fn plug_in_monitor_(
         add: bool,
         is_driver_async_installed: bool,
@@ -596,7 +575,6 @@ pub mod amyuni_idd {
                 }
             }
         }
-        // Workaround for the issue that we can't set the default the resolution.
         if let Ok(old_connectivity_old) = reg_connectivity_old {
             std::thread::spawn(move || {
                 try_reset_resolution_on_first_plug_in(old_connectivity_old.len(), 1920, 1080);
@@ -659,22 +637,8 @@ pub mod amyuni_idd {
         plug_in_monitor_(true, is_async, None)
     }
 
-    // `index` the display index to plug out. -1 means plug out all.
-    // `force_all` is used to forcibly plug out all virtual displays.
-    // `force_one` is used to forcibly plug out one virtual display managed by other processes
-    //             if there're no virtual displays managed by RustDesk.
     pub fn plug_out_monitor(index: i32, force_all: bool, force_one: bool) -> ResultType<()> {
         let plug_out_all = index == super::IDD_PLUG_OUT_ALL_INDEX;
-        // If `plug_out_all and force_all` is true, forcibly plug out all virtual displays.
-        // Though the driver may be controlled by other processes,
-        // we still forcibly plug out all virtual displays.
-        //
-        // 1. RustDesk plug in 2 virtual displays. (RustDesk)
-        // 2. Other process plug out all virtual displays. (User manually)
-        // 3. Other process plug in 1 virtual display. (User manually)
-        // 4. RustDesk plug out all virtual displays in this call. (RustDesk disconnect)
-        //
-        // This is not a normal scenario, RustDesk will plug out virtual display unexpectedly.
         let mut plug_in_count = VIRTUAL_DISPLAY_COUNT.load(atomic::Ordering::Relaxed);
         let amyuni_count = get_monitor_count();
         if !plug_out_all {
@@ -686,7 +650,6 @@ pub mod amyuni_idd {
                 }
             }
         } else {
-            // Ignore the message if trying to plug out all virtual displays.
         }
 
         let all_count = windows::get_device_names(None).len();
@@ -867,7 +830,6 @@ mod windows {
             let mut data_type: DWORD = 0;
             let mut required_size: DWORD = 0;
 
-            // Get the required buffer size for the driver description
             let mut buffer;
             unsafe {
                 SetupDiGetDeviceRegistryPropertyW(
@@ -900,7 +862,6 @@ mod windows {
 
             let mut status: ULONG = 0;
             let mut problem_number: ULONG = 0;
-            // Get the device status and problem number
             let config_ret = unsafe {
                 CM_Get_DevNode_Status(
                     &mut status,

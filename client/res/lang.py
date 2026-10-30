@@ -21,8 +21,6 @@ def line_split(line):
     if len(toks) != 2:
         print(line)
         assert 0
-    # Replace fixed position.
-    # Because toks[1] may be v") or v"),
     k = toks[0][toks[0].find('"') + 1:]
     v = toks[1][:toks[1].rfind('"')]
     return k, v
@@ -49,7 +47,6 @@ def expand():
             if line_strip.startswith('("'):
                 k, v = line_split(line_strip)
                 if k in dict:
-                    # embraced with " to avoid empty v
                     line = line.replace('"%s"' % v, '"%s"' % dict[k])
                 else:
                     line = line.replace(v, "")

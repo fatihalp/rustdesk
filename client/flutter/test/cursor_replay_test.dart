@@ -9,7 +9,6 @@ import 'package:flutter_hbb/native/custom_cursor.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:uuid/uuid.dart';
 
-/// Stands in for the core, which keeps every shape the peer sent.
 class _Cursor extends CursorModel {
   _Cursor(FFI ffi) : super(WeakReference(ffi));
   final core = <String, CursorShape>{};
@@ -44,7 +43,6 @@ class _FFI extends Fake implements FFI {
 Uint8List _pixels(int size, int seed) =>
     Uint8List.fromList(List.generate(size * size * 4, (i) => (i + seed) % 256));
 
-/// A shape as the core delivers it, and keeps it.
 Future<void> _feed(_FFI ffi, String id, {int size = 8, int seed = 0}) {
   final pixels = _pixels(size, seed);
   ffi.cursor.core[id] =
@@ -140,7 +138,6 @@ void main() {
 
   test('native cursors stay for the session, every raster of every shape',
       () async {
-    // A delete frees nothing on Windows, so none is deleted before the session ends.
     final cursor = ffi.cursorModel;
     for (var i = 0; i < 100; i++) {
       await _feed(ffi, '$i', size: 32);
@@ -167,7 +164,7 @@ void main() {
     await _feed(ffi, '2', size: 32);
     final shown = _key(buildCursorOfCache(cursor, 1.0, cursor.cache));
     await _settle();
-    _select(ffi, '1'); // its native cursor held its pixels, so they went
+    _select(ffi, '1');
     expect(_key(buildCursorOfCache(cursor, 0.5, cursor.cache)), shown);
     await _settle();
     expect(ffi.cursor.fetched, ['1']);

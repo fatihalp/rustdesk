@@ -27,7 +27,6 @@ import java.nio.ByteBuffer
 import java.util.*
 
 
-// intent action, extra
 const val ACT_REQUEST_MEDIA_PROJECTION = "REQUEST_MEDIA_PROJECTION"
 const val ACT_INIT_MEDIA_PROJECTION_AND_SERVICE = "INIT_MEDIA_PROJECTION_AND_SERVICE"
 const val ACT_LOGIN_REQ_NOTIFY = "LOGIN_REQ_NOTIFY"
@@ -36,7 +35,6 @@ const val EXT_MEDIA_PROJECTION_RES_INTENT = "MEDIA_PROJECTION_RES_INTENT"
 const val EXT_MEDIA_PROJECTION_RESULT_RECEIVER = "MEDIA_PROJECTION_RESULT_RECEIVER"
 const val EXT_LOGIN_REQ_NOTIFY = "LOGIN_REQ_NOTIFY"
 
-// Activity requestCode
 const val REQ_INVOKE_PERMISSION_ACTIVITY_MEDIA_PROJECTION = 101
 const val REQ_REQUEST_MEDIA_PROJECTION = 201
 const val REQ_EXPORT_FILE = 301
@@ -44,10 +42,8 @@ const val REQ_IMPORT_FILES = 302
 const val REQ_IMPORT_DIRECTORY = 303
 const val REQ_EXPORT_FILES = 304
 
-// Activity responseCode
 const val RES_FAILED = -100
 
-// Flutter channel
 const val START_ACTION = "start_action"
 const val GET_START_ON_BOOT_OPT = "get_start_on_boot_opt"
 const val SET_START_ON_BOOT_OPT = "set_start_on_boot_opt"
@@ -75,7 +71,6 @@ data class Info(
 )
 
 fun isSupportVoiceCall(): Boolean {
-    // https://developer.android.com/reference/android/media/MediaRecorder.AudioSource#VOICE_COMMUNICATION
     return Build.VERSION.SDK_INT >= Build.VERSION_CODES.R
 }
 
@@ -98,7 +93,6 @@ fun startAction(context: Context, action: String) {
     try {
         context.startActivity(Intent(action).apply {
             addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
-            // don't pass package name when launch ACTION_ACCESSIBILITY_SETTINGS
             if (ACTION_ACCESSIBILITY_SETTINGS != action) {
                 data = Uri.parse("package:" + context.packageName)
             }

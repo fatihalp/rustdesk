@@ -17,9 +17,6 @@ use webm::mux::{self, Segment, Track, VideoTrack, Writer};
 
 const MIN_SECS: u64 = 1;
 
-// Replace characters that are invalid in Windows filename components so recordings remain portable.
-// Control characters are also replaced because they can make filenames invalid
-// on Windows or invisible and difficult to handle on Linux and macOS.
 fn sanitize_filename_component(value: &str) -> String {
     value
         .chars()
@@ -176,7 +173,6 @@ impl Recorder {
                 #[cfg(not(feature = "hwcodec"))]
                 _ => bail!("unsupported codec type"),
             };
-            // pts is None when new inner is created
             self.pts = None;
             self.send_state(RecordState::NewFile(ctx2.filename.clone()));
         }
@@ -257,7 +253,6 @@ impl Recorder {
         h: usize,
         format: CodecFormat,
     ) -> ResultType<()> {
-        // https://stackoverflow.com/questions/76379101/how-to-create-one-playable-webm-file-from-two-different-video-tracks-with-same-c
         if self.pts.is_none() && !key {
             bail!("first frame is not key frame");
         }
@@ -322,7 +317,6 @@ impl RecorderApi for WebmRecorder {
             },
         );
         if ctx2.format == CodecFormat::AV1 {
-            // [129, 8, 12, 0] in 3.6.0, but zero works
             let codec_private = vec![0, 0, 0, 0];
             if !webm.set_codec_private(vt.track_number(), &codec_private) {
                 bail!("Failed to set codec private");
@@ -426,7 +420,6 @@ impl Drop for HwRecorder {
         self.muxer.as_mut().map(|m| m.write_tail().ok());
         let mut state = RecordState::WriteTail;
         if !self.written || self.start.elapsed().as_secs() < MIN_SECS {
-            // The process cannot access the file because it is being used by another process
             self.muxer = None;
             std::fs::remove_file(&self.ctx2.filename).ok();
             state = RecordState::RemoveFile;

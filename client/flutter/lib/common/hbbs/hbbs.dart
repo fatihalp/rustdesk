@@ -21,8 +21,6 @@ class HttpType {
 
 enum UserStatus { kDisabled, kNormal, kUnverified }
 
-// to-do: The UserPayload does not contain all the fields of the user.
-// Is all the fields of the user needed?
 class UserPayload {
   String name = '';
   String displayName = '';

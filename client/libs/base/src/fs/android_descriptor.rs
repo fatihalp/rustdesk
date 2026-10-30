@@ -38,7 +38,6 @@ impl Drop for DocumentDescriptor {
         let Some(id) = self.id.take() else {
             return;
         };
-        // Aborted jobs must also release the provider's retained descriptor.
         tokio::task::spawn_blocking(move || {
             if let Err(error) = android::request(json!({
                 "op": "close", "descriptor": id, "error": "Document transfer interrupted"

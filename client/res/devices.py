@@ -57,7 +57,7 @@ def view(
                 continue
             last_online = datetime.strptime(
                 device["last_online"].split(".")[0], "%Y-%m-%dT%H:%M:%S"
-            )  # assuming date is in this format
+            )
             if (datetime.utcnow() - last_online).days >= offline_days:
                 devices.append(device)
 
@@ -169,7 +169,6 @@ def main():
         for device in devices:
             print(device)
     elif args.command in ["disable", "enable", "delete", "assign"]:
-        # Check if we need user confirmation for multiple devices
         if len(devices) > 1:
             print(f"Found {len(devices)} devices. Do you want to proceed with {args.command} operation on the devices? (Y/N)")
             confirmation = input("Type 'Y' to confirm: ").strip()

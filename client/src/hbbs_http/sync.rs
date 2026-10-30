@@ -85,7 +85,7 @@ impl InfoUploaded {
 #[cfg(not(any(target_os = "ios")))]
 #[tokio::main(flavor = "current_thread")]
 async fn start_hbbs_sync_async() {
-    let mut interval = crate::rustdesk_interval(tokio::time::interval_at(
+    let mut interval = crate::supportdesk_interval(tokio::time::interval_at(
         Instant::now() + TIME_CONN,
         TIME_CONN,
     ));
@@ -109,24 +109,8 @@ async fn start_hbbs_sync_async() {
                     info_uploaded.uploaded = false;
                     *PRO.lock().unwrap() = false;
                 }
-                // For Windows:
-                // We can't skip uploading sysinfo when the username is empty, because the username may
-                // always be empty before login. We also need to upload the other sysinfo info.
-                //
-                // https://github.com/rustdesk/rustdesk/discussions/8031
-                // We still need to check the username after uploading sysinfo, because
-                // 1. The username may be empty when logining in, and it can be fetched after a while.
-                //    In this case, we need to upload sysinfo again.
-                // 2. The username may be changed after uploading sysinfo, and we need to upload sysinfo again.
-                //
-                // The Windows session will switch to the last user session before the restart,
-                // so it may be able to get the username before login.
-                // But strangely, sometimes we can get the username before login,
-                // we may not be able to get the username before login after the next restart.
                 let mut v = crate::get_sysinfo();
                 let sys_username = v["username"].as_str().unwrap_or_default().to_string();
-                // Though the username comparison is only necessary on Windows,
-                // we still keep the comparison on other platforms for consistency.
                 let need_upload = (!info_uploaded.uploaded || info_uploaded.username.as_ref() != Some(&sys_username)) &&
                     info_uploaded.last_uploaded.map(|x| x.elapsed() >= UPLOAD_SYSINFO_TIMEOUT).unwrap_or(true);
                 if need_upload {
@@ -188,9 +172,8 @@ async fn start_hbbs_sync_async() {
                         let res = hasher.finalize();
                         hash = hbb_common::base64::encode(&res[..]);
                         let old_hash = config::Status::get("sysinfo_hash");
-                        let ver = config::Status::get("sysinfo_ver"); // sysinfo_ver is the version of sysinfo on server's side
+                        let ver = config::Status::get("sysinfo_ver");
                         if hash == old_hash {
-                            // When the api doesn't exist, Ok("") will be returned in test.
                             let samever = match crate::post_request(url.replace("heartbeat", "sysinfo_ver"), "".to_owned(), "").await {
                                 Ok(x)  => {
                                     sysinfo_ver = x.clone();
@@ -198,8 +181,7 @@ async fn start_hbbs_sync_async() {
                                     x == ver
                                 }
                                 _ => {
-                                    false // to make sure Pro can be assigned in below post for old
-                                            // hbbs pro not supporting sysinfo_ver, use false for ensuring
+                                    false
                                 }
                             };
                             if samever {
@@ -220,7 +202,7 @@ async fn start_hbbs_sync_async() {
                                 }
                                 *PRO.lock().unwrap() = true;
                             } else if x == "ID_NOT_FOUND" {
-                                info_uploaded.last_uploaded = None; // next heartbeat will upload sysinfo again
+                                info_uploaded.last_uploaded = None;
                             } else {
                                 info_uploaded.last_uploaded = Some(Instant::now());
                             }
@@ -301,9 +283,6 @@ async fn handle_config_options(
     config_options
         .iter()
         .map(|(k, v)| {
-            // Priority: user config > default advanced options.
-            // Only when default advanced options are also empty, remove user option (fallback to built-in default);
-            // otherwise insert an empty value so user config remains present.
             if v.is_empty() && default_settings.get(k).map_or("", |v| v).is_empty() {
                 options.remove(k);
             } else {
@@ -328,7 +307,6 @@ async fn handle_config_options(
                 }
             }
         }
-        // Authentication update failures must not block unrelated strategy options.
         Config::set_options(non_auth_options);
         return crate::trusted_devices::config::update_options(options).await;
     }
@@ -342,9 +320,6 @@ pub fn is_pro() -> bool {
     PRO.lock().unwrap().clone()
 }
 
-// Fire-and-forget by design: the switch flow must not block on this POST.
-// If the device clock is outside the server's accepted window, the server
-// returns its current Unix time and this task re-signs and retries once.
 #[cfg(feature = "flutter")]
 #[cfg(not(any(target_os = "android", target_os = "ios")))]
 pub fn register_switch_grant(switch_uuid: String) {

@@ -15,7 +15,6 @@ use std::{
     time::{Duration, Instant},
 };
 
-// cargo run --package scrap --example benchmark --release --features hwcodec
 
 const USAGE: &'static str = "
 Codec benchmark.

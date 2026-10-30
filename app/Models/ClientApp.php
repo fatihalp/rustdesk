@@ -79,7 +79,6 @@ class ClientApp extends Model
         return $this->logo_path ? Storage::disk('public')->url($this->logo_path) : null;
     }
 
-    /** The brand.json that gets embedded in the signed client package. */
     public function manifest(): array
     {
         $relay = config('panel.relay');

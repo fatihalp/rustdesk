@@ -17,8 +17,6 @@ g_indent_unit = "\t"
 g_version = ""
 g_build_date = datetime.datetime.now().strftime("%Y-%m-%d %H:%M")
 
-# Replace the following links with your own in the custom arp properties.
-# https://learn.microsoft.com/en-us/windows/win32/msi/property-reference
 g_arpsystemcomponent = {
     "Comments": {
         "msi": "ARPCOMMENTS",
@@ -48,7 +46,7 @@ def make_parser():
         "-d",
         "--dist-dir",
         type=str,
-        default="../../rustdesk",
+        default="../../supportdesk",
         help="The dist directory to install.",
     )
     parser.add_argument(
@@ -81,7 +79,7 @@ def make_parser():
         help='Connection type, e.g. "incoming", "outgoing". Default is empty, means incoming-outgoing',
     )
     parser.add_argument(
-        "--app-name", type=str, default="RustDesk", help="The app name."
+        "--app-name", type=str, default="SupportDesk", help="The app name."
     )
     parser.add_argument(
         "-v", "--version", type=str, default="", help="The app version."
@@ -99,19 +97,8 @@ def make_parser():
     return parser
 
 
-# Files a custom client replaces. Kept in their own cabinet by --template so that
-# rebranding rebuilds a few hundred KB instead of recompressing the whole payload.
-# The app executable is handled separately: it has its own component in RustDesk.wxs.
-#
-# A template has to ship a placeholder for each of these so there is a File row to
-# patch, but the branding assets are optional for a customer and a stock build has
-# none of them at all. So each optional one installs only when its property is set,
-# which the patcher does for the files a customer actually supplied. Otherwise a
-# customer without a logo would install the placeholder, where today they get no
-# logo at all -- the client treats a missing asset as "no logo".
 PER_CUSTOMER_DISK_ID = 2
 PER_CUSTOMER_FILES = {
-    # relative path -> property gating installation, or None if always installed
     "custom.txt": None,
     "data/flutter_assets/assets/icon.ico": "CC_HAS_ICON_ICO",
     "data/flutter_assets/assets/icon.png": "CC_HAS_ICON_PNG",
@@ -175,15 +162,10 @@ def insert_components_between_tags(lines, index_start, app_name, dist_dir, templ
             condition_attr = ""
             if template and is_per_customer(relative):
                 disk_attr = f' DiskId="{PER_CUSTOMER_DISK_ID}"'
-                # Branding assets are optional, and the template only carries a
-                # placeholder, so install one only when the customer supplied it.
                 condition = per_customer_condition(relative)
                 if condition:
                     condition_attr = f' Condition="{condition} = 1"'
 
-            # Don't generate Component Id and File Id like 'Component_{idx}' and 'File_{idx}'
-            # because it will cause error
-            # "Error WIX0130	The primary key 'xxxx' is duplicated in table 'Directory'"
             to_insert_lines = f"""
 {indent}<Component Guid="{uuid.uuid4()}" {dir_attr}{condition_attr}>
 {indent}{g_indent_unit}<File Source="{file_path.as_posix()}" KeyPath="yes" Checksum="yes"{disk_attr} />
@@ -197,7 +179,7 @@ def insert_components_between_tags(lines, index_start, app_name, dist_dir, templ
 
 def gen_auto_component(app_name, dist_dir, template=False):
     return gen_content_between_tags(
-        "Package/Components/RustDesk.wxs",
+        "Package/Components/SupportDesk.wxs",
         "<!--$AutoComonentStart$-->",
         "<!--$AutoComponentEnd$-->",
         lambda lines, index_start: insert_components_between_tags(
@@ -225,7 +207,7 @@ def gen_media2():
 
 def put_app_exe_on_media2():
     """The app executable has its own component, so it is moved by name."""
-    target = Path(sys.argv[0]).parent.joinpath("Package/Components/RustDesk.wxs")
+    target = Path(sys.argv[0]).parent.joinpath("Package/Components/SupportDesk.wxs")
     with open(target, "r", encoding="utf-8") as f:
         content = f.read()
     old = '<File Id="App.exe" Name="$(var.Product).exe" KeyPath="yes" Checksum="yes">'
@@ -276,7 +258,7 @@ def replace_app_name_in_langs(app_name):
         with open(file_path, "r", encoding="utf-8") as f:
             lines = f.readlines()
         for i, line in enumerate(lines):
-            lines[i] = line.replace("RustDesk", app_name)
+            lines[i] = line.replace("SupportDesk", app_name)
         with open(file_path, "w", encoding="utf-8") as f:
             f.writelines(lines)
 
@@ -309,7 +291,6 @@ def gen_custom_dialog_bitmaps():
     def func(lines, index_start):
         indent = g_indent_unit * 2
 
-        # https://wixtoolset.org/docs/tools/wixext/wixui/#customizing-a-dialog-set
         vars = [
             "WixUIBannerBmp",
             "WixUIDialogBmp",
@@ -455,7 +436,6 @@ def prepare_resources():
         shutil.copy(icon_src, icon_dst)
         return True
     else:
-        # unreachable
         print(f"Error: icon.ico not found in {icon_src}")
         return False
 
@@ -483,7 +463,6 @@ def init_global_vars(dist_dir, app_name, args):
         print(f"Error: version {g_version} not found in {dist_app}")
         return False
     if g_version.count(".") == 2:
-        # https://github.com/dotnet/runtime/blob/5535e31a712343a63f5d7d796cd874e563e5ac14/src/libraries/System.Private.CoreLib/src/System/Version.cs
         if args.revision_version < 0 or args.revision_version > 2147483647:
             raise ValueError(f"Invalid revision version: {args.revision_version}")    
         g_version = f"{g_version}.{args.revision_version}"
@@ -498,13 +477,13 @@ def init_global_vars(dist_dir, app_name, args):
 
 
 def update_license_file(app_name):
-    if app_name == "RustDesk":
+    if app_name == "SupportDesk":
         return
     license_file = Path(sys.argv[0]).parent.joinpath("Package/License.rtf")
     with open(license_file, "r", encoding="utf-8") as f:
         license_content = f.read()
     license_content = license_content.replace("website rustdesk.com and other ", "")
-    license_content = license_content.replace("RustDesk", app_name)
+    license_content = license_content.replace("SupportDesk", app_name)
     license_content = re.sub(r"Purslane(?: Tech Pte\.)? Ltd", app_name, license_content, flags=re.IGNORECASE)
     with open(license_file, "w", encoding="utf-8") as f:
         f.write(license_content)
@@ -516,7 +495,6 @@ def replace_component_guids_in_wxs():
         with open(file_path, "r", encoding="utf-8") as f:
             lines = f.readlines()
 
-        # <Component Id="Product.Registry.DefaultIcon" Guid="6DBF2690-0955-4C6A-940F-634DDA503F49">
         for i, line in enumerate(lines):
             match = re.search(r'Component.+Guid="([^"]+)"', line)
             if match:
@@ -544,7 +522,7 @@ if __name__ == "__main__":
     if not gen_pre_vars(args, dist_dir):
         sys.exit(-1)
 
-    if app_name != "RustDesk":
+    if app_name != "SupportDesk":
         replace_component_guids_in_wxs()
 
     if not gen_upgrade_info():

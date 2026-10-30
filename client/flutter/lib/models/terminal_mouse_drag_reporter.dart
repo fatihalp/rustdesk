@@ -152,7 +152,6 @@ class TerminalMouseDragReporter {
         onCancel?.call();
       }
       _reporting = false;
-      // Keep ownership until the matching end event to suppress local selection.
       final controller = _controller;
       scheduleMicrotask(() => _clearSelection(controller));
       return true;
@@ -191,7 +190,6 @@ class TerminalMouseDragReporter {
     _clearSelection(_controller);
     final controller = _controller;
     _pointerId = null;
-    // Keep xterm's tap recognizer suspended for this pointer event.
     scheduleMicrotask(() {
       if (_pointerId == null && identical(_controller, controller)) {
         _clearSelection(controller);

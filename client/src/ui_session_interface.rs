@@ -72,13 +72,9 @@ pub struct Session<T: InvokeUiSession> {
     pub last_change_display: Arc<Mutex<ChangeDisplayRecord>>,
     pub connection_round_state: Arc<Mutex<ConnectionRoundState>>,
     pub printer_names: Arc<RwLock<HashMap<i32, String>>>,
-    // Indicate whether the session is reconnected.
-    // Used to auto start file transfer after reconnection.
     pub reconnect_count: Arc<AtomicUsize>,
     pub last_audit_note: Arc<Mutex<String>>,
     pub audit_guid: Arc<Mutex<String>>,
-    // Every cursor shape as the peer sent it, compressed, by the id the UI knows it by. The
-    // peer sends a shape once, and a window asks for it whenever it has to draw it again.
     #[cfg(feature = "flutter")]
     pub cursor_shapes: Arc<RwLock<HashMap<u64, CursorData>>>,
 }
@@ -104,7 +100,6 @@ enum ConnectionState {
     Disconnected,
 }
 
-/// ConnectionRoundState is used to control the reconnecting logic.
 pub struct ConnectionRoundState {
     round: u32,
     state: ConnectionState,
@@ -295,16 +290,13 @@ impl<T: InvokeUiSession> Session<T> {
         }
     }
 
-    // Caution: This function must be called after peer info is received.
     pub fn get_keyboard_mode(&self) -> String {
         let mode = self.lc.read().unwrap().keyboard_mode.clone();
         let keyboard_mode = KeyboardMode::from_str(&mode);
 
-        // Note: peer_version is 0 before peer info is received.
         let peer_version = self.get_peer_version();
         let platform = self.peer_platform();
 
-        // Saved keyboard mode still exists in this version.
         if let Ok(mode) = keyboard_mode {
             if is_keyboard_mode_supported(&mode, peer_version, &platform) {
                 return mode.to_string();
@@ -500,7 +492,6 @@ impl<T: InvokeUiSession> Session<T> {
         if value != "custom" {
             let custom_fps = *self.lc.read().unwrap().custom_fps.lock().unwrap();
             if custom_fps.unwrap_or(30) != 30 {
-                // non custom quality use 30 fps
                 let msg = self.lc.write().unwrap().set_custom_fps(30, false);
                 self.send(Data::Message(msg));
             }
@@ -772,7 +763,6 @@ impl<T: InvokeUiSession> Session<T> {
     }
 
     pub fn send_key_event(&self, evt: &KeyEvent) {
-        // mode: legacy(0), map(1), translate(2), auto(3)
 
         let mut msg = evt.clone();
         self.swap_modifier_key(&mut msg);
@@ -792,7 +782,6 @@ impl<T: InvokeUiSession> Session<T> {
         self.send(Data::Message(msg_out));
     }
 
-    // Terminal methods
     pub fn open_terminal(&self, terminal_id: i32, rows: u32, cols: u32) {
         let mut action = TerminalAction::new();
         action.set_open(OpenTerminal {
@@ -889,7 +878,6 @@ impl<T: InvokeUiSession> Session<T> {
         keyboard::client::change_grab_status(GrabState::Wait, &keyboard_mode, session_id);
     }
 
-    // flutter only TODO new input
     pub fn input_key(
         &self,
         name: &str,
@@ -975,7 +963,6 @@ impl<T: InvokeUiSession> Session<T> {
 
         #[cfg(not(target_os = "windows"))]
         let key = rdev::key_from_code(position_code) as rdev::Key;
-        // Windows requires special handling
         #[cfg(target_os = "windows")]
         let key = rdev::get_win_key(platform_code, position_code);
 
@@ -1032,7 +1019,6 @@ impl<T: InvokeUiSession> Session<T> {
         platform_code: i32,
         down_or_up: bool,
     ) {
-        // https://github.com/flutter/flutter/blob/master/packages/flutter/lib/src/services/keyboard_key.g.dart#L4356
         let ctrl_key = match platform_code {
             0x007f => Some(ControlKey::VolumeMute),
             0x0080 => Some(ControlKey::VolumeUp),
@@ -1080,10 +1066,6 @@ impl<T: InvokeUiSession> Session<T> {
             target_os = "linux"
         )))]
         let platform_code: u32 = position_code as _;
-        // For translate mode.
-        // We need to set the platform code (keysym) if is AltGr.
-        // https://github.com/rustdesk/rustdesk/blob/07cf1b4db5ef2f925efd3b16b87c33ce03c94809/src/keyboard.rs#L1029
-        // https://github.com/flutter/flutter/issues/153811
         #[cfg(target_os = "linux")]
         let platform_code: u32 = position_code as _;
 
@@ -1100,7 +1082,6 @@ impl<T: InvokeUiSession> Session<T> {
                 Some(rdev::UnicodeInfo {
                     name: Some(character.to_string()),
                     unicode: character.encode_utf16().collect(),
-                    // is_dead: is not correct here, because flutter cannot detect deadcode for now.
                     is_dead: false,
                 })
             },
@@ -1123,7 +1104,6 @@ impl<T: InvokeUiSession> Session<T> {
         );
     }
 
-    // flutter only TODO new input
     fn _input_key(
         &self,
         key: Key,
@@ -1255,7 +1235,6 @@ impl<T: InvokeUiSession> Session<T> {
             }
         }
 
-        // Compute event type once using MOUSE_TYPE_MASK for reuse
         let event_type = mask & MOUSE_TYPE_MASK;
         let (x, y) = if event_type == MOUSE_TYPE_WHEEL || event_type == MOUSE_TYPE_TRACKPAD {
             self.get_scroll_xy((x, y))
@@ -1269,7 +1248,6 @@ impl<T: InvokeUiSession> Session<T> {
             (x, y)
         };
 
-        // #[cfg(not(any(target_os = "android", target_os = "ios")))]
         let (alt, ctrl, shift, command) =
             keyboard::client::get_modifiers_state(alt, ctrl, shift, command);
         let is_left = (mask & (MOUSE_BUTTON_LEFT << 3)) > 0;
@@ -1286,9 +1264,6 @@ impl<T: InvokeUiSession> Session<T> {
         }
 
         send_mouse(mask, x, y, alt, ctrl, shift, command, self);
-        // on macos, ctrl + left button down = right button down, up won't emit, so we need to
-        // emit up myself if peer is not macos
-        // to-do: how about ctrl + left from win to macos
         if cfg!(target_os = "macos") {
             let buttons = mask >> 3;
             if buttons == MOUSE_BUTTON_LEFT
@@ -1310,9 +1285,6 @@ impl<T: InvokeUiSession> Session<T> {
     }
 
     pub fn reconnect(&self, force_relay: bool) {
-        // 1. If current session is connecting, do not reconnect.
-        // 2. If the connection is established, send `Data::Close`.
-        // 3. If the connection is disconnected, do nothing.
         let mut connection_round_state_lock = self.connection_round_state.lock().unwrap();
         if self.thread.lock().unwrap().is_some() {
             match connection_round_state_lock.state {
@@ -1326,21 +1298,15 @@ impl<T: InvokeUiSession> Session<T> {
 
         let cloned = self.clone();
 
-        // override only if true
         if true == force_relay {
             let mut lc = self.lc.write().unwrap();
             lc.force_relay = true;
-            // An explicit retry-via-relay is a decision about this peer, not transport
-            // necessity: Relay-only ICE for this round like any force-always-relay session,
-            // and it is the one kind of relay that belongs in the peer's saved config.
             lc.policy_relay = true;
             lc.peer_relay = true;
         }
         self.lc.write().unwrap().peer_info = None;
         self.reconnect_count.fetch_add(1, Ordering::SeqCst);
         let mut lock = self.thread.lock().unwrap();
-        // No need to join the previous thread, because it will exit automatically.
-        // And the previous thread will not change important states.
         *lock = Some(std::thread::spawn(move || {
             io_loop(cloned, round);
         }));
@@ -1444,7 +1410,6 @@ impl<T: InvokeUiSession> Session<T> {
             if let Some(stripped) = job_str.strip_suffix('}') {
                 format!(r#"{},"auto_start": true}}"#, stripped).into()
             } else {
-                // unreachable in normal cases
                 log::warn!(
                     "The last character is not '}}': {}, auto start is ignored on flutter",
                     job_str
@@ -1460,12 +1425,10 @@ impl<T: InvokeUiSession> Session<T> {
         self.clear_all_jobs();
         let pc = self.load_config();
         if pc.transfer.write_jobs.is_empty() && pc.transfer.read_jobs.is_empty() {
-            // no last jobs
             return;
         }
         let reconnect_count_thr = if cfg!(feature = "flutter") { 0 } else { 1 };
         let is_reconnected = self.reconnect_count.load(Ordering::SeqCst) > reconnect_count_thr;
-        // TODO: can add a confirm dialog
         let mut cnt = 1;
         for job_str in pc.transfer.read_jobs.iter() {
             if !job_str.is_empty() {
@@ -1561,7 +1524,6 @@ impl<T: InvokeUiSession> Session<T> {
                 ) {
                     Some((display.width, display.height))
                 } else {
-                    // display origin is changed, or some other events.
                     None
                 };
                 self.lc
@@ -1688,7 +1650,7 @@ impl<T: InvokeUiSession> Session<T> {
 
     pub fn printer_response(&self, id: i32, path: String, printer_name: String) {
         self.printer_names.write().unwrap().insert(id, printer_name);
-        let to = std::env::temp_dir().join(format!("rustdesk_printer_{id}"));
+        let to = std::env::temp_dir().join(format!("supportdesk_printer_{id}"));
         self.send(Data::SendFiles((
             id,
             base::fs::JobType::Printer,
@@ -1707,7 +1669,7 @@ pub trait InvokeUiSession: Send + Sync + Clone + 'static + Sized + Default {
     fn set_cursor_position(&self, cp: CursorPosition);
     fn set_display(&self, x: i32, y: i32, w: i32, h: i32, cursor_embedded: bool, scale: f64);
     fn switch_display(&self, display: &SwitchDisplay);
-    fn set_peer_info(&self, peer_info: &PeerInfo); // flutter
+    fn set_peer_info(&self, peer_info: &PeerInfo);
     fn set_displays(&self, displays: &Vec<DisplayInfo>);
     fn set_platform_additions(&self, data: &str);
     fn on_connected(&self, conn_type: ConnType);
@@ -1857,10 +1819,8 @@ impl<T: InvokeUiSession> Interface for Session<T> {
             );
         }
         self.update_privacy_mode();
-        // Clear audit_guid when connection is established successfully
         *self.audit_guid.lock().unwrap() = String::new();
         *self.last_audit_note.lock().unwrap() = String::new();
-        // Save recent peers, then push event to flutter. So flutter can refresh peer page.
         self.lc.write().unwrap().handle_peer_info(&pi);
         self.set_peer_info(&pi);
         if self.is_file_transfer() {
@@ -2049,7 +2009,7 @@ pub async fn io_loop<T: InvokeUiSession>(handler: Session<T>, round: u32) {
                 || handler.args[2].parse::<i32>().unwrap_or(0) <= 0
                 || port <= 0
             {
-                handler.on_error("Invalid arguments, usage:<br><br> rustdesk --port-forward remote-id listen-port remote-host remote-port");
+                handler.on_error("Invalid arguments, usage:<br><br> supportdesk --port-forward remote-id listen-port remote-host remote-port");
             }
             let remote_host = handler.args[1].clone();
             let remote_port = handler.args[2].parse::<i32>().unwrap_or(0);

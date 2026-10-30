@@ -28,7 +28,7 @@ lazy_static::lazy_static! {
     static ref PASTE_OBSERVER_INFO: Arc<Mutex<Option<PasteObserverInfo>>> = Default::default();
 }
 
-pub const TEMP_FILE_PREFIX: &str = ".rustdesk_";
+pub const TEMP_FILE_PREFIX: &str = ".supportdesk_";
 
 #[derive(Default, Debug, Clone, PartialEq)]
 pub(super) struct PasteObserverInfo {
@@ -165,7 +165,6 @@ impl PasteboardContext {
         })
     }
 
-    // Just removing the file can also make paste option in the context menu disappear.
     fn empty_clipboard_(&mut self, _conn_id: i32) -> bool {
         self.tx_remove_file
             .as_ref()
@@ -199,8 +198,6 @@ impl PasteboardContext {
             ClipboardFile::FormatList { format_list } => {
                 let temp_files = Self::temp_files_count();
                 if temp_files >= 3 {
-                    // The temp files should be 0 or 1 in normal case.
-                    // We should not continue to paste files if there are more than 3 temp files.
                     return Err(CliprdrError::CommonError {
                         description: format!(
                             "too many temp files, current: {}, limit: {}",
@@ -314,7 +311,6 @@ impl PasteboardContext {
     ) -> Result<(), CliprdrError> {
         log::debug!("handle format data response, msg_flags: {msg_flags}");
         if msg_flags != 0x1 {
-            // return failure message?
         }
 
         let mut task_lock = self.paste_task.lock().unwrap();
@@ -323,13 +319,11 @@ impl PasteboardContext {
             .unwrap()
             .as_ref()
             .map(|task| task.target_path.clone());
-        // unreachable in normal case
         let Some(target_dir) = target_dir.as_ref().map(|d| Path::new(d).parent()).flatten() else {
             return Err(CliprdrError::CommonError {
                 description: "failed to get parent path".to_string(),
             });
         };
-        // unreachable in normal case
         if !target_dir.exists() {
             return Err(CliprdrError::CommonError {
                 description: "target path does not exist".to_string(),
@@ -399,7 +393,6 @@ fn handle_paste_result(task_info: &PasteObserverInfo) {
         .lock()
         .unwrap()
         .replace(task_info.clone());
-    // to-do: add a timeout to clear data in `PASTE_OBSERVER_INFO`.
     std::fs::remove_file(&task_info.source_path).ok();
     std::fs::remove_file(&task_info.target_path).ok();
     let data = ClipboardFile::FormatDataRequest {

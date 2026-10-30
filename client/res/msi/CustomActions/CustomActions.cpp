@@ -1,4 +1,3 @@
-// CustomAction.cpp : Defines the entry point for the custom action.
 #include "pch.h"
 #include <stdlib.h>
 #include <strutil.h>
@@ -23,7 +22,6 @@ UINT __stdcall CustomActionHello(
 
     WcaLog(LOGMSG_STANDARD, "Initialized.");
 
-    // TODO: Add your custom action code here.
     WcaLog(LOGMSG_STANDARD, "================= Example CustomAction Hello");
 
 LExit:
@@ -31,18 +29,13 @@ LExit:
     return WcaFinalize(er);
 }
 
-// Helper function to safely delete a file using handle-based deletion.
-// Directories are refused after opening the handle.
 BOOL SafeDeleteItem(LPCWSTR fullPath)
 {
-    // Open the file/directory with delete and attribute-read access plus FILE_FLAG_OPEN_REPARSE_POINT
-    // to prevent following symlinks.
-    // Use shared access to allow deletion even when other processes have the file open.
     DWORD flags = FILE_FLAG_BACKUP_SEMANTICS | FILE_FLAG_OPEN_REPARSE_POINT;
     HANDLE hFile = CreateFileW(
         fullPath,
         DELETE | FILE_READ_ATTRIBUTES,
-        FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE,  // Allow shared access
+        FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE,
         NULL,
         OPEN_EXISTING,
         flags,
@@ -70,8 +63,6 @@ BOOL SafeDeleteItem(LPCWSTR fullPath)
         return FALSE;
     }
 
-    // Use SetFileInformationByHandle to mark for deletion.
-    // The file will be deleted when the handle is closed.
     FILE_DISPOSITION_INFO dispInfo;
     dispInfo.DeleteFile = TRUE;
 
@@ -162,19 +153,6 @@ BOOL DeleteRuntimeGeneratedFile(LPCWSTR installFolder, LPCWSTR fileName)
     return SafeDeleteItem(fullPath);
 }
 
-// See `Package.wxs` for the sequence of this custom action.
-//
-// Upgrade/uninstall sequence:
-//   1. InstallInitialize
-//   2. RemoveExistingProducts
-//      ├─ TerminateProcesses
-//      ├─ TryStopDeleteService
-//      ├─ RemoveRuntimeGeneratedFiles - <-- Here
-//      └─ RemoveFiles
-//   3. InstallValidate
-//   4. InstallFiles
-//   5. InstallExecute
-//   6. InstallFinalize
 UINT __stdcall RemoveRuntimeGeneratedFiles(
     __in MSIHANDLE hInstall)
 {
@@ -206,7 +184,7 @@ UINT __stdcall RemoveRuntimeGeneratedFiles(
     }
 
     WcaLog(LOGMSG_STANDARD, "Removing runtime-generated files from install folder: %ls", installFolder);
-    DeleteRuntimeGeneratedFile(installFolder, L"RuntimeBroker_rustdesk.exe");
+    DeleteRuntimeGeneratedFile(installFolder, L"RuntimeBroker_supportdesk.exe");
 
 LExit:
     ReleaseStr(pwzData);
@@ -215,11 +193,6 @@ LExit:
     return WcaFinalize(er);
 }
 
-// https://learn.microsoft.com/en-us/windows/win32/api/winternl/nf-winternl-ntqueryinformationprocess
-// **NtQueryInformationProcess** may be altered or unavailable in future versions of Windows.
-// Applications should use the alternate functions listed in this topic.
-// But I do not find the alternate functions.
-// https://github.com/heim-rs/heim/issues/105#issuecomment-683647573
 typedef NTSTATUS(NTAPI *pfnNtQueryInformationProcess)(HANDLE, PROCESSINFOCLASS, PVOID, ULONG, PULONG);
 bool TerminateProcessIfNotContainsParam(pfnNtQueryInformationProcess NtQueryInformationProcess, HANDLE process, LPCWSTR excludeParam)
 {
@@ -241,11 +214,9 @@ bool TerminateProcessIfNotContainsParam(pfnNtQueryInformationProcess NtQueryInfo
             {
                 if (pebUpp.CommandLine.Length > 0)
                 {
-                    // Allocate extra space for null terminator
                     WCHAR *commandLine = (WCHAR *)malloc(pebUpp.CommandLine.Length + sizeof(WCHAR));
                     if (commandLine != NULL)
                     {
-                        // Initialize all bytes to zero for safety
                         memset(commandLine, 0, pebUpp.CommandLine.Length + sizeof(WCHAR));
                         if (ReadProcessMemory(process, pebUpp.CommandLine.Buffer,
                                               commandLine, pebUpp.CommandLine.Length, &dwBytesRead))
@@ -266,10 +237,6 @@ bool TerminateProcessIfNotContainsParam(pfnNtQueryInformationProcess NtQueryInfo
     return processClosed;
 }
 
-// Terminate processes that do not have parameter [excludeParam]
-// Note. This function relies on "NtQueryInformationProcess",
-//       which may not be found.
-//       Then all processes of [processName] will be terminated.
 bool TerminateProcessesByNameW(LPCWSTR processName, LPCWSTR excludeParam)
 {
     HMODULE hntdll = GetModuleHandleW(L"ntdll.dll");
@@ -290,7 +257,6 @@ bool TerminateProcessesByNameW(LPCWSTR processName, LPCWSTR excludeParam)
     }
 
     bool processClosed = false;
-    // Create a snapshot of the current system processes
     HANDLE snapshot = CreateToolhelp32Snapshot(TH32CS_SNAPPROCESS, 0);
     if (snapshot != INVALID_HANDLE_VALUE)
     {
@@ -355,7 +321,6 @@ LExit:
     return WcaFinalize(er);
 }
 
-// No use for now, it can be refer as an example of ShellExecuteW.
 void AddFirewallRuleCmdline(LPWSTR exeName, LPWSTR exeFile, LPCWSTR dir)
 {
     HRESULT hr = S_OK;
@@ -376,7 +341,6 @@ void AddFirewallRuleCmdline(LPWSTR exeName, LPWSTR exeFile, LPCWSTR dir)
     }
 
     hi = ShellExecuteW(NULL, L"open", L"netsh", cmdline, NULL, SW_HIDE);
-    // https://learn.microsoft.com/en-us/windows/win32/api/shellapi/nf-shellapi-shellexecutew
     if ((int)hi <= 32) {
         WcaLog(LOGMSG_STANDARD, "Failed to change firewall rule : %d, last error: %d", (int)hi, GetLastError());
     }
@@ -385,7 +349,6 @@ void AddFirewallRuleCmdline(LPWSTR exeName, LPWSTR exeFile, LPCWSTR dir)
     }
 }
 
-// No use for now, it can be refer as an example of ShellExecuteW.
 void RemoveFirewallRuleCmdline(LPWSTR exeName)
 {
     HRESULT hr = S_OK;
@@ -406,7 +369,6 @@ void RemoveFirewallRuleCmdline(LPWSTR exeName)
     }
 
     hi = ShellExecuteW(NULL, L"open", L"netsh", cmdline, NULL, SW_HIDE);
-    // https://learn.microsoft.com/en-us/windows/win32/api/shellapi/nf-shellapi-shellexecutew
     if ((int)hi <= 32) {
         WcaLog(LOGMSG_STANDARD, "Failed to change firewall rule \"%ls\" : %d, last error: %d", rulename, (int)hi, GetLastError());
     }
@@ -448,13 +410,6 @@ UINT __stdcall AddFirewallRules(
         exeNameNoExt[szNameLen - 4] = L'\0';
     }
 
-    //if (exeFile[0] == L'1') {
-    //    AddFirewallRuleCmdline(exeNameNoExt, exeFile, L"in");
-    //    AddFirewallRuleCmdline(exeNameNoExt, exeFile, L"out");
-    //}
-    //else {
-    //    RemoveFirewallRuleCmdline(exeNameNoExt);
-    //}
 
     AddFirewallRule(exeFile[0] == L'1', exeNameNoExt, exeFile + 1);
 
@@ -631,12 +586,7 @@ UINT __stdcall TryStopDeleteService(__in MSIHANDLE hInstall)
         }
     }
 
-    // It's really strange that we need sleep here.
-    // But the upgrading may be stuck at "copying new files" because the file is in using.
-    // Steps to reproduce: Install -> stop service in tray --> start service -> upgrade
-    // Sleep(300);
 
-    // Or we can terminate the process
     hr = StringCchPrintfW(szExeFile, cchExeFile, L"%ls.exe", svcName);
     ExitOnFailure(hr, "Failed to compose a resource identifier string");
     TerminateProcessesByNameW(szExeFile, L"--not-in-use");
@@ -736,7 +686,6 @@ UINT __stdcall AddRegSoftwareSASGeneration(__in MSIHANDLE hInstall)
     ExitOnFailure(hr, "Failed to initialize");
 
     hi = ShellExecuteW(NULL, L"open", L"reg", L" add HKEY_LOCAL_MACHINE\\Software\\Microsoft\\Windows\\CurrentVersion\\Policies\\System /f /v SoftwareSASGeneration /t REG_DWORD /d 1", NULL, SW_HIDE);
-    // https://learn.microsoft.com/en-us/windows/win32/api/shellapi/nf-shellapi-shellexecutew
     if ((int)hi <= 32) {
         WcaLog(LOGMSG_STANDARD, "Failed to add registry name \"%ls\", %d, %d", valueName, (int)hi, GetLastError());
     }
@@ -744,8 +693,6 @@ UINT __stdcall AddRegSoftwareSASGeneration(__in MSIHANDLE hInstall)
         WcaLog(LOGMSG_STANDARD, "Registry name \"%ls\" is added", valueName);
     }
 
-    // Why RegSetValueExW always return 998?
-    //
     result = RegCreateKeyExW(HKEY_LOCAL_MACHINE, subKey, 0, NULL, REG_OPTION_NON_VOLATILE, KEY_WRITE, NULL, &hKey, NULL);
     if (result != ERROR_SUCCESS) {
         WcaLog(LOGMSG_STANDARD, "Failed to create or open registry key: %d", result);
@@ -793,7 +740,6 @@ UINT __stdcall RemoveAmyuniIdd(
 
     UninstallDriver(L"usbmmidd", rebootRequired);
 
-    // Only for x86 app on x64
     GetNativeSystemInfo(&si);
     if (si.wProcessorArchitecture != PROCESSOR_ARCHITECTURE_AMD64) {
         goto LExit;
@@ -823,7 +769,6 @@ UINT __stdcall RemoveAmyuniIdd(
 
     WcaLog(LOGMSG_STANDARD, "Remove amyuni idd %ls in %ls", exe, workDir);
     hi = ShellExecuteW(NULL, L"open", exe, L"remove usbmmidd", workDir, SW_HIDE);
-    // https://learn.microsoft.com/en-us/windows/win32/api/shellapi/nf-shellapi-shellexecutew
     if ((int)hi <= 32) {
         WcaLog(LOGMSG_STANDARD, "Failed to remove amyuni idd : %d, last error: %d", (int)hi, GetLastError());
     }
@@ -856,13 +801,9 @@ void TryCreateStartServiceByShell(LPWSTR svcName, LPWSTR svcBinary, LPWSTR szSvc
     WcaLog(LOGMSG_STANDARD, "TryCreateStartServiceByShell, service: %ls", svcName);
 
     TryStopDeleteServiceByShell(svcName);
-    // Do not check the result here
 
     i = 0;
     j = 0;
-    // svcBinary is a string with double quotes, we need to escape it for shell arguments.
-    // It is original used for `CreateServiceW`.
-    // eg. "C:\Program Files\MyApp\MyApp.exe" --service -> \"C:\Program Files\MyApp\MyApp.exe\" --service
     while (true) {
         if (svcBinary[j] == L'"') {
             szNewBin[i] = L'\\';
@@ -900,7 +841,6 @@ void TryCreateStartServiceByShell(LPWSTR svcName, LPWSTR svcBinary, LPWSTR szSvc
         WcaLog(LOGMSG_STANDARD, "Service \"%ls\" is created with shell.", svcName);
     }
 
-    // Query and log if the service is running.
     for (int k = 0; k < 10; ++k) {
         if (!QueryServiceStatusExW(svcName, &svcStatus)) {
             lastErrorCode = GetLastError();
@@ -914,7 +854,6 @@ void TryCreateStartServiceByShell(LPWSTR svcName, LPWSTR svcBinary, LPWSTR szSvc
                     continue;
                 }
             }
-            // Break if the service exists.
             WcaLog(LOGMSG_STANDARD, "Failed to query service status: \"%ls\", error: 0x%02X.", svcName, lastErrorCode);
             break;
         }
@@ -960,7 +899,6 @@ void TryStopDeleteServiceByShell(LPWSTR svcName)
     }
     hi = ShellExecuteW(NULL, L"open", L"cmd.exe", szCmd, NULL, SW_HIDE);
 
-    // Query and log if the service is stopped or deleted.
     for (int k = 0; k < 10; ++k) {
         if (!IsServiceRunningW(svcName)) {
             break;
@@ -991,7 +929,6 @@ void TryStopDeleteServiceByShell(LPWSTR svcName)
         WcaLog(LOGMSG_STANDARD, "Service \"%ls\" deletion is completed without errors with shell,", svcName);
     }
 
-    // Query and log the status of the service after deletion.
     for (int k = 0; k < 10; ++k) {
         if (!QueryServiceStatusExW(svcName, &svcStatus)) {
             if (GetLastError() == ERROR_SERVICE_DOES_NOT_EXIST) {
@@ -1031,15 +968,11 @@ UINT __stdcall InstallPrinter(
     hr = WcaGetProperty(L"CustomActionData", &pwzData);
     ExitOnFailure(hr, "failed to get CustomActionData");
 
-    // "<app name>|<install folder>". Split here rather than through
-    // WcaReadStringFromCaData, whose delimiter is a literal wide char 128 that a
-    // Formatted property value cannot carry.
     {
         std::wstring data(pwzData);
         size_t separator = data.find(L'|');
         if (separator == std::wstring::npos)
         {
-            // A package built before the name was passed in; keep the stock name.
             appNameValue.clear();
             installFolderValue = data;
         }
@@ -1075,8 +1008,6 @@ UINT __stdcall UninstallPrinter(
     hr = WcaInitialize(hInstall, "UninstallPrinter");
     ExitOnFailure(hr, "Failed to initialize");
 
-    // Must match the name install used, otherwise the printer is left behind. Absent
-    // on packages built before this was passed in, where it was the stock name.
     hr = WcaGetProperty(L"CustomActionData", &pwzData);
     ExitOnFailure(hr, "failed to get CustomActionData");
     if (pwzData)

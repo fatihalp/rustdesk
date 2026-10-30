@@ -1,4 +1,3 @@
-// ignore_for_file: avoid_web_libraries_in_flutter
 
 import 'dart:convert';
 import 'dart:js_interop';
@@ -22,10 +21,6 @@ import 'package:uuid/uuid.dart';
 final List<StreamSubscription<MouseEvent>> mouseListeners = [];
 final List<StreamSubscription<KeyboardEvent>> keyListeners = [];
 
-// WebCodecs VideoFrames handed over from js/src/webcodecs.js arrive as plain
-// interop objects (the package language version predates extension types).
-// This side owns each frame and must close it quickly: hardware decoders
-// stall once their small output frame pool is exhausted.
 int _videoFrameWidth(JSObject frame) =>
     frame.getProperty<JSNumber>('displayWidth'.toJS).toDartInt;
 int _videoFrameHeight(JSObject frame) =>
@@ -42,7 +37,7 @@ typedef HandleEvent = Future<void> Function(Map<String, dynamic> evt);
 
 class PlatformFFI {
   final _eventHandlers = <String, Map<String, HandleEvent>>{};
-  final RustdeskImpl _ffiBind = RustdeskImpl();
+  final SupportdeskImpl _ffiBind = SupportdeskImpl();
 
   static String getByName(String name, [String arg = '']) {
     return context.callMethod('getByName', [name, arg]);
@@ -71,7 +66,7 @@ class PlatformFFI {
   static final PlatformFFI instance = PlatformFFI._();
 
   static get localeName => window.navigator.language;
-  RustdeskImpl get ffiBind => _ffiBind;
+  SupportdeskImpl get ffiBind => _ffiBind;
 
   static Future<String> getVersion() async {
     throw UnimplementedError();
@@ -190,7 +185,6 @@ class PlatformFFI {
     };
   }
 
-  // The web core calls this with a shape's pixels as bytes, as it calls onRgba for a frame.
   void setCursorDataCallback(
       void Function(String, int, int, int, int, Uint8List) fun) {
     context["onCursorData"] = (String id, int hotx, int hoty, int width,
@@ -203,10 +197,6 @@ class PlatformFFI {
 
   late final WebVideoFrameQueue<JSObject, ui.Image> _videoFrameQueue;
 
-  // Zero-readback video path: the JS decoder hands decoded VideoFrames here
-  // (checking typeof window.onVideoFrame before every frame), and the engine
-  // imports them GPU-to-GPU via createImageBitmap. Unregistering the JS global
-  // reverts the JS side to the RGBA readback path.
   void setVideoFrameCallback(
       Future<void> Function(int, ui.Image, bool Function()) fun) {
     _videoFrameQueue.beginSession(fun);
@@ -268,7 +258,6 @@ class PlatformFFI {
     return null;
   }
 
-  // just for compilation
   void syncAndroidServiceAppDirConfigPath() {}
 
   void setFullscreenCallback(void Function(bool) fun) {

@@ -23,17 +23,6 @@ class RdClipboardManager(private val clipboardManager: ClipboardManager) {
         ClipDescription.MIMETYPE_TEXT_HTML
     )
 
-    // 1. Avoid listening to the same clipboard data updated by `rustUpdateClipboard`.
-    // 2. Avoid sending the clipboard data before enabling client clipboard.
-    //    1) Disable clipboard
-    //    2) Copy text "a"
-    //    3) Enable clipboard
-    //    4) Switch to another app
-    //    5) Switch back to the app
-    //    6) "a" should not be sent to the client, because it's copied before enabling clipboard
-    //
-    // It's okay to that `rustEnableClientClipboard(false)` is called after `rustUpdateClipboard`,
-    // though the `lastUpdatedClipData` will be set to null once.
     private var lastUpdatedClipData: ClipData? = null
     private var isClientEnabled = true;
     private var _isCaptureStarted = false;
@@ -44,10 +33,7 @@ class RdClipboardManager(private val clipboardManager: ClipboardManager) {
     fun checkPrimaryClip(isClient: Boolean) {
         val clipData = clipboardManager.primaryClip
         if (clipData != null && clipData.itemCount > 0) {
-            // Only handle the first item in the clipboard for now.
             val clip = clipData.getItemAt(0)
-            // Ignore the `isClipboardDataEqual()` check if it's a host operation.
-            // Because it's an action manually triggered by the user.
             if (isClient) {
                 if (lastUpdatedClipData != null && isClipboardDataEqual(clipData, lastUpdatedClipData!!)) {
                     Log.d(logTag, "Clipboard data is the same as last update, ignore")

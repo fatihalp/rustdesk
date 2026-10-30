@@ -78,11 +78,8 @@ table.has_current thead th:current {
   font-weight: bold;
 }
 
-table tr:nth-child(odd) { background-color: white; } /* each odd row */
-table tr:nth-child(even) { background-color: #F4F5F6; } /* each even row */
-
-table.has_current tr:current /* current row */
-{
+table tr:nth-child(odd) { background-color: white; } table tr:nth-child(even) { background-color: #F4F5F6; } 
+table.has_current tr:current {
   background-color: color(accent);
 }
 

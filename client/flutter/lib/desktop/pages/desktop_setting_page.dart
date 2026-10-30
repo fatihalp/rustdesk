@@ -178,7 +178,6 @@ class _DesktopSettingPageState extends State<DesktopSettingPage>
     WidgetsBinding.instance.removeObserver(this);
     Get.delete<PageController>(tag: _kSettingPageControllerTag);
     Get.delete<Rx<SettingsTabKey>>(tag: _kSettingPageTabKeyTag);
-    // Get.delete does not dispose a plain ChangeNotifier.
     controller.dispose();
     super.dispose();
   }
@@ -251,7 +250,6 @@ class _DesktopSettingPageState extends State<DesktopSettingPage>
   }
 
   Widget _buildBlock({required List<Widget> children}) {
-    // check both mouseMoveTime and videoConnCount
     return Obx(() {
       final videoConnBlock =
           _canBeBlocked.value && stateGlobal.videoConnCount > 0;
@@ -394,7 +392,6 @@ class _DesktopSettingPageState extends State<DesktopSettingPage>
   }
 }
 
-//#region pages
 
 class _General extends StatefulWidget {
   const _General({Key? key}) : super(key: key);
@@ -429,10 +426,6 @@ class _GeneralState extends State<_General> {
   }
 
   Widget keyboardShortcuts() {
-    // The bindings JSON (LocalConfig key `keyboard-shortcuts`) holds three
-    // flags + the bindings list: {enabled, pass_through, bindings}. When the
-    // master is off, the pass-through toggle and the Configure entry are
-    // hidden — both are meaningless without an active matcher.
     return StatefulBuilder(builder: (context, setLocalState) {
       final enabled = ShortcutModel.isEnabled();
       return _Card(title: 'Keyboard shortcuts', children: [
@@ -511,7 +504,6 @@ class _GeneralState extends State<_General> {
           () async {
             serviceBtnEnabled.value = false;
             await start_service(serviceStop.value);
-            // enable the button after 1 second
             Future.delayed(const Duration(seconds: 1), () {
               serviceBtnEnabled.value = true;
             });
@@ -560,7 +552,6 @@ class _GeneralState extends State<_General> {
             isServer: false,
           ),
         ),
-        // though this is related to GUI, but opengl problem affects all users, so put in config rather than local
         if (isLinux)
           Tooltip(
             message: translate('software_render_tip'),
@@ -646,7 +637,6 @@ class _GeneralState extends State<_General> {
         ),
     ];
 
-    // Add client-side wakelock option for desktop platforms
     if (!bind.isIncomingOnly()) {
       children.add(_OptionCheckBox(
         context,
@@ -924,17 +914,9 @@ class _GeneralState extends State<_General> {
     });
   }
 
-  // How long an already-connected relay is held back to give the direct WebRTC
-  // attempt a chance to win. It only means anything while WebRTC is on, so it
-  // follows the checkbox as an indented sub-option and is hidden outright when
-  // the box is clear — the shape `directIp` uses for its port.
   List<Widget> webrtcOptions(BuildContext context) {
     final stored = bind.mainGetLocalOption(key: kOptionRelayFallbackDelay);
     final controller = TextEditingController(text: stored);
-    // What the field holds against what is saved. Apply is offered only while
-    // the two differ, so an untouched field shows no button at all, and neither
-    // does one typed back to its saved value or cleared when nothing was saved
-    // — the state an "edited" flag alone would still call dirty.
     final typed = RxString(stored);
     final saved = RxString(stored);
     return [
@@ -963,8 +945,6 @@ class _GeneralState extends State<_General> {
                     enabled: enabled && !isOptFixed,
                     onChanged: (v) => typed.value = v,
                     inputFormatters: [
-                      // Seconds, at most one decimal. Clearing the field is
-                      // allowed and restores the built-in default.
                       FilteringTextInputFormatter.allow(
                           RegExp(r'^([0-9]|[1-9][0-9])(\.[0-9]?)?$')),
                     ],
@@ -1051,7 +1031,6 @@ class _SafetyState extends State<_Safety> with AutomaticKeepAliveClientMixin {
 
   Widget tfa() {
     bool enabled = !locked;
-    // Simple temp wrapper for PR check
     tmpWrapper() {
       RxBool has2fa = bind.mainHasValid2FaSync().obs;
       RxBool hasBot = bind.mainHasValidBotSync().obs;
@@ -1200,7 +1179,6 @@ class _SafetyState extends State<_Safety> with AutomaticKeepAliveClientMixin {
 
   Widget permissions(context) {
     bool enabled = !locked;
-    // Simple temp wrapper for PR check
     tmpWrapper() {
       String accessMode = bind.mainGetOptionSync(key: kOptionAccessMode);
       _AccessMode mode;
@@ -1444,8 +1422,6 @@ class _SafetyState extends State<_Safety> with AutomaticKeepAliveClientMixin {
             if (usePassword && !isChangePermanentPasswordDisabled())
               _SubButton('Set permanent password', setPasswordDialog,
                   permEnabled && !locked),
-            // if (usePassword)
-            //   hide_cm(!locked).marginOnly(left: _kContentHSubMargin - 6),
             if (usePassword) radios[2],
           ]);
         })));
@@ -1507,7 +1483,6 @@ class _SafetyState extends State<_Safety> with AutomaticKeepAliveClientMixin {
       _OptionCheckBox(context, 'Enable direct IP access', kOptionDirectServer,
           update: update, enabled: !locked),
       () {
-        // Simple temp wrapper for PR check
         tmpWrapper() {
           bool enabled = option2bool(kOptionDirectServer,
               bind.mainGetOptionSync(key: kOptionDirectServer));
@@ -1567,7 +1542,6 @@ class _SafetyState extends State<_Safety> with AutomaticKeepAliveClientMixin {
 
   Widget whitelist() {
     bool enabled = !locked;
-    // Simple temp wrapper for PR check
     tmpWrapper() {
       RxBool hasWhitelist = whitelistNotEmpty().obs;
       update() async {
@@ -1841,7 +1815,6 @@ class _NetworkState extends State<_Network> with AutomaticKeepAliveClientMixin {
       return Offstage();
     }
 
-    // Helper function to create network setting ListTiles
     Widget listTile({
       required IconData icon,
       required String title,
@@ -2133,8 +2106,6 @@ class _DisplayState extends State<_Display> {
     void onDebouncer(int v) {
       bind.mainSetUserDefaultOption(
           key: kKeyTrackpadSpeed, value: v.toString());
-      // It's better to notify all sessions that the default speed is changed.
-      // But it may also be ok to take effect in the next connection.
     }
 
     return _Card(title: 'Default trackpad speed', children: [
@@ -2354,7 +2325,6 @@ class _AccountState extends State<_Account> {
   }
 
   Widget? _buildUserAvatar() {
-    // Resolve relative avatar path at display time
     final avatar =
         bind.mainResolveAvatarUrl(avatar: gFFI.userModel.avatar.value);
     return buildAvatarWidget(
@@ -2497,8 +2467,6 @@ class __PrinterState extends State<_Printer> {
     }
 
     final installed = bind.mainIsInstalled();
-    // `is-printer-installed` may fail, but it's rare case.
-    // Add additional error message here if it's really needed.
     final isPrinterInstalled =
         bind.mainGetCommonSync(key: 'is-printer-installed') == 'true';
 
@@ -2595,7 +2563,7 @@ class _AboutState extends State<_About> {
       final scrollController = ScrollController();
       return SingleChildScrollView(
         controller: scrollController,
-        child: _Card(title: translate('About RustDesk'), children: [
+        child: _Card(title: translate('About SupportDesk'), children: [
           Column(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
@@ -2666,11 +2634,8 @@ class _AboutState extends State<_About> {
   }
 }
 
-//#endregion
 
-//#region components
 
-// ignore: non_constant_identifier_names
 Widget _Card(
     {required String title,
     required List<Widget> children,
@@ -2707,7 +2672,6 @@ Widget _Card(
   );
 }
 
-// ignore: non_constant_identifier_names
 Widget _OptionCheckBox(
   BuildContext context,
   String label,
@@ -2720,7 +2684,6 @@ Widget _OptionCheckBox(
   bool isServer = true,
   bool Function()? optGetter,
   Future<void> Function(String, bool)? optSetter,
-  // Optional widget rendered between the label and the trailing space.
   Widget? trailing,
 }) {
   getOpt() => optGetter != null
@@ -2765,7 +2728,6 @@ Widget _OptionCheckBox(
             offstage: !ref.value || checkedIcon == null,
             child: checkedIcon?.marginOnly(right: 5),
           ),
-          // Without `trailing`, keep the original Expanded(Text) layout.
           if (trailing == null)
             Expanded(
                 child: Text(
@@ -2793,7 +2755,6 @@ Widget _OptionCheckBox(
   );
 }
 
-// ignore: non_constant_identifier_names
 Widget _Radio<T>(BuildContext context,
     {required T value,
     required T groupValue,
@@ -2837,18 +2798,6 @@ class _WaylandCardState extends State<WaylandCard> {
   static const _kClearShortcutsInhibitorEventKey =
       'clear-gnome-shortcuts-inhibitor-permission-res';
   final _clearShortcutsInhibitorFailedMsg = ''.obs;
-  // Don't show the shortcuts permission reset button for now.
-  // Users can change it manually:
-  //   "Settings" -> "Apps" -> "RustDesk" -> "Permissions" -> "Inhibit Shortcuts".
-  // For resetting(clearing) the permission from the portal permission store, you can
-  // use (replace <desktop-id> with the RustDesk desktop file ID):
-  //   busctl --user call org.freedesktop.impl.portal.PermissionStore \
-  //   /org/freedesktop/impl/portal/PermissionStore org.freedesktop.impl.portal.PermissionStore \
-  //   DeletePermission sss "gnome" "shortcuts-inhibitor" "<desktop-id>"
-  // On a native install this is typically "rustdesk.desktop"; on Flatpak it is usually
-  // the exported desktop ID derived from the Flatpak app-id (e.g. "com.rustdesk.RustDesk.desktop").
-  //
-  // We may add it back in the future if needed.
   final showResetInhibitorPermission = false;
 
   @override
@@ -2984,7 +2933,6 @@ class _WaylandCardState extends State<WaylandCard> {
   }
 }
 
-// ignore: non_constant_identifier_names
 Widget _Button(String label, Function() onPressed,
     {bool enabled = true, String? tip, ButtonStyle? style}) {
   var button = ElevatedButton(
@@ -3005,7 +2953,6 @@ Widget _Button(String label, Function() onPressed,
   ]).marginOnly(left: _kContentHMargin);
 }
 
-// ignore: non_constant_identifier_names
 Widget _SubButton(String label, Function() onPressed, [bool enabled = true]) {
   return Row(
     children: [
@@ -3019,7 +2966,6 @@ Widget _SubButton(String label, Function() onPressed, [bool enabled = true]) {
   ).marginOnly(left: _kContentHSubMargin);
 }
 
-// ignore: non_constant_identifier_names
 Widget _SubLabeledWidget(BuildContext context, String label, Widget child,
     {bool enabled = true}) {
   return Row(
@@ -3188,9 +3134,7 @@ class _CountDownButtonState extends State<_CountDownButton> {
   }
 }
 
-// Tappable row that pushes the shortcut configuration page.
 class _ShortcutsConfigureRow extends StatelessWidget {
-  // ignore: unused_element
   const _ShortcutsConfigureRow({Key? key}) : super(key: key);
 
   @override
@@ -3219,9 +3163,7 @@ class _ShortcutsConfigureRow extends StatelessWidget {
   }
 }
 
-//#endregion
 
-//#region dialogs
 
 void changeSocks5Proxy() async {
   var socks = await bind.mainGetSocks();
@@ -3240,8 +3182,6 @@ void changeSocks5Proxy() async {
   var pwdController = TextEditingController(text: password);
   RxBool obscure = true.obs;
 
-  // proxy settings
-  // The following option is a not real key, it is just used for custom client advanced settings.
   const String optionProxyUrl = "proxy-url";
   final isOptFixed = isOptionFixed(optionProxyUrl);
 
@@ -3270,7 +3210,6 @@ void changeSocks5Proxy() async {
         proxyMsg = translate(await bind.mainTestIfValidServer(
             server: domainPort, testWithProxy: false));
         if (proxyMsg.isEmpty) {
-          // ignore
         } else {
           cancel();
           return;
@@ -3378,7 +3317,6 @@ void changeSocks5Proxy() async {
                 ),
               ],
             ),
-            // NOT use Offstage to wrap LinearProgressIndicator
             if (isInProgress)
               const LinearProgressIndicator().marginOnly(top: 8),
           ],
@@ -3394,4 +3332,3 @@ void changeSocks5Proxy() async {
   });
 }
 
-//#endregion

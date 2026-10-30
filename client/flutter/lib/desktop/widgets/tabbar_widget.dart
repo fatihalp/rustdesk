@@ -27,7 +27,7 @@ const double _kDividerIndent = 10;
 const double _kActionIconSize = 12;
 
 class TabInfo {
-  final String key; // Notice: cm use client_id.toString() as key
+  final String key;
   final String label;
   final IconData? selectedIcon;
   final IconData? unselectedIcon;
@@ -96,7 +96,6 @@ class DesktopTabController {
   final state = DesktopTabState().obs;
   final DesktopTabType tabType;
 
-  /// index, key
   Function(int, String)? onRemoved;
   Function(String)? onSelected;
   Future<void> Function()? onCloseWindow;
@@ -121,10 +120,8 @@ class DesktopTabController {
       assert(toIndex >= 0);
     }
     try {
-      // tabPage has not been initialized, call `onSelected` at the end of initState
       jumpTo(toIndex, callOnSelected: false);
     } catch (e) {
-      // call before binding controller will throw
       debugPrint("Failed to jumpTo: $e");
     }
   }
@@ -147,8 +144,6 @@ class DesktopTabController {
     onRemoved?.call(index, key);
   }
 
-  /// For addTab, tabPage has not been initialized, set [callOnSelected] to false,
-  /// and call [onSelected] at the end of initState
   bool jumpTo(int index, {bool callOnSelected = true}) {
     if (!isDesktop || index < 0) {
       return false;
@@ -232,7 +227,6 @@ typedef TabBuilder = Widget Function(
 typedef TabMenuBuilder = Widget Function(String key);
 typedef LabelGetter = Rx<String> Function(String key);
 
-/// [_lastClickTime], help to handle double click
 int _lastClickTime = 0;
 
 class DesktopTab extends StatefulWidget {
@@ -242,7 +236,6 @@ class DesktopTab extends StatefulWidget {
   final bool showMaximize;
   final bool showClose;
   final Widget Function(Widget pageView)? pageViewBuilder;
-  // Right click tab menu
   final TabMenuBuilder? tabMenuBuilder;
   final Widget? tail;
   final Future<bool> Function()? onWindowCloseButton;
@@ -290,7 +283,6 @@ class DesktopTab extends StatefulWidget {
   }
 }
 
-// ignore: must_be_immutable
 class _DesktopTabState extends State<DesktopTab>
     with MultiWindowListener, WindowListener {
   Timer? _macOSCheckRestoreTimer;
@@ -418,10 +410,6 @@ class _DesktopTabState extends State<DesktopTab>
     }
   }
 
-  // On Linux, GTK destroys the window on a close request unless prevent-close
-  // is on. It is off for the cm and install windows, and onActiveWindowChanged()
-  // turns it off to quit, so the window can no longer be saved or hidden.
-  // https://github.com/rustdesk/rustdesk/issues/16512
   Future<bool> _isLinuxWindowClosed() async =>
       isLinux && isMainWindow && !await windowManager.isPreventClose();
 
@@ -452,7 +440,7 @@ class _DesktopTabState extends State<DesktopTab>
         controller.clear();
       }
       await windowController.hide();
-      await rustDeskWinManager
+      await supportDeskWinManager
           .call(WindowType.Main, kWindowEventHide, {"id": kWindowId!});
     }
 
@@ -476,13 +464,11 @@ class _DesktopTabState extends State<DesktopTab>
 
     await _saveFrame(flush: true);
 
-    // hide window on close
     if (isMainWindow) {
-      if (rustDeskWinManager.getActiveWindows().contains(kMainWindowId)) {
-        await rustDeskWinManager.unregisterActiveWindow(kMainWindowId);
+      if (supportDeskWinManager.getActiveWindows().contains(kMainWindowId)) {
+        await supportDeskWinManager.unregisterActiveWindow(kMainWindowId);
       }
       if (await _isLinuxWindowClosed()) return;
-      // macOS specific workaround, the window is not hiding when in fullscreen.
       if (isMacOS && await windowManager.isFullScreen()) {
         await windowManager.setFullScreen(false);
         await macOSWindowClose(
@@ -493,11 +479,8 @@ class _DesktopTabState extends State<DesktopTab>
         await mainWindowClose();
       }
     } else {
-      // it's safe to hide the subwindow
       final controller = WindowController.fromWindowId(kWindowId!);
       if (isMacOS) {
-        // onWindowClose() maybe called multiple times because of loopCloseWindow() in remote_tab_page.dart.
-        // use ??=  to make sure the value is set on first call.
 
         if (await onWindowCloseButton?.call() ?? true) {
           if (await controller.isFullScreen()) {
@@ -560,26 +543,19 @@ class _DesktopTabState extends State<DesktopTab>
             physics: NeverScrollableScrollPhysics(),
             children: () {
               if (DesktopTabType.cm == tabType) {
-                // Fix when adding a new tab still showing closed tabs with the same peer id, which would happen after the DesktopTab was stateful.
                 return state.value.tabs.map((tab) {
                   return tab.page;
                 }).toList();
               }
 
-              /// to-do refactor, separate connection state and UI state for remote session.
-              /// [workaround] PageView children need an immutable list, after it has been passed into PageView
               final tabLen = state.value.tabs.length;
               if (tabLen == _tabWidgets.length) {
                 return _tabWidgets;
               } else if (_tabWidgets.isNotEmpty &&
                   tabLen == _tabWidgets.length + 1) {
-                /// On add. Use the previous list(pointer) to prevent item's state init twice.
-                /// *[_tabWidgets.isNotEmpty] means TabsWindow(remote_tab_page or file_manager_tab_page) opened before, but was hidden. In this case, we have to reload, otherwise the child can't be built.
                 _tabWidgets.add(state.value.tabs.last.page);
                 return _tabWidgets;
               } else {
-                /// On remove or change. Use new list(pointer) to reload list children so that items loading order is normal.
-                /// the Widgets in list must enable [AutomaticKeepAliveClientMixin]
                 final newList = state.value.tabs.map((v) => v.page).toList();
                 _tabWidgets = newList;
                 return newList;
@@ -592,10 +568,6 @@ class _DesktopTabState extends State<DesktopTab>
     }
   }
 
-  /// Check whether to show ListView
-  ///
-  /// Conditions:
-  /// - hide single item when only has one item (home) on [DesktopTabPage].
   bool isHideSingleItem() {
     return state.value.tabs.length == 1 &&
         (controller.tabType == DesktopTabType.main ||
@@ -608,23 +580,19 @@ class _DesktopTabState extends State<DesktopTab>
       children: [
         Expanded(
             child: GestureDetector(
-                // custom double tap handler
                 onTap: !isIncomingHomePage && showMaximize
                     ? () {
                         final current = DateTime.now().millisecondsSinceEpoch;
                         final elapsed = current - _lastClickTime;
                         _lastClickTime = current;
                         if (elapsed < bind.getDoubleClickTime()) {
-                          // onDoubleTap
                           toggleMaximize(isMainWindow)
                               .then((value) => stateGlobal.setMaximized(value));
                         }
                       }
-                    : (isIncomingHomePage ? () {} : null), // Keep tap recognizer for Windows touch.
+                    : (isIncomingHomePage ? () {} : null),
                 onPanStart: (_) => startDragging(isMainWindow),
                 onPanCancel: () {
-                  // We want to disable dragging of the tab area in the tab bar.
-                  // Disable dragging is needed because macOS handles dragging by default.
                   if (isMacOS) {
                     setMovable(isMainWindow, false);
                   }
@@ -651,7 +619,7 @@ class _DesktopTabState extends State<DesktopTab>
                         Offstage(
                             offstage: !showTitle,
                             child: const Text(
-                              "RustDesk",
+                              "SupportDesk",
                               style: TextStyle(fontSize: 13),
                             ).marginOnly(left: 2))
                       ]).marginOnly(
@@ -661,7 +629,6 @@ class _DesktopTabState extends State<DesktopTab>
                     ),
                     Expanded(
                         child: Listener(
-                            // handle mouse wheel
                             onPointerSignal: (e) {
                               if (e is PointerScrollEvent) {
                                 final sc =
@@ -691,7 +658,6 @@ class _DesktopTabState extends State<DesktopTab>
                             ))),
                   ],
                 ))),
-        // hide simulated action buttons when we in compatible ui mode, because of reusing system title bar.
         WindowActionPanel(
           isMainWindow: isMainWindow,
           state: state,
@@ -812,8 +778,6 @@ class WindowActionPanelState extends State<WindowActionPanel> {
                   onTap: () async {
                     final res = await widget.onClose?.call() ?? true;
                     if (res) {
-                      // hide for all window
-                      // note: the main window can be restored by tray icon
                       Future.delayed(Duration.zero, () async {
                         if (widget.isMainWindow) {
                           await windowManager.close();
@@ -834,7 +798,6 @@ class WindowActionPanelState extends State<WindowActionPanel> {
 
   void _toggleMaximize() {
     toggleMaximize(widget.isMainWindow).then((maximize) {
-      // update state for sub window, wc.unmaximize/maximize() will not invoke onWindowMaximize/Unmaximize
       stateGlobal.setMaximized(maximize);
     });
   }
@@ -856,8 +819,6 @@ void setMovable(bool isMainWindow, bool movable) {
   }
 }
 
-/// return true -> window will be maximize
-/// return false -> window will be unmaximize
 Future<bool> toggleMaximize(bool isMainWindow) async {
   if (isMainWindow) {
     if (await windowManager.isMaximized()) {
@@ -915,7 +876,6 @@ Future<bool> closeConfirmDialog() async {
               },
             )
           ]),
-      // confirm checkbox
       actions: [
         dialogButton("Cancel", onPressed: close, isOutline: true),
         dialogButton("OK", onPressed: submit),
@@ -953,10 +913,6 @@ class _ListView extends StatelessWidget {
     this.selectedBorderColor,
   });
 
-  /// Check whether to show ListView
-  ///
-  /// Conditions:
-  /// - hide single item when only has one item (home) on [DesktopTabPage].
   bool isHideSingleItem() {
     return state.value.tabs.length == 1 &&
             controller.tabType == DesktopTabType.main ||
@@ -1181,7 +1137,6 @@ class _TabState extends State<_Tab> with RestorationMixin {
               child: Row(
                 children: [
                   SizedBox(
-                      // _kTabBarHeight also displays normally
                       height: _showTabBarBottomDivider(widget.tabType)
                           ? _kTabBarHeight - 1
                           : _kTabBarHeight,
@@ -1331,7 +1286,7 @@ class AddButton extends StatelessWidget {
     return ActionIcon(
         message: 'New Connection',
         icon: IconFont.add,
-        onTap: () => rustDeskWinManager.call(
+        onTap: () => supportDeskWinManager.call(
             WindowType.Main, kWindowMainWindowOnTop, ""),
         isClose: false);
   }

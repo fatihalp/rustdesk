@@ -51,13 +51,6 @@ pub(crate) fn portable_service_listener_security_attributes() -> io::Result<Secu
         "current_process_user_sid_string returned a non-SDDL SID: {}",
         user_sid
     );
-    // SDDL:
-    // - `D:P`                => protected DACL (no inherited ACEs)
-    // - `(A;;GA;;;SY)`       => allow GENERIC_ALL to LocalSystem
-    // - `(A;;GA;;;{user_sid})` => allow GENERIC_ALL to current process user SID
-    // References:
-    // - Security Descriptor String Format: https://learn.microsoft.com/en-us/windows/win32/secauthz/security-descriptor-string-format
-    // - ACE strings in SDDL: https://learn.microsoft.com/en-us/windows/win32/secauthz/ace-strings
     let sddl = format!("D:P(A;;GA;;;SY)(A;;GA;;;{user_sid})");
     SecurityAttributes::from_sddl(&sddl).map_err(|err| {
         io::Error::new(
@@ -90,8 +83,6 @@ fn macos_service_ipc_allows_gui_and_service_binaries(
         return false;
     }
 
-    // On installed macOS builds, `_service` is listened by the `service` binary while the GUI
-    // process connects from the app executable within the same app bundle.
     let gui_exe_name = std::ffi::OsString::from(crate::get_app_name());
     let gui_exe = gui_exe_name.as_os_str();
     let service_exe = std::ffi::OsStr::new("service");
@@ -156,17 +147,12 @@ fn is_allowed_windows_portable_service_peer(
     _client_session_id: Option<u32>,
     _expected_session_id: Option<u32>,
 ) -> bool {
-    // Portable-service listener DACL includes SYSTEM and current-process SID.
-    // In the portable-service path, current process is expected to run as SYSTEM,
-    // and the higher-layer peer policy stays SYSTEM-only.
     matches!(client_is_system, Some(true))
 }
 
 #[cfg(any(target_os = "macos", target_os = "linux"))]
 #[inline]
 pub(crate) fn is_allowed_service_peer_uid(peer_uid: u32, active_uid: Option<u32>) -> bool {
-    // Root is allowed at the UID gate because the service side may run as root.
-    // Callers still enforce executable matching before accepting service-scoped peers.
     peer_uid == 0 || active_uid.is_some_and(|uid| uid == peer_uid)
 }
 
@@ -181,7 +167,6 @@ fn console_owner_uid() -> Option<u32> {
 #[cfg(target_os = "macos")]
 #[inline]
 fn active_uid_strict() -> Option<u32> {
-    // Prefer the filesystem metadata over parsing external command output.
     console_owner_uid()
 }
 
@@ -207,11 +192,6 @@ pub(crate) fn active_uid() -> Option<u32> {
     active_uid_strict()
 }
 
-/// The active session uid read ONLY from the service-loop cache, never from a fresh (blocking) seat0
-/// lookup. `None` on a cache miss. For hot, latency-sensitive, fail-closed re-auth on an async runtime
-/// thread (the `_drm` per-frame re-auth), where a blocking `loginctl` per frame would stall the stream.
-// Gated with the feature, not just the OS: the `_drm` per-frame re-auth is its only caller, so a
-// drm-off Linux build would carry it as dead code and warn about it.
 #[cfg(all(target_os = "linux", feature = "drm"))]
 #[inline]
 pub(crate) fn active_uid_cached() -> Option<u32> {
@@ -368,10 +348,6 @@ fn peer_exe_canonical_path_by_pid(peer_pid: u32) -> ResultType<PathBuf> {
 pub(crate) fn executable_paths_match(left: &Path, right: &Path) -> bool {
     #[cfg(target_os = "windows")]
     {
-        // Callers pass paths resolved through fs::canonicalize() first, so NT
-        // namespace paths and 8.3 short names are expected to be resolved before
-        // this check. Keep this normalization limited to remaining Win32 spelling
-        // differences.
         fn normalize(path: &Path) -> String {
             let mut normalized = path.to_string_lossy().replace('/', "\\");
             if let Some(stripped) = normalized.strip_prefix(r"\\?\") {
@@ -656,26 +632,12 @@ pub(crate) fn authorize_windows_portable_service_ipc_connection(
     stream: &Connection,
     postfix: &str,
 ) -> bool {
-    // Portable service IPC policy:
-    // - only SYSTEM peers are authorized by is_allowed_windows_portable_service_peer()
-    // - expected_session_id is still collected for diagnostics and identity checks
-    // - final privilege boundary is enforced by named-pipe ACL + one-time token handshake
-    // - when peer identity is unavailable on some hosts, executable verification remains
-    //   best-effort telemetry (not fail-closed) to avoid breaking valid SYSTEM bootstrap
-    //   flows that cannot be fully introspected
     let expected_session_id = crate::platform::windows::get_current_process_session_id();
     let (authorized, peer_pid, peer_session_id, peer_is_system) =
         stream.portable_service_authorization_status_for_session(expected_session_id);
     if !authorized {
-        // Session lookup may succeed while SYSTEM identity lookup fails, so only the
-        // SYSTEM identity result determines whether peer identity is unavailable here.
-        // Don't use `peer_pid.is_some() && peer_session_id.is_none() && peer_is_system.is_none();` here.
         let identity_unavailable = peer_pid.is_some() && peer_is_system.is_none();
         if identity_unavailable {
-            // In portable-service startup, resolving SYSTEM peer identity may fail on some hosts.
-            // `ProcessIdToSessionId` can still succeed while `OpenProcessToken(TOKEN_QUERY)` is
-            // denied by the peer token DACL or missing privileges. Treat that partial identity
-            // failure as unavailable and defer final authorization to pipe ACL + token handshake.
             if let Err(err) = ensure_peer_executable_matches_current_by_pid_opt(peer_pid, postfix) {
                 log::warn!(
                     "Portable service ipc peer identity unavailable and executable verification failed; continue with ACL+token-gated flow: postfix={}, peer_pid={:?}, err={}",
@@ -717,8 +679,6 @@ where
 
     fn service_authorization_status(&self) -> (bool, Option<u32>, Option<u32>) {
         let peer_uid = self.peer_uid();
-        // On Linux, `_service` can use the cached active UID from the service loop for
-        // stable config sync. Uinput does a fresh active-UID lookup in its own authorizer.
         let active_uid = active_uid();
         let authorized = peer_uid.is_some_and(|uid| is_allowed_service_peer_uid(uid, active_uid));
         (authorized, peer_uid, active_uid)
@@ -782,16 +742,12 @@ impl ConnectionTmpl<parity_tokio_ipc::Connection> {
             && !peer_is_system.unwrap_or(false)
             && !peer_is_elevated.unwrap_or(false)
         {
-            // When the server session id cannot be determined, the session-id allow-path is
-            // disabled and only privileged peers can be authorized.
             log::debug!(
                 "IPC authorization: server session id unavailable; rejecting non-privileged peer, peer_pid={:?}, peer_session_id={:?}",
                 peer_pid,
                 peer_session_id
             );
         }
-        // Main IPC trusts same-session peers, LocalSystem, and elevated administrators.
-        // Service-scoped IPC channels keep their own stricter authorization paths.
         let authorized = session_authorized || peer_is_elevated.unwrap_or(false);
         if !authorized {
             if let (Some(pid), Some(Err(err))) = (peer_pid, peer_is_system_result.as_ref()) {
@@ -852,8 +808,6 @@ impl ConnectionTmpl<parity_tokio_ipc::Connection> {
         &self,
         expected_active_session_id: Option<u32>,
     ) -> (bool, Option<u32>, Option<u32>, Option<bool>) {
-        // Portable-service policy:
-        // only SYSTEM peers are allowed.
         let (_service_authorized, peer_pid, peer_session_id, peer_is_system) =
             self.service_authorization_status_for_session(expected_active_session_id);
         (
@@ -942,7 +896,7 @@ mod tests {
     #[cfg(all(windows, not(feature = "flutter")))]
     fn test_portable_service_helper_trust_requires_content_match() {
         let unique = format!(
-            "rustdesk-portable-helper-trust-test-{}-{}",
+            "supportdesk-portable-helper-trust-test-{}-{}",
             std::process::id(),
             std::time::SystemTime::now()
                 .duration_since(std::time::UNIX_EPOCH)

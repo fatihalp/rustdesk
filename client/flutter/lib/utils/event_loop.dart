@@ -8,10 +8,8 @@ abstract class BaseEvent<EventType, Data> {
   EventType type;
   Data data;
 
-  /// Constructor.
   BaseEvent(this.type, this.data);
 
-  /// Consume this event.
   @visibleForTesting
   Future<dynamic> consume() async {
     final cb = findCallback(type);
@@ -32,17 +30,12 @@ abstract class BaseEventLoop<EventType, Data> {
   List<BaseEvent<EventType, Data>> get evts => _evts;
 
   Future<void> onReady() async {
-    // Poll every 100ms.
     _timer = Timer.periodic(Duration(milliseconds: 100), _handleTimer);
   }
 
-  /// An Event is about to be consumed.
   Future<void> onPreConsume(BaseEvent<EventType, Data> evt) async {}
-  /// An Event was consumed.
   Future<void> onPostConsume(BaseEvent<EventType, Data> evt) async {}
-  /// Events are all handled and cleared.
   Future<void> onEventsClear() async {}
-  /// Events start to consume.
   Future<void> onEventsStartConsuming() async {}
 
   Future<void> _handleTimer(Timer timer) async {
@@ -51,7 +44,6 @@ abstract class BaseEventLoop<EventType, Data> {
       }
       timer.cancel();
       _timer = null;
-      // Handle the logic.
       await onEventsStartConsuming();
       while (_evts.isNotEmpty) {
         final evt = _evts.first;
@@ -61,7 +53,6 @@ abstract class BaseEventLoop<EventType, Data> {
         await onPostConsume(evt);
       }
       await onEventsClear();
-      // Now events are all processed.
       _timer = Timer.periodic(Duration(milliseconds: 100), _handleTimer);
   }
 

@@ -21,18 +21,15 @@ class CustomTouchGestureRecognizer extends ScaleGestureRecognizer {
     _init();
   }
 
-  // oneFingerPan
   GestureDragStartCallback? onOneFingerPanStart;
   GestureDragUpdateCallback? onOneFingerPanUpdate;
   GestureDragEndCallback? onOneFingerPanEnd;
   GestureDragCancelCallback? onOneFingerPanCancel;
 
-  // twoFingerScale : scale + pan event
   GestureScaleStartCallback? onTwoFingerScaleStart;
   GestureScaleUpdateCallback? onTwoFingerScaleUpdate;
   GestureScaleEndCallback? onTwoFingerScaleEnd;
 
-  // threeFingerVerticalDrag
   GestureDragStartCallback? onThreeFingerVerticalDragStart;
   GestureDragUpdateCallback? onThreeFingerVerticalDragUpdate;
   GestureDragEndCallback? onThreeFingerVerticalDragEnd;
@@ -42,7 +39,6 @@ class CustomTouchGestureRecognizer extends ScaleGestureRecognizer {
 
   void _init() {
     debugPrint("CustomTouchGestureRecognizer init");
-    // onStart = (d) {};
     onUpdate = (d) {
       _debounceTimer?.cancel();
       if (d.pointerCount == 1 && _currentState != GestureState.oneFingerPan) {
@@ -85,7 +81,6 @@ class CustomTouchGestureRecognizer extends ScaleGestureRecognizer {
     onEnd = (d) {
       debugPrint("ScaleGestureRecognizer onEnd");
       _debounceTimer?.cancel();
-      // end
       switch (_currentState) {
         case GestureState.oneFingerPan:
           debugPrint("OneFingerState.pan onEnd");
@@ -99,8 +94,6 @@ class CustomTouchGestureRecognizer extends ScaleGestureRecognizer {
             onTwoFingerScaleEnd!(d);
           }
           if (isSpecialHoldDragActive) {
-            // If we are in special drag mode, we need to reset the state.
-            // Otherwise, the next `onTwoFingerScaleUpdate()` will handle a wrong `focalPoint`.
             _currentState = GestureState.none;
             return;
           }
@@ -120,8 +113,6 @@ class CustomTouchGestureRecognizer extends ScaleGestureRecognizer {
     };
   }
 
-  // FIXME: This debounce logic is not working properly.
-  // If we move our finger very fast, we won't be able to detect the "oneFingerPan" event sometimes.
   void onOneFingerStartDebounce(ScaleUpdateDetails d) {
     start(ScaleUpdateDetails d) {
       _currentState = GestureState.oneFingerPan;
@@ -181,10 +172,8 @@ class CustomTouchGestureRecognizer extends ScaleGestureRecognizer {
         }
         break;
       case GestureState.twoFingerScale:
-        // Reset scale state if needed, currently self-contained
         break;
       case GestureState.threeFingerVerticalDrag:
-        // Reset drag state if needed, currently self-contained
         break;
       default:
         break;
@@ -242,12 +231,9 @@ class HoldTapMoveGestureRecognizer extends GestureRecognizer {
   void addAllowedPointer(PointerDownEvent event) {
     if (_firstTap != null) {
       if (!_firstTap!.isWithinGlobalTolerance(event, kDoubleTapSlop)) {
-        // Ignore out-of-bounds second taps.
         return;
       } else if (!_firstTap!.hasElapsedMinTime() ||
           !_firstTap!.hasSameButton(event)) {
-        // Restart when the second tap is too close to the first (touch screens
-        // often detect touches intermittently), or when buttons mismatch.
         _reset();
         return _trackTap(event);
       } else if (onHoldDragDown != null) {
@@ -298,11 +284,8 @@ class HoldTapMoveGestureRecognizer extends GestureRecognizer {
     } else if (event is PointerMoveEvent) {
       if (!tracker.isWithinGlobalTolerance(event, kDoubleTapTouchSlop)) {
         if (_firstTap != null && _firstTap!.pointer == event.pointer) {
-          // first tap move
           _reject(tracker);
         } else if (_secondTap != null && _secondTap!.pointer == event.pointer) {
-          // debugPrint("_secondTap move");
-          // second tap move
           if (!_isStart) {
             _resolve();
           }
@@ -325,11 +308,9 @@ class HoldTapMoveGestureRecognizer extends GestureRecognizer {
   @override
   void rejectGesture(int pointer) {
     _TapTracker? tracker = _trackers[pointer];
-    // If tracker isn't in the list, check if this is the first tap tracker
     if (tracker == null && _firstTap != null && _firstTap!.pointer == pointer) {
       tracker = _firstTap;
     }
-    // If tracker is still null, we rejected ourselves already
     if (tracker != null) {
       _reject(tracker);
     }
@@ -340,7 +321,6 @@ class HoldTapMoveGestureRecognizer extends GestureRecognizer {
     _firstTap?.entry.resolve(GestureDisposition.accepted);
     _secondTap?.entry.resolve(GestureDisposition.accepted);
     _isStart = true;
-    // TODO start details
     if (onHoldDragStart != null) {
       onHoldDragStart!(DragStartDetails(
         kind: _lastPointerDownEvent?.kind,
@@ -369,15 +349,12 @@ class HoldTapMoveGestureRecognizer extends GestureRecognizer {
 
   void _reset() {
     _isStart = false;
-    // debugPrint("reset");
     _stopFirstTapUpTimer();
     _stopSecondTapDownTimer();
     if (_firstTap != null) {
       if (_trackers.isNotEmpty) {
         _checkCancel();
       }
-      // Note, order is important below in order for the resolve -> reject logic
-      // to work properly.
       final _TapTracker tracker = _firstTap!;
       _firstTap = null;
       _reject(tracker);
@@ -398,8 +375,6 @@ class HoldTapMoveGestureRecognizer extends GestureRecognizer {
   void _registerFirstTap(_TapTracker tracker) {
     _startFirstTapUpTimer();
     GestureBinding.instance.gestureArena.hold(tracker.pointer);
-    // Note, order is important below in order for the clear -> reject logic to
-    // work properly.
     _freezeTracker(tracker);
     _trackers.remove(tracker.pointer);
     _firstTap = tracker;
@@ -417,7 +392,6 @@ class HoldTapMoveGestureRecognizer extends GestureRecognizer {
 
     _secondTap = tracker;
 
-    // TODO
   }
 
   void _clearTrackers() {
@@ -507,7 +481,6 @@ class DoubleFinerTapGestureRecognizer extends GestureRecognizer {
   void addAllowedPointer(PointerDownEvent event) {
     debugPrint("addAllowedPointer");
     if (_isStart) {
-      // second
       if (onDoubleFinerTapDown != null) {
         final TapDownDetails details = TapDownDetails(
           globalPosition: event.position,
@@ -518,7 +491,6 @@ class DoubleFinerTapGestureRecognizer extends GestureRecognizer {
             'onDoubleFinerTapDown', () => onDoubleFinerTapDown!(details));
       }
     } else {
-      // first tap
       _isStart = true;
       _lastPointerDownEvent = event;
       _startFirstTapDownTimer();
@@ -534,7 +506,6 @@ class DoubleFinerTapGestureRecognizer extends GestureRecognizer {
       gestureSettings: gestureSettings,
     );
     _trackers[event.pointer] = tracker;
-    // debugPrint("_trackers:$_trackers");
     tracker.startTrackingPointer(_handleEvent, event.transform);
 
     _registerTap(tracker);
@@ -560,11 +531,9 @@ class DoubleFinerTapGestureRecognizer extends GestureRecognizer {
   @override
   void rejectGesture(int pointer) {
     _TapTracker? tracker = _trackers[pointer];
-    // If tracker isn't in the list, check if this is the first tap tracker
     if (tracker == null && _firstTap != null && _firstTap!.pointer == pointer) {
       tracker = _firstTap;
     }
-    // If tracker is still null, we rejected ourselves already
     if (tracker != null) {
       _reject(tracker);
     }
@@ -600,8 +569,6 @@ class DoubleFinerTapGestureRecognizer extends GestureRecognizer {
 
   void _registerTap(_TapTracker tracker) {
     GestureBinding.instance.gestureArena.hold(tracker.pointer);
-    // Note, order is important below in order for the clear -> reject logic to
-    // work properly.
   }
 
   void _clearTrackers() {
@@ -635,7 +602,6 @@ class DoubleFinerTapGestureRecognizer extends GestureRecognizer {
   }
 
   void _resolve() {
-    // TODO tap down details
     if (onDoubleFinerTap != null) {
       onDoubleFinerTap!(TapDownDetails(
         kind: _lastPointerDownEvent?.kind,
@@ -657,8 +623,6 @@ class DoubleFinerTapGestureRecognizer extends GestureRecognizer {
   String get debugDescription => 'double tap';
 }
 
-/// TapTracker helps track individual tap sequences as part of a
-/// larger gesture.
 class _TapTracker {
   _TapTracker({
     required PointerDownEvent event,
@@ -708,8 +672,6 @@ class _TapTracker {
   }
 }
 
-/// CountdownZoned tracks whether the specified duration has elapsed since
-/// creation, honoring [Zone].
 class _CountdownZoned {
   _CountdownZoned({required Duration duration}) {
     Timer(duration, _onTimeout);
@@ -747,7 +709,6 @@ RawGestureDetector getMixinGestureDetector({
   return RawGestureDetector(
       child: child,
       gestures: <Type, GestureRecognizerFactory>{
-        // Official
         TapGestureRecognizer:
             GestureRecognizerFactoryWithHandlers<TapGestureRecognizer>(
                 () => TapGestureRecognizer(), (instance) {
@@ -767,7 +728,6 @@ RawGestureDetector getMixinGestureDetector({
             ..onLongPressDown = onLongPressDown
             ..onLongPress = onLongPress;
         }),
-        // Customized
         HoldTapMoveGestureRecognizer:
             GestureRecognizerFactoryWithHandlers<HoldTapMoveGestureRecognizer>(
                 () => HoldTapMoveGestureRecognizer(),

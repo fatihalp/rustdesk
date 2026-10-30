@@ -37,7 +37,6 @@ pub(super) fn import(grants: &mut Grants, value: &str, first_store: bool) -> Res
     if first_store {
         grants.revoke(Some(settings.scope))?;
     }
-    // A previous revocation must take precedence over a remaining legacy copy.
     if !grants.matches_scope(&settings.scope) {
         return Ok(());
     }
@@ -98,7 +97,6 @@ impl Grants {
             .info
             .clone();
         let now = get_time();
-        // Eviction follows V2 issuance time without extending the legacy expiry.
         info.time = now;
         self.records.push(Record {
             verifier,
@@ -116,8 +114,6 @@ impl Grants {
         verifier: &[u8; TOKEN_BYTES],
     ) -> ResultType<Option<&Record>> {
         self.check_ticket(ticket)?;
-        // An already authorized attempt may finish after another connection confirms migration.
-        // New legacy logins still require a legacy record in verify_legacy.
         Ok(self.records.iter().find(|record| {
             record.current(get_time())
                 && ((record.legacy && utils::memcmp(&record.verifier, verifier))

@@ -14,7 +14,7 @@ lazy_static::lazy_static! {
     static ref CURRENT_2FA: Mutex<Option<(TOTPInfo, TOTP)>> = Mutex::new(None);
 }
 
-const ISSUER: &str = "RustDesk";
+const ISSUER: &str = "SupportDesk";
 const TAG_LOGIN: &str = "Connection";
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
@@ -154,7 +154,6 @@ impl TelegramBot {
     }
 }
 
-// https://gist.github.com/dideler/85de4d64f66c1966788c1b2304b9caf1
 pub async fn send_2fa_code_to_telegram(text: &str, bot: TelegramBot) -> ResultType<()> {
     let url = format!("https://api.telegram.org/bot{}/sendMessage", bot.token_str);
     let params = serde_json::json!({"chat_id": bot.chat_id, "text": text});
@@ -164,14 +163,11 @@ pub async fn send_2fa_code_to_telegram(text: &str, bot: TelegramBot) -> ResultTy
 
 pub fn get_chatid_telegram(bot_token: &str) -> ResultType<Option<String>> {
     let url = format!("https://api.telegram.org/bot{}/getUpdates", bot_token);
-    // because caller is in tokio runtime, so we must call post_request_sync in new thread.
     let handle = std::thread::spawn(move || crate::post_request_sync(url, "".to_owned(), ""));
     let resp = handle.join().map_err(|_| anyhow!("Thread panicked"))??;
     let value = serde_json::from_str::<serde_json::Value>(&resp).map_err(|e| anyhow!(e))?;
 
-    // Check for an error_code in the response
     if let Some(error_code) = value.get("error_code").and_then(|code| code.as_i64()) {
-        // If there's an error_code, try to use the description for the error message
         let description = value["description"]
             .as_str()
             .unwrap_or("Unknown error occurred");

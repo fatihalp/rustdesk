@@ -53,14 +53,11 @@ import 'package:flutter_hbb/native/custom_cursor.dart'
 typedef HandleMsgBox = Function(Map<String, dynamic> evt, String id);
 typedef ReconnectHandle = Function(OverlayDialogManager, SessionID, bool);
 final _constSessionId = Uuid().v4obj();
-// Empirical restart reconnect cadence: keep the last frame briefly and retry quickly.
 const _restartReconnectSilentDelaySecs = 5;
 
 class CachedPeerData {
   Map<String, dynamic> updatePrivacyMode = {};
   Map<String, dynamic> peerInfo = {};
-  // No shapes: the core keeps them for the session, and the window a tab moves to asks it
-  // for the one in use.
   Map<String, dynamic> lastCursorId = {};
   Map<String, bool> permissions = {};
 
@@ -218,20 +215,16 @@ class FfiModel with ChangeNotifier {
   }
 
   updatePermission(Map<String, dynamic> evt, String id) {
-    // Track previous keyboard permission to detect revocation.
     final hadKeyboardPerm = _permissions['keyboard'] != false;
 
     evt.forEach((k, v) {
       if (k == 'name' || k.isEmpty) return;
       _permissions[k] = v == 'true';
     });
-    // Only inited at remote page
     if (parent.target?.connType == ConnType.defaultConn) {
       KeyboardEnabledState.find(id).value = _permissions['keyboard'] != false;
     }
 
-    // If keyboard permission was revoked while relative mouse mode is active,
-    // forcefully disable relative mouse mode to prevent the user from being trapped.
     final hasKeyboardPerm = _permissions['keyboard'] != false;
     if (hadKeyboardPerm && !hasKeyboardPerm) {
       final inputModel = parent.target?.inputModel;
@@ -277,7 +270,6 @@ class FfiModel with ChangeNotifier {
       connectionType.setDirect(direct);
       connectionType.setStreamType(streamType);
     } catch (e) {
-      //
     }
   }
 
@@ -327,7 +319,6 @@ class FfiModel with ChangeNotifier {
     }
   }
 
-  // todo: why called by two position
   StreamEventHandler startEventListener(SessionID sessionId, String peerId) {
     return (evt) async {
       var name = evt['name'];
@@ -348,7 +339,6 @@ class FfiModel with ChangeNotifier {
             evt['direct'] == 'true', evt['stream_type'] ?? '');
         resetRestartReconnectState();
       } else if (name == 'switch_display') {
-        // switch display is kept for backward compatibility
         handleSwitchDisplay(evt, sessionId, peerId);
       } else if (name == 'cursor_id') {
         updateLastCursorId(evt);
@@ -377,8 +367,6 @@ class FfiModel with ChangeNotifier {
         bool? refresh =
             await parent.target?.fileModel.jobController.jobDone(evt);
         if (refresh == true) {
-          // many job done for delete directory
-          // todo: refresh may not work when confirm delete local directory
           parent.target?.fileModel.refreshAll();
         }
       } else if (name == 'job_error') {
@@ -411,20 +399,15 @@ class FfiModel with ChangeNotifier {
       } else if (name == 'portable_service_running') {
         _handlePortableServiceRunning(peerId, evt);
       } else if (name == 'on_url_scheme_received') {
-        // currently comes from "_url" ipc of mac and dbus of linux
         onUrlSchemeReceived(evt);
       } else if (name == 'on_voice_call_waiting') {
-        // Waiting for the response from the peer.
         parent.target?.chatModel.onVoiceCallWaiting();
       } else if (name == 'on_voice_call_started') {
-        // Voice call is connected.
         parent.target?.chatModel.onVoiceCallStarted();
       } else if (name == 'on_voice_call_closed') {
-        // Voice call is closed with reason.
         final reason = evt['reason'].toString();
         parent.target?.chatModel.onVoiceCallClosed(reason);
       } else if (name == 'on_voice_call_incoming') {
-        // Voice call is requested by the peer.
         parent.target?.chatModel.onVoiceCallIncoming();
       } else if (name == 'update_voice_call_state') {
         parent.target?.serverModel.updateVoiceCallState(evt);
@@ -468,7 +451,6 @@ class FfiModel with ChangeNotifier {
       } else if (name == 'screenshot') {
         _handleScreenshot(evt, sessionId, peerId);
       } else if (name == 'exit_relative_mouse_mode') {
-        // Handle exit shortcut from rdev grab loop (Ctrl+Alt on Win/Linux, Cmd+G on macOS)
         parent.target?.inputModel.exitRelativeMouseModeWithKeyRelease();
       } else if (name == kShortcutEventName) {
         final action = evt['action'];
@@ -752,7 +734,7 @@ class FfiModel with ChangeNotifier {
       case kUrlActionClose:
         debugPrint("closing all instances");
         Future.microtask(() async {
-          await rustDeskWinManager.closeAllSubWindows();
+          await supportDeskWinManager.closeAllSubWindows();
           windowManager.close();
         });
         break;
@@ -762,7 +744,6 @@ class FfiModel with ChangeNotifier {
     }
   }
 
-  /// Bind the event listener to receive events from the Rust core.
   updateEventListener(SessionID sessionId, String peerId) {
     platformFFI.setEventCallback(startEventListener(sessionId, peerId));
   }
@@ -796,15 +777,10 @@ class FfiModel with ChangeNotifier {
             updateCursorPos: updateCursorPos);
       }
       _rect = newRect;
-      // Await updateViewStyle to ensure view geometry is fully updated before
-      // updating pointer lock center. This prevents stale center calculations.
       await parent.target?.canvasModel
           .updateViewStyle(refreshMousePos: updateCursorPos);
       _updateSessionWidthHeight(sessionId);
 
-      // Keep pointer lock center in sync when using relative mouse mode.
-      // Note: updatePointerLockCenter is async-safe (handles errors internally),
-      // so we fire-and-forget here.
       final inputModel = parent.target?.inputModel;
       if (inputModel != null && inputModel.relativeMouseMode.value) {
         inputModel.updatePointerLockCenter();
@@ -827,8 +803,6 @@ class FfiModel with ChangeNotifier {
       if (!_pi.isSupportMultiUiSession) {
         _pi.currentDisplay = display;
       }
-      // If `isSupportMultiUiSession` is true, the switch display message should not be used to update current display.
-      // It is only used to update the display info.
     }
 
     var newDisplay = Display();
@@ -854,7 +828,6 @@ class FfiModel with ChangeNotifier {
       try {
         CurrentDisplayState.find(peerId).value = display;
       } catch (e) {
-        //
       }
     }
 
@@ -884,7 +857,6 @@ class FfiModel with ChangeNotifier {
         type, title, text, dialogManager, sessionId, peerId, sessions);
   }
 
-  /// Handle the message box event based on [evt] and [id].
   handleMsgBox(Map<String, dynamic> evt, SessionID sessionId, String peerId) {
     if (parent.target == null) return;
     final dialogManager = parent.target!.dialogManager;
@@ -893,9 +865,6 @@ class FfiModel with ChangeNotifier {
     final text = evt['text'];
     final link = evt['link'];
 
-    // The peer-gone detector reconnects under `restarting-show` rather than an error title, so
-    // it needs naming here too. By its own title, not the type: an explicitly restarted remote
-    // device reaches the same type from a path this change does not touch.
     if (isAndroid &&
         _androidDocumentPickerActive &&
         (title == 'Connection Error' ||
@@ -904,9 +873,6 @@ class FfiModel with ChangeNotifier {
       return;
     }
 
-    // Disable relative mouse mode on any error-type message to ensure cursor is released.
-    // This includes connection errors, session-ending messages, elevation errors, etc.
-    // Safety: releasing pointer lock on errors prevents the user from being stuck.
     if (title == 'Connection Error' ||
         type == 'error' ||
         type == 'restarting' ||
@@ -927,16 +893,11 @@ class FfiModel with ChangeNotifier {
       enterUserLoginAndPasswordDialog(
           sessionId, dialogManager, 'terminal-admin-login-tip');
     } else if (type == 'restarting') {
-      // Treat restart messages as reconnect control events. Rust still sends
-      // title/text for legacy UI and translation reuse; Flutter keeps the last
-      // frame briefly, then shows the Connecting overlay.
       if (_restartReconnectDelayTimer == null) {
         parent.target?.inputModel.setRelativeMouseMode(false);
         _cancelPendingMonitorRestore();
         bind.sessionReconnect(sessionId: sessionId, forceRelay: false);
         clearPermissions();
-        // Retry once more after the silent window so restart reconnect attempts
-        // are spaced by the empirical short cadence instead of only updating UI.
         _restartReconnectDelayTimer =
             Timer(Duration(seconds: _restartReconnectSilentDelaySecs), () {
           _restartReconnectDelayTimer = null;
@@ -997,8 +958,6 @@ class FfiModel with ChangeNotifier {
     reconnect(parent.target!.dialogManager, sessionId, false);
   }
 
-  /// Auto-retry check for "Remote desktop is offline" error.
-  /// returns true to auto-retry, false otherwise.
   bool shouldAutoRetryOnOffline(
     String type,
     String title,
@@ -1008,14 +967,7 @@ class FfiModel with ChangeNotifier {
         title == 'Connection Error' &&
         text == 'Remote desktop is offline' &&
         _pi.isSet.isTrue) {
-      // Auto retry for ~30s (server's peer offline threshold) when controlled peer's account changes
-      // (e.g., signout, switch user, login into OS) causes temporary offline via websocket/tcp connection.
-      // The actual wait may exceed 30s (e.g., 20s elapsed + 16s next retry = 36s), which is acceptable
-      // since the controlled side reconnects quickly after account changes.
-      // Uses time-based check instead of _reconnects count because user can manually retry.
-      // https://github.com/rustdesk/rustdesk/discussions/14048
       if (_offlineReconnectStartTime == null) {
-        // First offline, record time and start retry
         _offlineReconnectStartTime = DateTime.now();
         return true;
       } else {
@@ -1060,7 +1012,6 @@ class FfiModel with ChangeNotifier {
     }
   }
 
-  /// Show a message box with [type], [title] and [text].
   showMsgBox(SessionID sessionId, String type, String title, String text,
       String link, bool hasRetry, OverlayDialogManager dialogManager,
       {bool? hasCancel}) async {
@@ -1115,7 +1066,6 @@ class FfiModel with ChangeNotifier {
 
   void reconnect(OverlayDialogManager dialogManager, SessionID sessionId,
       bool forceRelay) {
-    // Disable relative mouse mode before reconnecting to ensure cursor is released.
     parent.target?.inputModel.setRelativeMouseMode(false);
     _cancelPendingMonitorRestore();
     bind.sessionReconnect(sessionId: sessionId, forceRelay: forceRelay);
@@ -1214,9 +1164,6 @@ class FfiModel with ChangeNotifier {
       String link,
       bool hasRetry,
       OverlayDialogManager dialogManager) {
-    // There are display changes on the remote side,
-    // which will cause some messages to refresh the canvas and dismiss dialogs.
-    // So we add a delay here to ensure the dialog is displayed.
     Future.delayed(Duration(milliseconds: 3000), () {
       showMsgBox(sessionId, type, title, text, link, hasRetry, dialogManager);
     });
@@ -1337,31 +1284,18 @@ class FfiModel with ChangeNotifier {
     }
   }
 
-  /// Handle the peer info event based on [evt].
   handlePeerInfo(Map<String, dynamic> evt, String peerId, bool isCache) async {
     parent.target?.chatModel.voiceCallStatus.value = VoiceCallStatus.notStarted;
 
     _queryAuditGuid(peerId);
 
-    // Map clone is required here, otherwise "evt" may be changed by other threads through the reference.
-    // Because this function is asynchronous, there's an "await" in this function.
     cachedPeerData.peerInfo = {...evt};
-    // Do not cache resolutions, because a new display connection have different resolutions.
     cachedPeerData.peerInfo.remove('resolutions');
 
-    // Recent peer is updated by handle_peer_info(ui_session_interface.rs) --> handle_peer_info(client.rs) --> save_config(client.rs)
     bind.mainLoadRecentPeers();
 
     parent.target?.dialogManager.dismissAll();
     _pi.version = evt['version'];
-    // Note: Relative mouse mode is NOT auto-enabled on connect.
-    // Users must manually enable it via toolbar or keyboard shortcut (Ctrl+Alt+Shift+M).
-    //
-    // For desktop/webDesktop, keyboard mode initialization is handled later by
-    // checkDesktopKeyboardMode() which may change the mode if not supported,
-    // followed by updateKeyboardMode() to sync InputModel.keyboardMode.
-    // For mobile, updateKeyboardMode() is currently a no-op (only executes on desktop/web),
-    // but we call it here for consistency and future-proofing.
     if (isMobile) {
       parent.target?.inputModel.updateKeyboardMode();
     }
@@ -1385,19 +1319,12 @@ class FfiModel with ChangeNotifier {
     try {
       CurrentDisplayState.find(peerId).value = _pi.currentDisplay;
     } catch (e) {
-      //
     }
 
     final connType = parent.target?.connType;
     if (isPeerAndroid) {
       _touchMode = true;
     } else {
-      // `kOptionTouchMode` is originally peer option, but it is moved to local option later.
-      // We check local option first, if not set, then check peer option.
-      // Because if local option is not empty:
-      // 1. User has set the touch mode explicitly.
-      // 2. The advanced option (custom client) is set.
-      //    Then we choose to use the local option.
       final optLocal = bind.mainGetLocalOption(key: kOptionTouchMode);
       if (optLocal != '') {
         _touchMode = optLocal == 'Y';
@@ -1413,7 +1340,6 @@ class FfiModel with ChangeNotifier {
     if (connType == ConnType.fileTransfer) {
       parent.target?.fileModel.onReady();
     } else if (connType == ConnType.terminal) {
-      // Call onReady on all registered terminal models
       final models = parent.target?._terminalModels.values ?? [];
       for (final model in models) {
         model.onReady();
@@ -1428,12 +1354,8 @@ class FfiModel with ChangeNotifier {
       _pi.displays.value = newDisplays;
       _pi.displaysCount.value = _pi.displays.length;
       if (_pi.currentDisplay < _pi.displays.length) {
-        // now replaced to _updateCurDisplay
         updateCurDisplay(sessionId);
       }
-      // After reconnecting, restore the last selected monitor once the canvas is ready.
-      // Switching earlier can offset the view if the monitor sizes differ.
-      // New monitor windows keep their selection in currentDisplay.
       final last = lastUserDisplay ?? _pi.currentDisplay;
       pendingMonitorRestore = (!isCache &&
               last != currentDisplay &&
@@ -1444,7 +1366,6 @@ class FfiModel with ChangeNotifier {
                   (last >= 0 && last < _pi.displays.length)))
           ? last
           : null;
-      // Fallback if the first image event never reaches this tab (multi-UI).
       _pendingRestoreTimer?.cancel();
       if (pendingMonitorRestore != null) {
         _pendingRestoreTimer = Timer(const Duration(milliseconds: 1500),
@@ -1487,9 +1408,6 @@ class FfiModel with ChangeNotifier {
     stateGlobal.resetLastResolutionGroupValues(peerId);
 
     if (isDesktop || isWebDesktop) {
-      // checkDesktopKeyboardMode may change the keyboard mode if the current
-      // mode is not supported. Re-sync InputModel.keyboardMode afterwards.
-      // Note: updateKeyboardMode() is a no-op on mobile (early-returns).
       await checkDesktopKeyboardMode();
       await parent.target?.inputModel.updateKeyboardMode();
     }
@@ -1503,8 +1421,6 @@ class FfiModel with ChangeNotifier {
 
   checkDesktopKeyboardMode() async {
     if (isInputSourceFlutter) {
-      // Local side, flutter keyboard input source
-      // Currently only map mode is supported, legacy mode is used for compatibility.
       for (final mode in [kKeyMapMode, kKeyLegacyMode]) {
         if (bind.sessionIsKeyboardModeSupported(
             sessionId: sessionId, mode: mode)) {
@@ -1521,7 +1437,6 @@ class FfiModel with ChangeNotifier {
         }
       }
 
-      // If current keyboard mode is not supported, change to another one.
       for (final mode in [kKeyMapMode, kKeyTranslateMode, kKeyLegacyMode]) {
         if (bind.sessionIsKeyboardModeSupported(
             sessionId: sessionId, mode: mode)) {
@@ -1548,12 +1463,7 @@ class FfiModel with ChangeNotifier {
       return;
     }
 
-    // to-do: peer currentDisplay is the primary display, but the primary display may not be the first display.
-    // local primary display also may not be the first display.
-    //
-    // 0 is assumed to be the primary display here, for now.
 
-    // move to the first display and set fullscreen
     bind.sessionSwitchDisplay(
       isDesktop: isDesktop,
       sessionId: sessionId,
@@ -1563,7 +1473,6 @@ class FfiModel with ChangeNotifier {
     try {
       CurrentDisplayState.find(peerId).value = _pi.currentDisplay;
     } catch (e) {
-      //
     }
     await tryMoveToScreenAndSetFullscreen(screenRectList[0]);
 
@@ -1596,11 +1505,9 @@ class FfiModel with ChangeNotifier {
       final resolutionsObj = json.decode(resolutions as String);
       late List<dynamic> dynamicArray;
       if (resolutionsObj is Map) {
-        // The web version
         dynamicArray = (resolutionsObj as Map<String, dynamic>)['resolutions']
             as List<dynamic>;
       } else {
-        // The rust version
         dynamicArray = resolutionsObj as List<dynamic>;
       }
       List<Resolution> arr = List.empty(growable: true);
@@ -1648,8 +1555,6 @@ class FfiModel with ChangeNotifier {
   }
 
   updateLastCursorId(Map<String, dynamic> evt) {
-    // int.parse(evt['id']) may cause FormatException
-    // Unhandled Exception: FormatException: Positive input exceeds the limit of integer 18446744071749110741
     parent.target?.cursorModel.id = evt['id'];
   }
 
@@ -1658,17 +1563,14 @@ class FfiModel with ChangeNotifier {
     parent.target?.cursorModel.updateCursorId(evt);
   }
 
-  /// A shape arriving is the shape in use, as a cursor_id is.
   handleCursorData(String id, int hotx, int hoty, int width, int height,
       Uint8List colors) async {
-    // The replay selects this last, whatever the order the shapes are replayed in.
     cachedPeerData.lastCursorId = {'id': id};
     parent.target?.cursorModel.id = id;
     await parent.target?.cursorModel
         .updateCursorData(id, hotx, hoty, width, height, colors);
   }
 
-  /// Handle the peer info synchronization event based on [evt].
   handleSyncPeerInfo(
       Map<String, dynamic> evt, SessionID sessionId, String peerId) async {
     if (evt['displays'] != null) {
@@ -1683,14 +1585,12 @@ class FfiModel with ChangeNotifier {
 
       if (_pi.currentDisplay == kAllDisplayValue) {
         updateCurDisplay(sessionId);
-        // to-do: What if the displays are changed?
       } else {
         if (_pi.currentDisplay >= 0 &&
             _pi.currentDisplay < _pi.displays.length) {
           updateCurDisplay(sessionId);
         } else {
           if (_pi.displays.isNotEmpty) {
-            // Notify to switch display
             msgBox(sessionId, 'custom-nook-nocancel-hasclose-info', 'Prompt',
                 'display_is_plugged_out_msg', '', parent.target!.dialogManager);
             final isPeerPrimaryDisplayValid =
@@ -1705,8 +1605,6 @@ class FfiModel with ChangeNotifier {
             );
 
             if (_pi.isSupportMultiUiSession) {
-              // If the peer supports multi-ui-session, no switch display message will be send back.
-              // We need to update the display manually.
               switchToNewDisplay(newDisplay, sessionId, peerId);
             }
           } else {
@@ -1729,7 +1627,7 @@ class FfiModel with ChangeNotifier {
     }
 
     if (updateData.isEmpty) {
-      _pi.platformAdditions.remove(kPlatformAdditionsRustDeskVirtualDisplays);
+      _pi.platformAdditions.remove(kPlatformAdditionsSupportDeskVirtualDisplays);
       _pi.platformAdditions.remove(kPlatformAdditionsAmyuniVirtualDisplays);
     } else {
       try {
@@ -1738,9 +1636,9 @@ class FfiModel with ChangeNotifier {
           _pi.platformAdditions[key] = updateJson[key];
         }
         if (!updateJson
-            .containsKey(kPlatformAdditionsRustDeskVirtualDisplays)) {
+            .containsKey(kPlatformAdditionsSupportDeskVirtualDisplays)) {
           _pi.platformAdditions
-              .remove(kPlatformAdditionsRustDeskVirtualDisplays);
+              .remove(kPlatformAdditionsSupportDeskVirtualDisplays);
         }
         if (!updateJson.containsKey(kPlatformAdditionsAmyuniVirtualDisplays)) {
           _pi.platformAdditions.remove(kPlatformAdditionsAmyuniVirtualDisplays);
@@ -1764,7 +1662,6 @@ class FfiModel with ChangeNotifier {
       try {
         CurrentDisplayState.find(peerId).value = _pi.currentDisplay;
       } catch (e) {
-        //
       }
       bind.sessionSwitchDisplay(
         isDesktop: isDesktop,
@@ -1775,16 +1672,13 @@ class FfiModel with ChangeNotifier {
     notifyListeners();
   }
 
-  // Directly switch to the new display without waiting for the response.
   switchToNewDisplay(int display, SessionID sessionId, String peerId,
       {bool updateCursorPos = false}) {
-    // no need to wait for the response
     pi.currentDisplay = display;
     updateCurDisplay(sessionId, updateCursorPos: updateCursorPos);
     try {
       CurrentDisplayState.find(peerId).value = display;
     } catch (e) {
-      //
     }
   }
 
@@ -1794,7 +1688,6 @@ class FfiModel with ChangeNotifier {
     try {
       BlockInputState.find(peerId).value = evt['input_state'] == 'on';
     } catch (e) {
-      //
     }
   }
 
@@ -1807,7 +1700,6 @@ class FfiModel with ChangeNotifier {
       if (isOn) {
         var privacyModeImpl = await bind.sessionGetOption(
             sessionId: sessionId, arg: 'privacy-mode-impl-key');
-        // For compatibility, version < 1.2.4, the default value is 'privacy_mode_impl_mag'.
         final initDefaultPrivacyMode = 'privacy_mode_impl_mag';
         PrivacyModeState.find(peerId).value =
             privacyModeImpl ?? initDefaultPrivacyMode;
@@ -1815,15 +1707,11 @@ class FfiModel with ChangeNotifier {
         PrivacyModeState.find(peerId).value = '';
       }
     } catch (e) {
-      //
     }
   }
 
   void setViewOnly(String id, bool value) {
     if (versionCmp(_pi.version, '1.2.0') < 0) return;
-    // tmp fix for https://github.com/rustdesk/rustdesk/pull/3706#issuecomment-1481242389
-    // because below rx not used in mobile version, so not initialized, below code will cause crash
-    // current our flutter code quality is fucking shit now. !!!!!!!!!!!!!!!!
     try {
       if (value) {
         ShowRemoteCursorState.find(id).value = value;
@@ -1832,7 +1720,6 @@ class FfiModel with ChangeNotifier {
             sessionId: sessionId, arg: 'show-remote-cursor');
       }
     } catch (e) {
-      //
     }
     if (_viewOnly != value) {
       _viewOnly = value;
@@ -1942,7 +1829,6 @@ class ImageModel with ChangeNotifier {
   bool _webDecodingRgba = false;
   final List<Uint8List> _webRgbaList = List.empty(growable: true);
   webOnRgba(int display, Uint8List rgba) async {
-    // deep copy needed, otherwise "instantiateCodec failed: TypeError: Cannot perform Construct on a detached ArrayBuffer"
     _webRgbaList.add(Uint8List.fromList(rgba));
     if (_webDecodingRgba) {
       return;
@@ -1969,7 +1855,6 @@ class ImageModel with ChangeNotifier {
     platformFFI.nextRgba(sessionId, display);
   }
 
-  // web only: image already created from a decoded WebCodecs frame
   Future<void> onImage(
       int display, ui.Image image, bool Function() isCurrentSession) async {
     await update(image, isCurrentSession: isCurrentSession);
@@ -2019,7 +1904,6 @@ class ImageModel with ChangeNotifier {
     return true;
   }
 
-  // mobile only
   double get maxScale {
     if (_image == null) return 1.5;
     final size = parent.target!.canvasModel.getSize();
@@ -2028,7 +1912,6 @@ class ImageModel with ChangeNotifier {
     return max(1.5, max(xscale, yscale));
   }
 
-  // mobile only
   double get minScale {
     if (_image == null) return 1.5;
     final size = parent.target!.canvasModel.getSize();
@@ -2175,7 +2058,6 @@ class ViewStyle {
         s = s1 < s2 ? s1 : s2;
       }
     } else if (style == kRemoteViewStyleCustom) {
-      // Custom scale is session-scoped and applied in CanvasModel.updateViewStyle()
     }
     return s;
   }
@@ -2236,35 +2118,20 @@ class EdgeScrollFallbackState {
 }
 
 class CanvasModel with ChangeNotifier {
-  // image offset of canvas
   double _x = 0;
-  // image offset of canvas
   double _y = 0;
-  // image scale
   double _scale = 1.0;
   bool _locked = false;
   double _devicePixelRatio = 1.0;
   Size _size = Size.zero;
-  // the tabbar over the image
-  // double tabBarHeight = 0.0;
-  // the window border's width
-  // double windowBorderWidth = 0.0;
-  // remote id
   String id = '';
   late final SessionID sessionId;
-  // scroll offset x percent
   double _scrollX = 0.0;
-  // scroll offset y percent
   double _scrollY = 0.0;
   ScrollStyle _scrollStyle = ScrollStyle.scrollauto;
-  // edge scroll mode: trigger scrolling when the cursor is close to the edge of the view
   int _edgeScrollEdgeThickness = 100;
-  // tracks whether edge scroll should be active, prevents spurious
-  // scrolling when the cursor enters the view from outside
   EdgeScrollState _edgeScrollState = EdgeScrollState.inactive;
-  // fallback strategy for when Bump Mouse isn't available
   late EdgeScrollFallbackState _edgeScrollFallbackState;
-  // to avoid hammering a non-functional Bump Mouse
   bool _bumpMouseIsWorking = true;
   ViewStyle _lastViewStyle = ViewStyle.defaultViewStyle();
 
@@ -2273,8 +2140,6 @@ class CanvasModel with ChangeNotifier {
   Offset? _offsetBeforeMobileSoftKeyboard;
   double? _scaleBeforeMobileSoftKeyboard;
 
-  // `isMobileCanvasChanged` is used to avoid canvas reset when changing the input method
-  // after showing the soft keyboard.
   bool isMobileCanvasChanged = false;
 
   final ScrollController _horizontal = ScrollController();
@@ -2338,41 +2203,22 @@ class CanvasModel with ChangeNotifier {
   Size getSize() {
     final mediaData = MediaQueryData.fromView(ui.window);
     final size = mediaData.size;
-    // If minimized, w or h may be negative here.
     double w = size.width - leftToEdge - rightToEdge;
     double h = size.height - topToEdge - bottomToEdge;
     if (isMobile) {
-      // Account for horizontal safe area insets on both orientations.
       w = w - mediaData.padding.left - mediaData.padding.right;
-      // Vertically, subtract the bottom keyboard inset (viewInsets.bottom) and any
-      // bottom overlay (e.g. key-help tools) so the canvas is not covered.
       h = h -
           mediaData.viewInsets.bottom -
           (parent.target?.cursorModel.keyHelpToolsRectToAdjustCanvas?.bottom ??
               0);
-      // Orientation-specific handling:
-      //  - Portrait: additionally subtract top padding (e.g. status bar / notch)
-      //  - Landscape: does not subtract mediaData.padding.top/bottom (home indicator auto-hides)
       final isPortrait = size.height > size.width;
       if (isPortrait) {
-        // In portrait mode, subtract the top safe-area padding (e.g. status bar / notch)
-        // so the remote image is not truncated, while keeping the bottom inset to avoid
-        // introducing unnecessary blank space around the canvas.
-        //
-        // iOS -> Android, portrait, adjust mode:
-        // h = h (no padding subtracted): top and bottom are truncated
-        //   https://github.com/user-attachments/assets/30ed4559-c27e-432b-847f-8fec23c9f998
-        // h = h - top - bottom: extra blank spaces appear
-        //   https://github.com/user-attachments/assets/12a98817-3b4e-43aa-be0f-4b03cf364b7e
-        // h = h - top (current): works fine
-        //   https://github.com/user-attachments/assets/95f047f2-7f47-4a36-8113-5023989a0c81
         h = h - mediaData.padding.top;
       }
     }
     return Size(w < 0 ? 0 : w, h < 0 ? 0 : h);
   }
 
-  // mobile only
   double getAdjustY() {
     final bottom =
         parent.target?.cursorModel.keyHelpToolsRectToAdjustCanvas?.bottom ?? 0;
@@ -2397,12 +2243,6 @@ class CanvasModel with ChangeNotifier {
       displayWidth: displayWidth,
       displayHeight: displayHeight,
     );
-    // If only the Custom scale percent changed, proceed to update even if
-    // the basic ViewStyle fields are equal.
-    // In Custom scale mode, the scale percent can change independently of the other
-    // ViewStyle fields and is not captured by the equality check. Therefore, we must
-    // allow updates to proceed when style == kRemoteViewStyleCustom, even if the
-    // rest of the ViewStyle fields are unchanged.
     if (_lastViewStyle == viewStyle &&
         _devicePixelRatio == ui.window.devicePixelRatio &&
         style != kRemoteViewStyleCustom) {
@@ -2414,7 +2254,6 @@ class CanvasModel with ChangeNotifier {
     _lastViewStyle = viewStyle;
     _scale = viewStyle.scale;
 
-    // Apply custom scale percent when in Custom mode
     if (style == kRemoteViewStyleCustom) {
       try {
         _scale = await getSessionCustomScale(sessionId);
@@ -2465,7 +2304,6 @@ class CanvasModel with ChangeNotifier {
     _resetScroll();
 
     Future.delayed(duration, () async {
-      // Layout updates scroll extents and detaches scrollbars no longer needed.
       await SchedulerBinding.instance.endOfFrame;
       updateScrollPercent();
     });
@@ -2478,7 +2316,6 @@ class CanvasModel with ChangeNotifier {
         style != null ? ScrollStyle.fromString(style) : ScrollStyle.scrollauto;
 
     if (_scrollStyle != ScrollStyle.scrollauto) {
-      // Scrollbar and Scroll Edge share controllers and retain their positions.
       updateScrollPercent();
     }
 
@@ -2531,23 +2368,19 @@ class CanvasModel with ChangeNotifier {
       try {
         RemoteCursorMovedState.find(id).value = false;
       } catch (e) {
-        //
       }
     }
   }
 
   void updateLocalCursor(double x, double y) {
     if (parent.target?.ffiModel.viewOnly == true) return;
-    // If keyboard is not permitted, do not move cursor when mouse is moving.
     if (parent.target != null && parent.target!.ffiModel.keyboard) {
-      // Draw cursor if is not desktop.
       if (!(isDesktop || isWebDesktop)) {
         parent.target!.cursorModel.moveLocal(x, y);
       } else {
         try {
           RemoteCursorMovedState.find(id).value = false;
         } catch (e) {
-          //
         }
       }
     }
@@ -2558,7 +2391,6 @@ class CanvasModel with ChangeNotifier {
       return;
     }
 
-    // On mobile platforms, move the canvas with the cursor.
     final dw = getDisplayWidth() * _scale;
     final dh = getDisplayHeight() * _scale;
     var dxOffset = 0;
@@ -2621,11 +2453,6 @@ class CanvasModel with ChangeNotifier {
     }
 
     if (_edgeScrollState == EdgeScrollState.armed) {
-      // Edge scroll is armed to become active once the cursor
-      // is observed within the rectangle interior to the
-      // edge scroll regions. If the user has just moved the
-      // cursor in from outside of the window, edge scrolling
-      // doesn't happen yet.
       final clientArea = Rect.fromLTWH(0, 0, size.width, size.height);
 
       final innerZone = clientArea.deflate(_edgeScrollEdgeThickness.toDouble());
@@ -2633,7 +2460,6 @@ class CanvasModel with ChangeNotifier {
       if (innerZone.contains(Offset(x, y))) {
         _edgeScrollState = EdgeScrollState.active;
       } else {
-        // Not yet.
         return;
       }
     }
@@ -2664,25 +2490,20 @@ class CanvasModel with ChangeNotifier {
     } else {
       var bumpAmount = -encroachment;
 
-      // Round away from 0: this ensures that the mouse will be bumped clear of
-      // whichever edge scroll zone(s) it is in
       bumpAmount.x += bumpAmount.x.sign * 0.5;
       bumpAmount.y += bumpAmount.y.sign * 0.5;
 
       var bumpMouseSucceeded = _bumpMouseIsWorking &&
-          (await rustDeskWinManager.call(WindowType.Main, kWindowBumpMouse,
+          (await supportDeskWinManager.call(WindowType.Main, kWindowBumpMouse,
                   {"dx": bumpAmount.x.round(), "dy": bumpAmount.y.round()}))
               .result;
 
       if (bumpMouseSucceeded) {
         performEdgeScroll(encroachment);
       } else {
-        // If we can't BumpMouse, then we switch to slower scrolling with autorepeat
 
-        // Don't keep hammering BumpMouse if it's not working.
         _bumpMouseIsWorking = false;
 
-        // Keep scrolling as long as the user is overtop of an edge.
         _edgeScrollFallbackState.setEncroachment(encroachment);
         _edgeScrollFallbackState.start();
       }
@@ -2732,7 +2553,6 @@ class CanvasModel with ChangeNotifier {
     notifyListeners();
   }
 
-  // mobile only
   updateScale(double v, Offset focalPoint) {
     if (parent.target?.imageModel.image == null) return;
     final s = _scale;
@@ -2741,12 +2561,8 @@ class CanvasModel with ChangeNotifier {
     final mins = parent.target?.imageModel.minScale ?? 1;
     if (_scale > maxs) _scale = maxs;
     if (_scale < mins) _scale = mins;
-    // (focalPoint.dx - _x_1) / s1 + displayOriginX = (focalPoint.dx - _x_2) / s2 + displayOriginX
-    // _x_2 = focalPoint.dx - (focalPoint.dx - _x_1) / s1 * s2
     _x = focalPoint.dx - (focalPoint.dx - _x) / s * _scale;
     final adjust = getAdjustY();
-    // (focalPoint.dy - _y_1 - adjust) / s1 + displayOriginY = (focalPoint.dy - _y_2 - adjust) / s2 + displayOriginY
-    // _y_2 = focalPoint.dy - adjust - (focalPoint.dy - _y_1 - adjust) / s1 * s2
     _y = focalPoint.dy - adjust - (focalPoint.dy - _y - adjust) / s * _scale;
     if (isMobile) {
       isMobileCanvasChanged = true;
@@ -2754,7 +2570,6 @@ class CanvasModel with ChangeNotifier {
     notifyListeners();
   }
 
-  // For reset canvas to the last view style
   reset() {
     _scale = _lastViewStyle.scale;
     _devicePixelRatio = ui.window.devicePixelRatio;
@@ -2829,12 +2644,9 @@ class CanvasModel with ChangeNotifier {
     });
   }
 
-  // mobile only
-  // Move the canvas to make the cursor visible(center) on the screen.
   void _moveToCenterCursor() {
     Rect? imageRect = parent.target?.ffiModel.rect;
     if (imageRect == null) {
-      // unreachable
       return;
     }
     final maxX = 0.0;
@@ -2847,20 +2659,15 @@ class CanvasModel with ChangeNotifier {
     if (minX < 0) {
       _x = min(max(offsetToCenter.dx, minX), maxX);
     } else {
-      // _size.width > (imageRect.right, imageRect.left) * _scale, we should not change _x
     }
     if (minY < 0) {
       _y = min(max(offsetToCenter.dy, minY), maxY);
     } else {
-      // _size.height > (imageRect.bottom - imageRect.top) * _scale, , we should not change _y
     }
   }
 }
 
-// data for cursor
 class CursorData {
-  // At most 1 MiB of RGBA, including Linux's square cursor padding: twice the largest
-  // accessibility cursor, beyond which a cursor is shown smaller rather than larger.
   static const _maxRasterSize = 512;
 
   final String peerId;
@@ -2883,7 +2690,6 @@ class CursorData {
 
   img2.Image get image => _image!;
 
-  /// False for a shape not in use; only the shape in use keeps pixels, for a new raster.
   bool get hasPixels => _image != null;
 
   void releasePixels() {
@@ -2911,7 +2717,6 @@ class CursorData {
 
   double _limitScale(double requestedScale) {
     final valid = requestedScale.isFinite && requestedScale > 0;
-    // Invalid requests retain the last valid raster and hotspot.
     final limitedScale = valid
         ? min(requestedScale, _maxRasterSize / max(width, height))
         : scale;
@@ -2928,7 +2733,6 @@ class CursorData {
   double _checkUpdateScale(double scale) {
     scale = _limitScale(scale);
     if (scale != 1.0) {
-      // A thin cursor must not grow just to make its short edge reach the minimum.
       scale = max(scale, kMinCursorSize / max(width, height));
     }
 
@@ -2936,8 +2740,6 @@ class CursorData {
     final targetHeight = (height * scale).ceil();
     if ((_rasterWidth != targetWidth || _rasterHeight != targetHeight) &&
         !hasPixels) {
-      // Nothing to make this raster from; buildCursorOfCache asks for the pixels unless its
-      // native cursor was made before.
       data = null;
       return scale;
     }
@@ -2981,8 +2783,6 @@ class CursorData {
         img2.Image.fromResized(image, width: targetWidth, height: targetHeight);
     final dx = image.width / targetWidth;
     final dy = image.height / targetHeight;
-    // Use the average filter's sample area, but weight RGB by alpha so
-    // transparent pixels do not darken visible edges in the straight-alpha PNG.
     for (final pixel in resized) {
       final x = (pixel.x * dx).toInt();
       final y = (pixel.y * dy).toInt();
@@ -3011,8 +2811,6 @@ class CursorData {
 
   String updateGetKey(double scale) {
     scale = _checkUpdateScale(scale);
-    // The raster asked for, not the one made last: a shape without pixels keeps the native
-    // cursors of every raster it was shown at.
     return '${peerId}_${id}_${_doubleToInt(width * scale)}_${_doubleToInt(height * scale)}_${(width * scale).ceil()}_${(height * scale).ceil()}';
   }
 }
@@ -3055,14 +2853,12 @@ class PredefinedCursor {
   init() {
     _image2 = img2.decodePng(base64Decode(png));
     if (_image2 != null) {
-      // The png type of forbidden cursor image is `PngColorType.indexed`.
       if (id == kPreForbiddenCursorId) {
         _image2 = _image2!.convert(format: img2.Format.uint8, numChannels: 4);
       }
 
       () async {
         final defaultImg = _image2!;
-        // This function is called only one time, no need to care about the performance.
         Uint8List data = defaultImg.getBytes(order: img2.ChannelOrder.rgba);
         _image?.dispose();
         _image = await img.decodeImageFromPixels(
@@ -3104,8 +2900,6 @@ class CursorModel with ChangeNotifier {
   final _cacheKeys = <String>{};
   double _x = -10000;
   double _y = -10000;
-  // int.parse(evt['id']) may cause FormatException
-  // So we use String here.
   String _id = "-1";
   double _hotx = 0;
   double _hoty = 0;
@@ -3120,15 +2914,7 @@ class CursorModel with ChangeNotifier {
   String peerId = '';
   WeakReference<FFI> parent;
 
-  // Only for mobile, touch mode
-  // To block touch event above the KeyHelpTools
-  //
-  // A better way is to not listen events from the KeyHelpTools.
-  // But we're now using a Container(child: Stack(...)) to wrap the KeyHelpTools,
-  // and the listener is on the Container.
   Rect? _keyHelpToolsRect;
-  // `lastIsBlocked` is only used in common/widgets/remote_input.dart -> _RawTouchGestureDetectorRegionState -> onDoubleTap()
-  // Because onDoubleTap() doesn't have the `event` parameter, we can't get the touch event's position.
   bool _lastIsBlocked = false;
   bool _lastKeyboardIsVisible = false;
 
@@ -3136,17 +2922,7 @@ class CursorModel with ChangeNotifier {
 
   Rect? get keyHelpToolsRectToAdjustCanvas =>
       _lastKeyboardIsVisible ? _keyHelpToolsRect : null;
-  // The blocked rect is used to block the pointer/touch events in the remote page.
   final List<Rect> _blockedRects = [];
-  // Used in shouldBlock().
-  // _blockEvents is a flag to block pointer/touch events on the remote image.
-  // It is set to true to prevent accidental touch events in the following scenarios:
-  //   1. In floating mouse mode, when the scroll circle is shown.
-  //   2. In floating mouse widgets mode, when the left/right buttons are moving.
-  //   3. In floating mouse widgets mode, when using the virtual joystick.
-  // When _blockEvents is true, all pointer/touch events are blocked regardless of the contents of _blockedRects.
-  // _blockedRects contains specific rectangular regions where events are blocked; these are checked when _blockEvents is false.
-  // In summary: _blockEvents acts as a global block, while _blockedRects provides fine-grained blocking.
   bool _blockEvents = false;
   List<Rect> get blockedRects => List.unmodifiable(_blockedRects);
 
@@ -3157,9 +2933,6 @@ class CursorModel with ChangeNotifier {
     if (rect == null) {
       _lastIsBlocked = false;
     } else {
-      // Block the touch event is safe here.
-      // `lastIsBlocked` is only used in onDoubleTap() to block the touch event from the KeyHelpTools.
-      // `lastIsBlocked` will be set when the cursor is moving or touch somewhere else.
       _lastIsBlocked = true;
     }
     if (isMobile && _lastKeyboardIsVisible != keyboardIsVisible) {
@@ -3184,9 +2957,6 @@ class CursorModel with ChangeNotifier {
 
   get lastIsBlocked => _lastIsBlocked;
 
-  /// The image of the shape in use, or the one shown before until it is back: a switch falls
-  /// back to the default cursor only for a shape the core cannot give. Asks the core for the
-  /// shape in use when it was let go.
   ui.Image? get image {
     if (_images[_id] == null && _cacheMap.containsKey(_id)) {
       restorePixels(_id);
@@ -3225,8 +2995,6 @@ class CursorModel with ChangeNotifier {
   }
 
   CursorModel(this.parent) {
-    // Made now, not when first drawn: nothing draws again when their decode lands, so the first
-    // build that needs one would show the shape before in its place.
     preDefaultCursor.cache;
     preForbiddenCursor.cache;
   }
@@ -3234,8 +3002,6 @@ class CursorModel with ChangeNotifier {
   Set<String> get cachedKeys => _cacheKeys;
   addKey(String key) => _cacheKeys.add(key);
 
-  // remote physical display coordinate
-  // For update pan (mobile), onOneFingerPanStart, onOneFingerPanUpdate, onHoldDragUpdate
   Rect getVisibleRect() {
     final size = parent.target?.canvasModel.getSize() ??
         MediaQueryData.fromView(ui.window).size;
@@ -3248,12 +3014,6 @@ class CursorModel with ChangeNotifier {
   }
 
   Offset getCanvasOffsetToCenterCursor() {
-    // Cursor should be at the center of the visible rect.
-    // _x = rect.left + rect.width / 2
-    // _y = rect.right + rect.height / 2
-    // See `getVisibleRect()`
-    // _x = _displayOriginX - xoffset / scale + size.width / scale * 0.5;
-    // _y = _displayOriginY - yoffset / scale + size.height / scale * 0.5;
     final size = parent.target?.canvasModel.getSize() ??
         MediaQueryData.fromView(ui.window).size;
     final xoffset = (_displayOriginX - _x) * scale + size.width * 0.5;
@@ -3263,7 +3023,6 @@ class CursorModel with ChangeNotifier {
 
   get scale => parent.target?.canvasModel.scale ?? 1.0;
 
-  // mobile Soft keyboard, block touch event from the KeyHelpTools
   shouldBlock(double x, double y) {
     if (_blockEvents) {
       return true;
@@ -3275,7 +3034,6 @@ class CursorModel with ChangeNotifier {
       }
     }
 
-    // For help tools rectangle, only block touch event when in touch mode.
     if (!(parent.target?.ffiModel.touchMode ?? false)) {
       return false;
     }
@@ -3286,7 +3044,6 @@ class CursorModel with ChangeNotifier {
     return false;
   }
 
-  // For touch mode
   Future<bool> move(double x, double y) async {
     if (shouldBlock(x, y)) {
       _lastIsBlocked = true;
@@ -3423,7 +3180,6 @@ class CursorModel with ChangeNotifier {
     Point<double>? newPos;
     final rect = parent.target?.ffiModel.rect;
     if (rect == null) {
-      // unreachable
       return;
     }
     newPos = InputModel.getPointInRemoteRect(
@@ -3482,7 +3238,6 @@ class CursorModel with ChangeNotifier {
     if (!isMoved) {
       final rect = parent.target?.ffiModel.rect;
       if (rect == null) {
-        // unreachable
         return;
       }
 
@@ -3528,8 +3283,6 @@ class CursorModel with ChangeNotifier {
     _images.clear();
   }
 
-  /// Its image is kept with the ones used last, see [_imageLimit]; a shape that does not decode
-  /// is marked as one the core cannot give.
   Future<void> updateCursorData(String id, int hotxInt, int hotyInt, int width,
       int height, Uint8List rgba) async {
     final generation = _generation;
@@ -3539,13 +3292,11 @@ class CursorModel with ChangeNotifier {
     final image = await img.decodeImageFromPixels(
         rgba, width, height, ui.PixelFormat.rgba8888);
     if (image == null) {
-      // It did not decode; painting must not ask for it on every frame.
       _markUnavailable(generation, id);
       return;
     }
     if (!await _updateCache(
         generation, rgba, image, id, hotx, hoty, width, height)) {
-      // Not kept, or the session was cleared while it decoded.
       image.dispose();
       _markUnavailable(generation, id);
       return;
@@ -3557,8 +3308,6 @@ class CursorModel with ChangeNotifier {
       old.item1.dispose();
     }
 
-    // Update last cursor data.
-    // Do not use the previous `image` and `id`, because `_id` may be changed.
     _updateCurData();
     final cache = _cacheMap[id];
     if (id != _id && cache != null) _switchedAway(cache);
@@ -3593,7 +3342,6 @@ class CursorModel with ChangeNotifier {
       if (isDesktop &&
           (parent.target?.ffiModel.isPeerLinux == true ||
               parent.target?.ffiModel.isPeerWindows == true)) {
-        // PNG decoding supplies straight alpha for Linux/Windows cursor resizing.
         final decoded = img2.decodePng(data);
         if (decoded == null) {
           debugPrint('Unable to decode cursor $id PNG for resizing');
@@ -3628,36 +3376,16 @@ class CursorModel with ChangeNotifier {
 
   final _restoring = <String>{};
 
-  // Tabs in a window share its engine's native cursors, predefined ones included.
   static int _nextKeyScope = 0;
   final int _keyScope = _nextKeyScope++;
 
   String nativeKey(CursorData cache, double scale) {
     final key = '${_keyScope}_${cache.updateGetKey(scale)}';
-    // A native cursor at another raster does not hold the pixels this one is made from.
     if (!_cacheKeys.contains(key)) _nativeIds.remove(cache.id);
     return key;
   }
 
-  // Native cursors stay for the session, one per raster of each shape, and only [clear]
-  // deletes them, as before; unlike the painted images they have no LRU, for now. A delete
-  // frees nothing on Windows: the engine's `deleteCustomCursor/windows` releases the HCURSOR
-  // with `DeleteObject`, which does not take a cursor. Measured on Windows with 500 cursors
-  // made by `CreateIconIndirect`, as the engine makes them: `DeleteObject` failed all 500 and
-  // left 500 USER objects alive, while `DestroyCursor` or `DestroyIcon` freed all 500. Each
-  // delete leaks its handle until the process exits, and making the cursor again for a raster
-  // or a shape shown once more leaks another, so an LRU would leak more than keeping them.
-  //
-  // Fixing the engine is not cheap. x64 runs our fork, rustdesk/engine, on Flutter 3.24; the
-  // fix is one more patch to rebuild, publish, and carry across every Flutter upgrade. arm64
-  // runs the stock engine of a newer Flutter, which has the same code: fixing it means
-  // porting the fork to that version and building and publishing an arm64 engine as well, or
-  // an upstream fix and waiting for it to reach stable. Once both engines destroy cursors, an
-  // LRU like the painted images' can come back. Content ids keep the count to the shapes the
-  // peer really shows, a few dozen to a couple of hundred.
 
-  /// The shape in use keeps its pixels, so a new raster is made from them at once; the others
-  /// keep none once their native cursor holds them.
   void registered(CursorData cache, String key) {
     _nativeIds.add(cache.id);
     _awaitingNative.remove(cache.id);
@@ -3666,15 +3394,11 @@ class CursorModel with ChangeNotifier {
     }
   }
 
-  // The shapes a native cursor holds, and those keeping their pixels until one does, oldest
-  // first: one decoded after the peer moved on must still get a native cursor when shown
-  // again, rather than be decoded again every time it comes back.
   final _nativeIds = <String>{};
   final _awaitingNative = <String>{};
 
   void _switchedAway(CursorData cache) {
     _awaitingNative.remove(cache.id);
-    // Mobile only paints the cursor, from its image.
     if (isMobile || _nativeIds.contains(cache.id)) {
       cache.releasePixels();
       return;
@@ -3687,21 +3411,14 @@ class CursorModel with ChangeNotifier {
     }
   }
 
-  /// The peer's shapes used last that keep a painted image, and the most that keep their pixels
-  /// waiting for a native cursor; the core rebuilds the others. An animated cursor is a shape per
-  /// frame, 18 for the Windows busy cursor and 23 for KDE's, and a cycle longer than this limit
-  /// would rebuild every frame.
   static const kRecentShapes = 64;
 
-  /// The native cursor of the shape shown last, shown on while the shape in use is made.
   String? shownKey;
 
   void shown(CursorData cache, String key) {
-    // The forbidden cursor shows only while input is off; it is no stand-in for a shape.
     if (cache.id != kPreForbiddenCursorId) shownKey = key;
   }
 
-  /// Whether the desktop paints the peer's cursor over the remote image.
   @protected
   bool get showsRemoteCursor {
     final tag = ShowRemoteCursorState.tag(parent.target?.id ?? '');
@@ -3709,11 +3426,8 @@ class CursorModel with ChangeNotifier {
         Get.find<RxBool>(tag: tag).value;
   }
 
-  // Painted images kept: mobile always paints the cursor, a desktop only when it shows the
-  // remote cursor, and otherwise the native cursors show the shapes.
   int get _imageLimit => isMobile || showsRemoteCursor ? kRecentShapes : 1;
 
-  // `_images` is in order of use. The image painted is kept, whoever's it is.
   void _evictImages() {
     var excess = _images.length - _imageLimit;
     _images.removeWhere((id, shape) {
@@ -3726,7 +3440,6 @@ class CursorModel with ChangeNotifier {
     });
   }
 
-  /// The core keeps every shape the peer sent, compressed; see `Session::cursor_shapes`.
   @protected
   Future<CursorShape?> fetchCursorShape(String id) {
     final ffi = parent.target;
@@ -3734,22 +3447,14 @@ class CursorModel with ChangeNotifier {
     return bind.sessionGetCursorShape(sessionId: ffi.sessionId, id: id);
   }
 
-  // The shape the core could not give, not asked for again while it is the one in use. One
-  // is enough: only the shape in use is asked for on every frame, and the peer's ids must not
-  // accumulate here.
   String? _unavailable;
-  // Counts session clears, so that a decode finishing after one keeps nothing.
   int _generation = 0;
 
-  /// Decodes the shape in use again from the core, for a raster its native cursor lacks, for
-  /// painting it, or for a window a tab moved to.
   void restorePixels(String id) {
     if (id != _id || _unavailable == id || !_restoring.add(id)) return;
     final generation = _generation;
     () async {
       try {
-        // A throw becomes an error the await hands over later, not during the build that may
-        // have asked: a failure tells the listeners.
         final shape = await Future.sync(() => fetchCursorShape(id));
         if (generation != _generation) {
           return;
@@ -3757,7 +3462,6 @@ class CursorModel with ChangeNotifier {
           _markUnavailable(generation, id);
           debugPrint('Cursor $id is not kept by the core');
         } else {
-          // Decoded even if the peer moved on: an animation comes back to it.
           await updateCursorData(id, shape.hotx, shape.hoty, shape.width,
               shape.height, shape.colors);
         }
@@ -3779,8 +3483,6 @@ class CursorModel with ChangeNotifier {
   bool _updateCurData() {
     final previous = _cache;
     final cache = _cacheMap[_id];
-    // A shape not decoded yet leaves the one shown before in place until it is; one the core
-    // cannot give leaves none, so the default cursor shows, as for a shape never sent.
     if (cache != null || _unavailable == _id) _cache = cache;
     if (previous != null && !identical(previous, _cache)) {
       _switchedAway(previous);
@@ -3796,7 +3498,6 @@ class CursorModel with ChangeNotifier {
     }
     _evictImages();
     try {
-      // may throw exception, because the listener maybe already dispose
       notifyListeners();
     } catch (e) {
       debugPrint('WARNING: updateCursorId $_id, without notifyListeners(). $e');
@@ -3810,7 +3511,6 @@ class CursorModel with ChangeNotifier {
     }
   }
 
-  /// Update the cursor position.
   updateCursorPosition(Map<String, dynamic> evt, String id) async {
     if (!isConnIn2Secs()) {
       gotMouseControl = false;
@@ -3821,7 +3521,6 @@ class CursorModel with ChangeNotifier {
     try {
       RemoteCursorMovedState.find(id).value = true;
     } catch (e) {
-      //
     }
     notifyListeners();
   }
@@ -3908,9 +3607,6 @@ class QualityMonitorModel with ChangeNotifier {
   bool get show => _show;
   QualityMonitorData get data => _data;
 
-  // Only a WebRTC session on the web names its transport here: web has no
-  // session tab to show it on (the desktop tab's tooltip already does), and
-  // WebRTC is the one path that can be direct or TURN.
   String? get webrtcTransport {
     if (!isWeb) return null;
     final ffiModel = parent.target?.ffiModel;
@@ -3972,7 +3668,6 @@ class QualityMonitorModel with ChangeNotifier {
       }
       notifyListeners();
     } catch (e) {
-      //
     }
   }
 }
@@ -4016,7 +3711,6 @@ class ElevationModel with ChangeNotifier {
   onPortableServiceRunning(bool running) => _running = running;
 }
 
-// The index values of `ConnType` are same as rust protobuf.
 enum ConnType {
   defaultConn,
   fileTransfer,
@@ -4026,43 +3720,39 @@ enum ConnType {
   terminal
 }
 
-/// Flutter state manager and data communication with the Rust core.
 class FFI {
   var id = '';
   var version = '';
   var connType = ConnType.defaultConn;
   var closed = false;
 
-  /// dialogManager use late to ensure init after main page binding [globalKey]
   late final dialogManager = OverlayDialogManager();
 
   late final SessionID sessionId;
-  late final ImageModel imageModel; // session
-  late final FfiModel ffiModel; // session
-  late final CursorModel cursorModel; // session
-  late final CanvasModel canvasModel; // session
-  late final ServerModel serverModel; // global
-  late final ChatModel chatModel; // session
-  late final FileModel fileModel; // session
-  late final AbModel abModel; // global
-  late final GroupModel groupModel; // global
-  late final UserModel userModel; // global
-  late final PeerTabModel peerTabModel; // global
-  late final QualityMonitorModel qualityMonitorModel; // session
-  late final RecordingModel recordingModel; // session
-  late final InputModel inputModel; // session
-  late final ElevationModel elevationModel; // session
-  late final CmFileModel cmFileModel; // cm
-  late final TextureModel textureModel; //session
-  late final ShortcutModel shortcutModel; // session
-  late final Peers recentPeersModel; // global
-  late final Peers favoritePeersModel; // global
-  late final Peers lanPeersModel; // global
+  late final ImageModel imageModel;
+  late final FfiModel ffiModel;
+  late final CursorModel cursorModel;
+  late final CanvasModel canvasModel;
+  late final ServerModel serverModel;
+  late final ChatModel chatModel;
+  late final FileModel fileModel;
+  late final AbModel abModel;
+  late final GroupModel groupModel;
+  late final UserModel userModel;
+  late final PeerTabModel peerTabModel;
+  late final QualityMonitorModel qualityMonitorModel;
+  late final RecordingModel recordingModel;
+  late final InputModel inputModel;
+  late final ElevationModel elevationModel;
+  late final CmFileModel cmFileModel;
+  late final TextureModel textureModel;
+  late final ShortcutModel shortcutModel;
+  late final Peers recentPeersModel;
+  late final Peers favoritePeersModel;
+  late final Peers lanPeersModel;
 
-  // Terminal model registry for multiple terminals
   final Map<int, TerminalModel> _terminalModels = {};
 
-  // Getter for terminal models
   Map<int, TerminalModel> get terminalModels => _terminalModels;
 
   FFI(SessionID? sId) {
@@ -4097,7 +3787,6 @@ class FFI {
         name: PeersModelName.lan, loadEvent: LoadEvent.lan, getInitPeers: null);
   }
 
-  /// Mobile reuse FFI
   void mobileReset() {
     ffiModel.resetRestartReconnectState();
     ffiModel.waitForFirstImage.value = true;
@@ -4107,7 +3796,6 @@ class FFI {
     ffiModel.waitForImageTimer = null;
   }
 
-  /// Start with the given [id]. Only transfer file if [isFileTransfer], only view camera if [isViewCamera], only port forward if [isPortForward].
   void start(
     String id, {
     bool isFileTransfer = false,
@@ -4151,10 +3839,7 @@ class FFI {
     }
 
     final isNewPeer = tabWindowId == null;
-    // If tabWindowId != null, this session is a "tab -> window" one.
-    // Else this session is a new one.
     if (isNewPeer) {
-      // ignore: unused_local_variable
       final addRes = bind.sessionAddSync(
         sessionId: sessionId,
         id: id,
@@ -4190,9 +3875,7 @@ class FFI {
     if (isDesktop && connType == ConnType.defaultConn) {
       textureModel.updateCurrentDisplay(display ?? 0);
     }
-    // FIXME: separate cameras displays or shift all indices.
     if (isDesktop && connType == ConnType.viewCamera) {
-      // FIXME: currently the default 0 is not used.
       textureModel.updateCurrentDisplay(display ?? 0);
     }
 
@@ -4200,15 +3883,10 @@ class FFI {
       inputModel.updateTrackpadSpeed();
     }
 
-    // CAUTION: `sessionStart()` and `sessionStartWithDisplays()` are an async functions.
-    // Though the stream is returned immediately, the stream may not be ready.
-    // Any operations that depend on the stream should be carefully handled.
     late final Stream<EventToUI> stream;
     if (isNewPeer || display == null || displays == null) {
       stream = bind.sessionStart(sessionId: sessionId, id: id);
     } else {
-      // We have to put displays in `sessionStart()` to make sure the stream is ready
-      // and then the displays' capturing requests can be sent.
       stream = bind.sessionStartWithDisplays(
           sessionId: sessionId, id: id, displays: Int32List.fromList(displays));
     }
@@ -4237,18 +3915,14 @@ class FFI {
     imageModel.updateUserTextureRender();
     final hasGpuTextureRender = bind.mainHasGpuTextureRender();
     final SimpleWrapper<bool> isToNewWindowNotified = SimpleWrapper(false);
-    // Preserved for the rgba data.
     stream.listen((message) {
       if (closed) return;
       if (tabWindowId != null && !isToNewWindowNotified.value) {
-        // Session is read to be moved to a new window.
-        // Get the cached data and handle the cached data.
         Future.delayed(Duration.zero, () async {
           final args = jsonEncode({'id': id, 'close': display == null});
           final cachedData = await DesktopMultiWindow.invokeMethod(
               tabWindowId, kWindowEventGetCachedSessionData, args);
           if (cachedData == null) {
-            // unreachable
             debugPrint('Unreachable, the cached data is empty.');
             return;
           }
@@ -4284,7 +3958,6 @@ class FFI {
           }
         } else if (message is EventToUI_Rgba) {
           final display = message.field0;
-          // Fetch the image buffer from rust codes.
           final sz = platformFFI.getRgbaSize(sessionId, display);
           if (sz == 0) {
             platformFFI.nextRgba(sessionId, display);
@@ -4314,7 +3987,6 @@ class FFI {
         }
       }();
     });
-    // every instance will bind a stream
     this.id = id;
   }
 
@@ -4346,7 +4018,6 @@ class FFI {
     final restore = ffiModel.pendingMonitorRestore;
     ffiModel._cancelPendingMonitorRestore();
     if (restore == null || closed) return;
-    // The display list may have changed since the restore was queued.
     final displays = ffiModel.pi.displays;
     if ((restore == kAllDisplayValue && displays.isNotEmpty) ||
         (restore >= 0 && restore < displays.length)) {
@@ -4355,7 +4026,6 @@ class FFI {
     }
   }
 
-  /// Login with [password], choose if the client should [remember] it.
   void login(String osUsername, String osPassword, SessionID sessionId,
       String password, bool remember) {
     bind.sessionLogin(
@@ -4371,14 +4041,12 @@ class FFI {
         sessionId: sessionId, code: code, trustThisDevice: trustThisDevice);
   }
 
-  /// Close the remote session.
   Future<void> close({bool closeSession = true}) async {
     closed = true;
     if (isWeb) {
       platformFFI.clearVideoFrameCallback();
     }
     chatModel.close();
-    // Close all terminal models
     for (final model in _terminalModels.values) {
       model.dispose();
     }
@@ -4400,7 +4068,6 @@ class FFI {
     ffiModel.clear();
     canvasModel.clear();
     inputModel.resetModifiers();
-    // Dispose relative mouse mode resources to ensure cursor is restored
     inputModel.disposeRelativeMouseMode();
     inputModel.disposeSideButtonTracking();
     if (closeSession) {
@@ -4423,7 +4090,6 @@ class FFI {
     return await platformFFI.invokeMethodWithResult<T>(method, arguments);
   }
 
-  // Terminal model management
   void registerTerminalModel(int terminalId, TerminalModel model) {
     debugPrint('[FFI] Registering terminal model for terminal $terminalId');
     _terminalModels[terminalId] = model;
@@ -4437,7 +4103,6 @@ class FFI {
   void routeTerminalResponse(Map<String, dynamic> evt) {
     final int terminalId = TerminalModel.getTerminalIdFromEvt(evt);
 
-    // Route to specific terminal model if it exists
     final model = _terminalModels[terminalId];
     if (model != null) {
       model.handleTerminalResponse(evt);
@@ -4530,8 +4195,8 @@ class PeerInfo with ChangeNotifier {
   bool get isInstalled =>
       platform != kPeerPlatformWindows ||
       platformAdditions[kPlatformAdditionsIsInstalled] == true;
-  List<int> get RustDeskVirtualDisplays => List<int>.from(
-      platformAdditions[kPlatformAdditionsRustDeskVirtualDisplays] ?? []);
+  List<int> get SupportDeskVirtualDisplays => List<int>.from(
+      platformAdditions[kPlatformAdditionsSupportDeskVirtualDisplays] ?? []);
   int get amyuniVirtualDisplayCount =>
       platformAdditions[kPlatformAdditionsAmyuniVirtualDisplays] ?? 0;
 
@@ -4542,7 +4207,7 @@ class PeerInfo with ChangeNotifier {
   bool get cursorEmbedded => tryGetDisplay()?.cursorEmbedded ?? false;
 
   bool get isRustDeskIdd =>
-      platformAdditions[kPlatformAdditionsIddImpl] == 'rustdesk_idd';
+      platformAdditions[kPlatformAdditionsIddImpl] == 'supportdesk_idd';
   bool get isAmyuniIdd =>
       platformAdditions[kPlatformAdditionsIddImpl] == 'amyuni_idd';
 

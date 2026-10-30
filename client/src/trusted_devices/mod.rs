@@ -28,7 +28,6 @@ pub const MAX_RECORDS: usize = 128;
 #[derive(Clone, Default, Serialize, Deserialize)]
 pub struct DeviceInfo {
     pub time: i64,
-    // Missing on V1 records until import; zero means no expiration.
     #[serde(default)]
     pub expires_at: Option<i64>,
     pub id: String,
@@ -42,14 +41,12 @@ struct Record {
     info: DeviceInfo,
     #[serde(default)]
     legacy: bool,
-    // Keep migrated credentials and their legacy entry in one revocation group.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     origin: Option<[u8; TOKEN_BYTES]>,
 }
 
 impl Record {
     fn id(&self) -> [u8; TOKEN_BYTES] {
-        // Management identifiers must not expose authentication verifiers.
         sha256::hash(&self.origin.unwrap_or(self.verifier)).0
     }
 
@@ -151,7 +148,6 @@ impl Grants {
         let previous = self.records.len();
         self.records.retain(|record| record.current(now));
         self.records.sort_by_key(|record| record.info.time);
-        // Upgrading must not evict existing legacy registrations to satisfy the V2 cap.
         let mut excess = self
             .records
             .iter()

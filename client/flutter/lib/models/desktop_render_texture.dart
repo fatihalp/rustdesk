@@ -44,7 +44,6 @@ class _PixelbufferTexture {
       _destroying = true;
       if (unregisterTexture) {
         platformFFI.registerPixelbufferTexture(_sessionId!, display, 0);
-        // sleep for a while to avoid the texture is used after it's unregistered.
         await Future.delayed(Duration(milliseconds: 100));
       }
       await textureRenderer.closeTexture(_textureKey);
@@ -96,12 +95,10 @@ class _GpuTexture {
   }
 
   destroy(bool unregisterTexture, FFI ffi) async {
-    // must stop texture render, render unregistered texture cause crash
     if (!_destroying && support && _sessionId != null && _textureId != -1) {
       _destroying = true;
       if (unregisterTexture) {
         platformFFI.registerGpuTexture(_sessionId!, _display, 0);
-        // sleep for a while to avoid the texture is used after it's unregistered.
         await Future.delayed(Duration(milliseconds: 100));
       }
       await gpuTextureRenderer.unregisterTexture(_textureId);
@@ -151,7 +148,6 @@ class TextureModel {
     debugPrint("setTextureType: display=$display, isGpuTexture=$gpuTexture");
     ensureControl(display);
     _control[display]?.setTextureType(gpuTexture: gpuTexture);
-    // For versions that do not support multiple displays, the display parameter is always 0, need set type of current display
     final ffi = parent.target;
     if (ffi == null) return;
     if (!ffi.ffiModel.pi.isSupportMultiDisplay) {

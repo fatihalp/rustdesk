@@ -50,7 +50,7 @@ class _SentRead {
   const _SentRead(this.path, this.includeHidden);
 }
 
-class _FileBinding extends Fake implements RustdeskImpl {
+class _FileBinding extends Fake implements SupportdeskImpl {
   int _jobId = 0;
   final emptyDirsDispatch = Completer<void>();
 
@@ -110,7 +110,7 @@ class _DeletingController extends FileController {
 void main() {
   for (final scenario in ['completion', 'reconnect', 'dispatch reconnect']) {
     testWidgets('SAF retry after $scenario', (tester) async {
-      const path = '/@rustdesk/tree/grant/root';
+      const path = '/@supportdesk/tree/grant/root';
       final response = jsonEncode({
         'path': path,
         'empty_dirs': [jsonDecode(_directoryJson('$path/empty'))],

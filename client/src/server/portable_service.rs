@@ -275,7 +275,6 @@ impl SharedMemory {
         };
         log::info!("Create shared memory, size: {}, flink: {}", size, flink);
         if let Err(err) = set_path_permission_for_portable_service_shmem_file(Path::new(&flink)) {
-            // Release shmem handle first so best-effort flink cleanup has a chance to succeed.
             drop(shmem);
             match std::fs::remove_file(&flink) {
                 Ok(()) => {
@@ -328,11 +327,8 @@ impl SharedMemory {
             std::fs::create_dir_all(&dir)?;
         }
         if parent_created || crate::platform::is_root() {
-            // Harden parent ACL on first provisioning and periodically on SYSTEM path.
             set_path_permission_for_portable_service_shmem_dir(&dir)?;
         } else {
-            // Existing parents still need type/reparse validation. Non-SYSTEM callers may lack
-            // WRITE_DAC on a valid parent, so avoid rebuilding the ACL here.
             validate_path_for_portable_service_shmem_dir(&dir)?;
         }
         Ok(dir
@@ -433,7 +429,6 @@ mod utils {
     }
 }
 
-// functions called in separate SYSTEM user process.
 pub mod server {
     use base::message_proto::PointerDeviceEvent;
 
@@ -494,15 +489,10 @@ pub mod server {
         threads.push(std::thread::spawn(move || {
             run_ipc_client(ipc_token);
         }));
-        // Detached shutdown watchdog:
-        // - gives graceful shutdown/cleanup a short window
-        // - force-exits the process if workers are still stuck
         std::thread::spawn(|| {
             run_exit_check();
         });
         let record_pos_handle = crate::input_service::try_start_record_cursor_pos();
-        // Arm forced-exit watchdog only for worker join phase.
-        // Once join phase completes, cleanup should not be interrupted by forced exit.
         FORCE_EXIT_ARMED.store(true, Ordering::SeqCst);
         for th in threads.drain(..) {
             th.join().ok();
@@ -529,9 +519,6 @@ pub mod server {
             }
             std::thread::sleep(Duration::from_millis(50));
         }
-        // Fallback only: normal shutdown path should complete and process should exit naturally.
-        // This forced exit is a last resort when worker threads are stuck and graceful teardown
-        // does not finish in time.
         std::thread::sleep(FORCED_EXIT_DELAY);
         if FORCE_EXIT_ARMED.load(Ordering::SeqCst) {
             log::warn!(
@@ -573,7 +560,6 @@ pub mod server {
                     utils::increase_counter(shmem.as_ptr().add(ADDR_CURSOR_COUNTER));
                 }
             }
-            // more frequent in case of `Error of mouse_cursor service`
             std::thread::sleep(Duration::from_millis(15));
         }
     }
@@ -690,7 +676,6 @@ pub mod server {
                             dxgi_failed_times = 0;
                         }
                         Frame::Texture(_) => {
-                            // should not happen
                         }
                     },
                     Some(Err(e)) => {
@@ -701,10 +686,7 @@ pub mod server {
                             continue;
                         }
                         if e.kind() != std::io::ErrorKind::WouldBlock {
-                            // DXGI_ERROR_INVALID_CALL after each success on Microsoft GPU driver
-                            // log::error!("capture frame failed: {:?}", e);
                             if c.as_ref().map(|c| c.is_gdi()) == Some(false) {
-                                // nog gdi
                                 dxgi_failed_times += 1;
                             }
                             if dxgi_failed_times > MAX_DXGI_FAIL_TIME {
@@ -740,7 +722,7 @@ pub mod server {
                     return;
                 }
                 let mut timer =
-                    crate::rustdesk_interval(tokio::time::interval(Duration::from_secs(1)));
+                    crate::supportdesk_interval(tokio::time::interval(Duration::from_secs(1)));
                 let mut nack = 0;
                 loop {
                     if *EXIT.lock().unwrap() {
@@ -822,7 +804,6 @@ pub mod server {
     }
 }
 
-// functions called in main process.
 pub mod client {
     use super::*;
     use crate::display_service;
@@ -972,11 +953,7 @@ pub mod client {
         std::thread::spawn(move || {
             std::thread::sleep(PORTABLE_SERVICE_STARTUP_TIMEOUT);
             let should_reset = {
-                // Guard against stale watchdogs from previous launches:
-                // only the watchdog that matches the latest STARTING_TOKEN may reset STARTING.
                 let current_token = STARTING_TOKEN.load(Ordering::SeqCst);
-                // Keep lock guards in explicit short scopes to make it obvious
-                // there is no nested lock ordering (and to avoid Copilot false positives).
                 let starting = { *STARTING.lock().unwrap() };
                 let running = { *RUNNING.lock().unwrap() };
                 current_token == launch_token && starting && !running
@@ -990,15 +967,9 @@ pub mod client {
         });
     }
 
-    // Launch flow summary:
-    // 1) Prepare/reset runtime shared memory + IPC token.
-    // 2) Start helper process (direct or logon) with shmem argument.
-    // 3) Keep STARTING=true until IPC ping/pong marks RUNNING, or timeout watchdog resets it.
     pub(crate) fn start_portable_service(para: StartPara) -> ResultType<()> {
         log::info!("start portable service");
         let launch_token = {
-            // Keep lock guards in explicit short scopes to make it obvious
-            // there is no nested lock ordering (and to avoid Copilot false positives).
             let running = { *RUNNING.lock().unwrap() };
             let mut starting = STARTING.lock().unwrap();
             if *starting && !running && !has_running_portable_service_process() {
@@ -1039,7 +1010,6 @@ pub mod client {
                 bail!("Generated invalid portable service shared memory name");
             }
             let ipc_token = ipc::generate_one_time_ipc_token()?;
-            // os error 112, no enough space
             *shmem_lock = Some(crate::portable_service::SharedMemory::create(
                 &shmem_name,
                 shmem_size,
@@ -1176,8 +1146,6 @@ pub mod client {
     }
 
     pub extern "C" fn drop_portable_service_shared_memory() {
-        // https://stackoverflow.com/questions/35980148/why-does-an-atexit-handler-panic-when-it-accesses-stdout
-        // Please make sure there is no print in the call stack
         clear_runtime_shmem_state();
     }
 
@@ -1300,7 +1268,6 @@ pub mod client {
             }
         }
 
-        // control by itself
         fn is_gdi(&self) -> bool {
             true
         }
@@ -1382,7 +1349,7 @@ pub mod client {
                                     tokio::spawn(async move {
                                         let mut stream = stream;
                                         let postfix = postfix.to_owned();
-                                        let mut timer = crate::rustdesk_interval(tokio::time::interval(Duration::from_secs(1)));
+                                        let mut timer = crate::supportdesk_interval(tokio::time::interval(Duration::from_secs(1)));
                                         let mut nack = 0;
                                         let mut rx = rx_clone.lock().await;
                                         loop {
@@ -1429,7 +1396,6 @@ pub mod client {
                                                 _ = timer.tick() => {
                                                     nack+=1;
                                                     if nack > MAX_NACK {
-                                                        // In fact, this will not happen, ipc will be closed before max nack.
                                                         log::error!("max ipc nack");
                                                         break;
                                                     }

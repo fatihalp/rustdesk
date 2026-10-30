@@ -8,7 +8,6 @@ use RuntimeException;
 
 class GitHubWorkflowDispatcher
 {
-    /** Starts the branded packaging workflow for one build row. */
     public function dispatch(ClientBuild $build): void
     {
         $cfg = config('panel.github');

@@ -1,6 +1,3 @@
-// https://developer.apple.com/documentation/appkit/nscursor
-// https://github.com/servo/core-foundation-rs
-// https://github.com/rust-windowing/winit
 
 mod update_temp;
 mod verified_dmg;
@@ -47,16 +44,12 @@ use verified_dmg::{
     VerifiedDmg,
 };
 
-// macOS boolean_t is defined as `int` in <mach/boolean.h>
 type BooleanT = hbb_common::libc::c_int;
 
 static PRIVILEGES_SCRIPTS_DIR: Dir =
     include_dir!("$CARGO_MANIFEST_DIR/src/platform/privileges_scripts");
 static mut LATEST_SEED: i32 = 0;
 const UPDATE_CLEANUP_FAILED_AFTER_COMMIT: &str = "UPDATE_CLEANUP_FAILED_AFTER_COMMIT";
-// `kill -9` may not work without administrator privileges.
-// App-only update transaction used when launchd jobs are absent or intentionally stopped.
-// Keep its verification, staging, bundle rollback, and cleanup aligned with update.scpt.
 const PRIVILEGED_UPDATE_BODY: &str = r#"
 	on run {app_name, cur_pid, source_path, user_name, restore_owner, expected_sha256, expected_bundle_id}
 	    set app_bundle to "/Applications/" & app_name & ".app"
@@ -70,7 +63,7 @@ const PRIVILEGED_UPDATE_BODY: &str = r#"
 	    set check_source to "if [ -n " & expected_sha256_q & " ]; then test -f " & source_path_q & "; else test -d " & source_path_q & "; fi;"
 	    set kill_others to "pids=$(pgrep -x '" & app_name & "' | grep -vx " & cur_pid & " || true); if [ -n \"$pids\" ]; then echo \"$pids\" | xargs kill -9 || true; fi;"
 	    -- Rehash the root-owned copy in a clean environment before staging bytes.
-	    set prepare_verified to "verified_dir=$(/usr/bin/mktemp -d /tmp/.rustdeskupdate-verified.XXXXXX); /bin/chmod 0700 \"$verified_dir\"; verified_app=\"$verified_dir/" & app_name & ".app\"; dmg_attached=0; if [ -n " & expected_sha256_q & " ]; then verified_dmg=\"$verified_dir/update.dmg\"; /bin/cp " & source_path_q & " \"$verified_dmg\"; /usr/sbin/chown root:wheel \"$verified_dmg\"; /bin/chmod 0400 \"$verified_dmg\"; actual_sha256=$(/usr/bin/env -i /usr/bin/shasum -a 256 \"$verified_dmg\"); actual_sha256=${actual_sha256%% *}; if [ \"$actual_sha256\" != " & expected_sha256_q & " ]; then echo 'Update DMG SHA256 mismatch' >&2; exit 1; fi; dmg_mount=\"$verified_dir/mount\"; /bin/mkdir \"$dmg_mount\"; dmg_attached=1; /usr/bin/hdiutil attach -readonly -nobrowse -mountpoint \"$dmg_mount\" \"$verified_dmg\" >/dev/null; /usr/bin/ditto \"$dmg_mount/" & app_name & ".app\" \"$verified_app\"; /usr/bin/hdiutil detach \"$dmg_mount\" -force >/dev/null; dmg_attached=0; /bin/rm -f \"$verified_dmg\"; else /usr/bin/ditto " & source_path_q & " \"$verified_app\"; fi; /usr/sbin/chown -R root:wheel \"$verified_app\"; /bin/chmod -R go-w \"$verified_app\";"
+	    set prepare_verified to "verified_dir=$(/usr/bin/mktemp -d /tmp/.supportdeskupdate-verified.XXXXXX); /bin/chmod 0700 \"$verified_dir\"; verified_app=\"$verified_dir/" & app_name & ".app\"; dmg_attached=0; if [ -n " & expected_sha256_q & " ]; then verified_dmg=\"$verified_dir/update.dmg\"; /bin/cp " & source_path_q & " \"$verified_dmg\"; /usr/sbin/chown root:wheel \"$verified_dmg\"; /bin/chmod 0400 \"$verified_dmg\"; actual_sha256=$(/usr/bin/env -i /usr/bin/shasum -a 256 \"$verified_dmg\"); actual_sha256=${actual_sha256%% *}; if [ \"$actual_sha256\" != " & expected_sha256_q & " ]; then echo 'Update DMG SHA256 mismatch' >&2; exit 1; fi; dmg_mount=\"$verified_dir/mount\"; /bin/mkdir \"$dmg_mount\"; dmg_attached=1; /usr/bin/hdiutil attach -readonly -nobrowse -mountpoint \"$dmg_mount\" \"$verified_dmg\" >/dev/null; /usr/bin/ditto \"$dmg_mount/" & app_name & ".app\" \"$verified_app\"; /usr/bin/hdiutil detach \"$dmg_mount\" -force >/dev/null; dmg_attached=0; /bin/rm -f \"$verified_dmg\"; else /usr/bin/ditto " & source_path_q & " \"$verified_app\"; fi; /usr/sbin/chown -R root:wheel \"$verified_app\"; /bin/chmod -R go-w \"$verified_app\";"
 	    set validate_verified_app to "candidate_bundle_id=$(/usr/libexec/PlistBuddy -c 'Print :CFBundleIdentifier' \"$verified_app/Contents/Info.plist\"); if [ -z " & expected_bundle_id_q & " ] || [ \"$candidate_bundle_id\" != " & expected_bundle_id_q & " ]; then echo 'Update app bundle identifier mismatch' >&2; exit 1; fi; if [ -e " & app_bundle_q & " ]; then installed_bundle_id=$(/usr/libexec/PlistBuddy -c 'Print :CFBundleIdentifier' " & installed_info_q & "); if [ \"$installed_bundle_id\" != " & expected_bundle_id_q & " ]; then echo 'Installed app bundle identifier mismatch' >&2; exit 1; fi; fi;"
 	    set prepare_swap_paths to "temp_bundle=" & app_bundle_q & ".new.$$; old_bundle=" & app_bundle_q & ".old.$$;"
 	    set cleanup_swap_paths to "rm -rf \"$temp_bundle\" \"$old_bundle\";"
@@ -90,9 +83,6 @@ const PRIVILEGED_UPDATE_BODY: &str = r#"
 	end run
 	        "#;
 
-/// Global mutex to serialize CoreGraphics cursor operations.
-/// This prevents race conditions between cursor visibility (hide depth tracking)
-/// and cursor positioning/clipping operations.
 static CG_CURSOR_MUTEX: Mutex<()> = Mutex::new(());
 
 extern "C" {
@@ -153,13 +143,7 @@ pub fn is_can_screen_recording(prompt: bool) -> bool {
     autoreleasepool(|| unsafe_is_can_screen_recording(prompt))
 }
 
-// macOS >= 10.15
-// https://stackoverflow.com/questions/56597221/detecting-screen-recording-settings-on-macos-catalina/
-// remove just one app from all the permissions: tccutil reset All com.carriez.rustdesk
 fn unsafe_is_can_screen_recording(prompt: bool) -> bool {
-    // we got some report that we show no permission even after set it, so we try to use new api for screen recording check
-    // the new api is only available on macOS >= 10.15, but on stackoverflow, some people said it works on >= 10.16 (crash on 10.15),
-    // but also some said it has bug on 10.16, so we just use it on 11.0.
     unsafe {
         if CanUseNewApiForScreenCaptureCheck() == YES {
             return IsCanScreenRecording(if prompt { YES } else { NO }) == YES;
@@ -190,7 +174,6 @@ fn unsafe_is_can_screen_recording(prompt: bool) -> bool {
                 runningApplicationWithProcessIdentifier: pid
             ];
             if p.is_null() {
-                // ignore processes we don't have access to, such as WindowServer, which manages the windows named "Menubar" and "Backstop Menubar"
                 continue;
             }
             let url: id = msg_send![p, executableURL];
@@ -200,7 +183,6 @@ fn unsafe_is_can_screen_recording(prompt: bool) -> bool {
             }
             let is_dock: BOOL = msg_send![exe_name, isEqual: dock];
             if is_dock == YES {
-                // ignore the Dock, which provides the desktop picture
                 continue;
             }
             can_record_screen = true;
@@ -220,15 +202,11 @@ pub fn install_service() -> bool {
     is_installed_daemon(false)
 }
 
-// Remember to check if `update_daemon_agent()` need to be changed if changing `is_installed_daemon()`.
-// No need to merge the existing dup code, because the code in these two functions are too critical.
-// New code should be written in a common function.
 pub fn is_installed_daemon(prompt: bool) -> bool {
     let daemon = format!("{}_service.plist", crate::get_full_name());
     let agent = format!("{}_server.plist", crate::get_full_name());
     let agent_plist_file = format!("/Library/LaunchAgents/{}", agent);
     if !prompt {
-        // in macos 13, there is new way to check if they are running or enabled, https://developer.apple.com/documentation/servicemanagement/updating-helper-executables-from-earlier-versions-of-macos#Respond-to-changes-in-System-Settings
         if !std::path::Path::new(&format!("/Library/LaunchDaemons/{}", daemon)).exists() {
             return false;
         }
@@ -365,10 +343,10 @@ fn update_daemon_agent(agent_plist_file: String, update_source: UpdateSource) ->
 fn correct_app_name(s: &str) -> String {
     let mut s = s.to_owned();
     if let Some(bundleid) = get_bundle_id() {
-        s = s.replace("com.carriez.rustdesk", &bundleid);
+        s = s.replace("com.carriez.supportdesk", &bundleid);
     }
-    s = s.replace("rustdesk", &crate::get_app_name().to_lowercase());
-    s = s.replace("RustDesk", &crate::get_app_name());
+    s = s.replace("supportdesk", &crate::get_app_name().to_lowercase());
+    s = s.replace("SupportDesk", &crate::get_app_name());
     s
 }
 
@@ -422,7 +400,6 @@ pub fn write_plists() -> ResultType<()> {
 }
 
 pub fn uninstall_service(show_new_window: bool, sync: bool) -> bool {
-    // to-do: do together with win/linux about refactory start/stop service
     if !is_installed_daemon(false) {
         return false;
     }
@@ -455,7 +432,6 @@ pub fn uninstall_service(show_new_window: bool, sync: bool) -> bool {
                 if uninstalled {
                     if !show_new_window {
                         let _ = crate::ipc::close_all_instances();
-                        // leave ipc a little time
                         std::thread::sleep(std::time::Duration::from_millis(300));
                     }
                     crate::ipc::set_option("stop-service", "Y");
@@ -469,7 +445,6 @@ pub fn uninstall_service(show_new_window: bool, sync: bool) -> bool {
                             .arg(&format!("/Applications/{}.app", crate::get_app_name()))
                             .spawn()
                             .ok();
-                        // leave open a little time
                         std::thread::sleep(std::time::Duration::from_millis(300));
                     }
                     quit_gui();
@@ -492,29 +467,9 @@ pub fn get_cursor_pos() -> Option<(i32, i32)> {
         CFRelease(e);
         Some((point.x as _, point.y as _))
     }
-    /*
-    let mut pt: NSPoint = unsafe { msg_send![class!(NSEvent), mouseLocation] };
-    let screen: id = unsafe { msg_send![class!(NSScreen), currentScreenForMouseLocation] };
-    let frame: NSRect = unsafe { msg_send![screen, frame] };
-    pt.x -= frame.origin.x;
-    pt.y -= frame.origin.y;
-    Some((pt.x as _, pt.y as _))
-    */
 }
 
-/// Warp the mouse cursor to the specified screen position.
-///
-/// # Thread Safety
-/// This function affects global cursor state and acquires `CG_CURSOR_MUTEX`.
-/// Callers must ensure no nested calls occur while the mutex is held.
-///
-/// # Arguments
-/// * `x` - X coordinate in screen points (macOS uses points, not pixels)
-/// * `y` - Y coordinate in screen points
 pub fn set_cursor_pos(x: i32, y: i32) -> bool {
-    // Acquire lock with deadlock detection in debug builds.
-    // In debug builds, try_lock detects re-entrant calls early; on failure we return immediately.
-    // In release builds, we use blocking lock() which will wait if contended.
     #[cfg(debug_assertions)]
     let _guard = match CG_CURSOR_MUTEX.try_lock() {
         Ok(guard) => guard,
@@ -546,26 +501,7 @@ pub fn set_cursor_pos(x: i32, y: i32) -> bool {
     }
 }
 
-/// Toggle pointer lock (dissociate/associate mouse from cursor position).
-///
-/// On macOS, cursor clipping is not supported directly like Windows ClipCursor.
-/// Instead, we use CGAssociateMouseAndMouseCursorPosition to dissociate mouse
-/// movement from cursor position, achieving a "pointer lock" effect.
-///
-/// # Thread Safety
-/// This function affects global cursor state and acquires `CG_CURSOR_MUTEX`.
-/// Callers must ensure only one owner toggles pointer lock at a time;
-/// nested Some/None transitions from different call sites may cause unexpected behavior.
-///
-/// # Arguments
-/// * `rect` - When `Some(_)`, dissociates mouse from cursor (enables pointer lock).
-///            When `None`, re-associates mouse with cursor (disables pointer lock).
-///            The rect coordinate values are ignored on macOS; only `Some`/`None` matters.
-///            The parameter signature matches Windows for API consistency.
 pub fn clip_cursor(rect: Option<(i32, i32, i32, i32)>) -> bool {
-    // Acquire lock with deadlock detection in debug builds.
-    // In debug builds, try_lock detects re-entrant calls early; on failure we return immediately.
-    // In release builds, we use blocking lock() which will wait if contended.
     #[cfg(debug_assertions)]
     let _guard = match CG_CURSOR_MUTEX.try_lock() {
         Ok(guard) => guard,
@@ -578,11 +514,6 @@ pub fn clip_cursor(rect: Option<(i32, i32, i32, i32)>) -> bool {
     };
     #[cfg(not(debug_assertions))]
     let _guard = CG_CURSOR_MUTEX.lock().unwrap_or_else(|e| e.into_inner());
-    // CGAssociateMouseAndMouseCursorPosition takes a boolean_t:
-    //   1 (true)  = associate mouse with cursor position (normal mode)
-    //   0 (false) = dissociate mouse from cursor position (pointer lock mode)
-    // When rect is Some, we want pointer lock (dissociate), so associate = false (0).
-    // When rect is None, we want normal mode (associate), so associate = true (1).
     let associate: BooleanT = if rect.is_some() { 0 } else { 1 };
     unsafe {
         let result = CGAssociateMouseAndMouseCursorPosition(associate);
@@ -619,9 +550,6 @@ pub fn get_cursor() -> ResultType<Option<u64>> {
     autoreleasepool(|| unsafe_get_cursor())
 }
 
-// The seed names a change of cursor, not a cursor: the shape is named by its content once
-// captured, as on every platform. A fingerprint of its size, hotspot and two pixels named the open
-// and the closed hand alike, and the arrows with a badge, so a switch between them went unsent.
 fn unsafe_get_cursor() -> ResultType<Option<u64>> {
     unsafe {
         let seed = CGSCurrentCursorSeed();
@@ -643,11 +571,8 @@ pub fn get_cursor_data(hcursor: u64) -> ResultType<CursorData> {
     autoreleasepool(|| unsafe_get_cursor_data(hcursor))
 }
 
-// https://github.com/stweil/OSXvnc/blob/master/OSXvnc-server/mousecursor.c
 fn unsafe_get_cursor_data(hcursor: u64) -> ResultType<CursorData> {
     unsafe {
-        // The cursor shown is captured even if it changed after get_cursor read the seed: the
-        // content names the shape, and that change moved the seed on, so the next poll captures it.
         let c: id = msg_send![class!(NSCursor), currentSystemCursor];
         if c == nil {
             bail!("Failed to call [NSCursor currentSystemCursor]");
@@ -664,20 +589,11 @@ fn unsafe_get_cursor_data(hcursor: u64) -> ResultType<CursorData> {
             bail!("Get empty [NSImage representations]");
         }
         let rep: id = msg_send![reps, objectAtIndex: 0];
-        /*
-        let n: id = msg_send![class!(NSNumber), numberWithFloat:1.0];
-        let props: id = msg_send![class!(NSDictionary), dictionaryWithObject:n forKey:NSString::alloc(nil).init_str("NSImageCompressionFactor")];
-        let image_data: id = msg_send![rep, representationUsingType:2 properties:props];
-        let () = msg_send![image_data, writeToFile:NSString::alloc(nil).init_str("cursor.jpg") atomically:0];
-        */
         let mut colors: Vec<u8> = Vec::new();
         colors.reserve((size.height * size.width) as usize * 4);
-        // TIFF is rgb colorspace, no need to convert
-        // let cs: id = msg_send![class!(NSColorSpace), sRGBColorSpace];
         for y in 0..(size.height as _) {
             for x in 0..(size.width as _) {
                 let color: id = msg_send![rep, colorAtX:x as cocoa::foundation::NSInteger y:y as cocoa::foundation::NSInteger];
-                // let color: id = msg_send![color, colorUsingColorSpace: cs];
                 if color == nil {
                     continue;
                 }
@@ -725,9 +641,6 @@ pub fn get_active_userid() -> String {
     get_active_user("-n")
 }
 
-/// Return every UID with a login-window/session entry. Fast user switching
-/// can leave several GUI bootstrap domains alive at once, so updating only
-/// the console user can leave another user's agent on the old bundle.
 pub(crate) fn get_logged_in_uids() -> Vec<u32> {
     let mut uids = std::collections::BTreeSet::new();
     if let Ok(output) = std::process::Command::new("/usr/bin/who").output() {
@@ -759,8 +672,6 @@ pub(crate) fn get_logged_in_uids() -> Vec<u32> {
     }
     if let Ok(active_uid) = get_active_userid().parse::<u32>() {
         if active_uid == 0 {
-            // UID 0 owns /dev/console while the LoginWindow session is active.
-            // Query that server even when fast-switched GUI domains also exist.
             uids.insert(0);
         } else {
             let gui_domain = format!("gui/{}", active_uid);
@@ -774,7 +685,6 @@ pub(crate) fn get_logged_in_uids() -> Vec<u32> {
         }
     }
     if uids.is_empty() {
-        // The login window has no ordinary gui/0 bootstrap domain.
         uids.insert(0);
     }
     uids.into_iter().collect()
@@ -795,17 +705,6 @@ pub fn is_prelogin() -> bool {
     get_active_userid() == "0"
 }
 
-// https://stackoverflow.com/questions/11505255/osx-check-if-the-screen-is-locked
-// No "CGSSessionScreenIsLocked" can be found when macOS is not locked.
-//
-// `ioreg -n Root -d1` returns `"CGSSessionScreenIsLocked"=Yes`
-// `ioreg -n Root -d1 -a` returns
-// ```
-// ...
-//    <key>CGSSessionScreenIsLocked</key>
-//    <true/>
-// ...
-// ```
 pub fn is_locked() -> bool {
     match std::process::Command::new("ioreg")
         .arg("-n")
@@ -815,8 +714,6 @@ pub fn is_locked() -> bool {
     {
         Ok(output) => {
             let output_str = String::from_utf8_lossy(&output.stdout);
-            // Although `"CGSSessionScreenIsLocked"=Yes` was printed on my macOS,
-            // I also check `"CGSSessionScreenIsLocked"=true` for better compability.
             output_str.contains("\"CGSSessionScreenIsLocked\"=Yes")
                 || output_str.contains("\"CGSSessionScreenIsLocked\"=true")
         }
@@ -853,77 +750,16 @@ pub fn lock_screen() {
     .ok();
 }
 
-/// Starts the macOS system service IPC listener and the background
-/// silent auto-update thread.
 pub fn start_os_service() {
     log::info!("Username: {}", crate::username());
-    // Silent auto-update — runs as root via LaunchDaemon, no osascript dialog needed
     crate::updater::start_auto_update_macos();
     if let Err(err) = crate::ipc::start("_service") {
         log::error!("Failed to start ipc_service: {}", err);
     }
 
-    /* // mouse/keyboard works in prelogin now with launchctl asuser.
-       // below can avoid multi-users logged in problem, but having its own below problem.
-       // Not find a good way to start --cm without root privilege (affect file transfer).
-       // one way is to start with `launchctl asuser <uid> open -n -a /Applications/RustDesk.app/ --args --cm`,
-       // this way --cm is started with the user privilege, but we will have problem to start another RustDesk.app
-       // with open in explorer.
-        use std::sync::{
-            atomic::{AtomicBool, Ordering},
-            Arc,
-        };
-        let running = Arc::new(AtomicBool::new(true));
-        let r = running.clone();
-        let mut uid = "".to_owned();
-        let mut server: Option<std::process::Child> = None;
-        if let Err(err) = ctrlc::set_handler(move || {
-            r.store(false, Ordering::SeqCst);
-        }) {
-            println!("Failed to set Ctrl-C handler: {}", err);
-        }
-        while running.load(Ordering::SeqCst) {
-            let tmp = get_active_userid();
-            let mut start_new = false;
-            if tmp != uid && !tmp.is_empty() {
-                uid = tmp;
-                log::info!("active uid: {}", uid);
-                if let Some(ps) = server.as_mut() {
-                    hbb_common::allow_err!(ps.kill());
-                }
-            }
-            if let Some(ps) = server.as_mut() {
-                match ps.try_wait() {
-                    Ok(Some(_)) => {
-                        server = None;
-                        start_new = true;
-                    }
-                    _ => {}
-                }
-            } else {
-                start_new = true;
-            }
-            if start_new {
-                match run_as_user("--server") {
-                    Ok(Some(ps)) => server = Some(ps),
-                    Err(err) => {
-                        log::error!("Failed to start server: {}", err);
-                    }
-                    _ => { /*no happen*/ }
-                }
-            }
-            std::thread::sleep(std::time::Duration::from_millis(super::SERVICE_INTERVAL));
-        }
-
-        if let Some(ps) = server.take().as_mut() {
-            hbb_common::allow_err!(ps.kill());
-        }
-        log::info!("Exit");
-    */
 }
 
 pub fn toggle_blank_screen(_v: bool) {
-    // https://unix.stackexchange.com/questions/17115/disable-keyboard-mouse-temporarily
 }
 
 pub fn block_input(_v: bool) -> (bool, String) {
@@ -948,7 +784,6 @@ pub fn quit_gui() {
 
 pub fn update_me() -> ResultType<()> {
     let cmd = std::env::current_exe()?;
-    // RustDesk.app/Contents/MacOS/RustDesk
     let app_dir = cmd
         .parent()
         .and_then(|p| p.parent())
@@ -974,7 +809,6 @@ fn update_me_from_source(update_source: UpdateSource) -> ResultType<()> {
         &crate::ui_interface::get_option(option_stop_service),
     );
 
-    // Include launchd jobs in the transaction only while the installed service is enabled.
     if is_installed_daemon && !is_service_stopped {
         let agent = format!("{}_server.plist", crate::get_full_name());
         let agent_plist_file = format!("/Library/LaunchAgents/{}", agent);
@@ -1029,7 +863,6 @@ fn update_me_from_source(update_source: UpdateSource) -> ResultType<()> {
         }
         _ => {}
     }
-    // leave open a little time
     std::thread::sleep(std::time::Duration::from_millis(300));
     Ok(())
 }
@@ -1059,7 +892,6 @@ pub fn update_to_verified_dmg(
 ) -> ResultType<()> {
     let verified_dmg = copy_and_verify_dmg_file(file, expected_sha256, expected_size)?;
     update_from_verified_dmg(&verified_dmg)?;
-    // Remove the private DMG copy before this process exits.
     drop(verified_dmg);
     quit_gui();
     Ok(())
@@ -1091,8 +923,6 @@ fn backup_update_plist(source: &str, backup: &str) -> ResultType<()> {
 fn validate_update_tree(path: &Path, framework_root: Option<&Path>) -> ResultType<()> {
     let metadata = std::fs::symlink_metadata(path)?;
     if metadata.file_type().is_symlink() {
-        // Frameworks legitimately use internal symlinks (Resources,
-        // Versions/Current), but never allow a link to leave its framework.
         let Some(framework_root) = framework_root else {
             bail!("[root-update] symlink outside framework: {}", path.display());
         };
@@ -1163,14 +993,12 @@ fn verify_update_app_identity(installed: &Path, candidate: &Path) -> ResultType<
     Ok(())
 }
 
-/// Performs a silent update from a DMG file without any osascript dialog.
-/// Must be called from a process running as root (e.g. the service binary).
 pub fn update_from_dmg_as_root(dmg_path: &str, expected_version: &str) -> ResultType<()> {
     let app_name = crate::get_app_name();
     validate_install_app_name(&app_name)?;
     let app_bundle = format!("/Applications/{}.app", app_name);
     let tmp_dir_output = std::process::Command::new("/usr/bin/mktemp")
-        .args(&["-d", "/tmp/.rustdeskupdate-root-XXXXXX"])
+        .args(&["-d", "/tmp/.supportdeskupdate-root-XXXXXX"])
         .output()?;
     let tmp_dir = String::from_utf8(tmp_dir_output.stdout)
         .map_err(|e| anyhow!("[root-update] mktemp output error: {}", e))?
@@ -1187,21 +1015,15 @@ pub fn update_from_dmg_as_root(dmg_path: &str, expected_version: &str) -> Result
     let daemon_plist = format!("/Library/LaunchDaemons/com.carriez.{}_service.plist", app_name);
 
     log::info!("[root-update] Starting silent root update from {}", dmg_path);
-    // Check sessions before extracting to avoid unnecessary work
     if !crate::updater::has_no_active_conns_ipc() {
         bail!("[root-update] Active session detected, deferring update.");
     }
-    // Extract DMG to temp dir
     extract_dmg_into_existing_dir(dmg_path, &tmp_dir)?;
     let src_app = format!("{}/{}.app", tmp_dir, app_name);
     log::info!("[root-update] DMG extracted to {}", tmp_dir);
     validate_update_tree(Path::new(&src_app), None)?;
     verify_update_app_identity(Path::new(&app_bundle), Path::new(&src_app))?;
 
-    // Bind the downloaded asset to the version returned by the update
-    // service before changing plists or executing anything from the staged
-    // bundle. A release asset with the right filename but the wrong bundle
-    // must not be allowed to replace the installed application.
     let info_plist = format!("{}/Contents/Info.plist", src_app);
     let staged_version_result = (|| -> ResultType<String> {
         let output = Command::new("/usr/libexec/PlistBuddy")
@@ -1248,10 +1070,6 @@ pub fn update_from_dmg_as_root(dmg_path: &str, expected_version: &str) -> Result
         );
     }
 
-    // A leftover backup makes `mv app app.bak` nest the live bundle inside
-    // the old directory instead of creating a transaction backup. Never
-    // overwrite or guess at recovery state left by an earlier interrupted
-    // update; require an administrator to inspect it first.
     let app_backup = format!("{}.bak", app_bundle);
     let failed_bundle = format!("{}.failed-update", app_bundle);
     for recovery_path in [&app_backup, &failed_bundle] {
@@ -1271,54 +1089,35 @@ pub fn update_from_dmg_as_root(dmg_path: &str, expected_version: &str) -> Result
         }
     }
 
-    // Backup current plists before overwriting — needed for restore on reload failure
     let daemon_plist_bak = format!("{}/daemon_plist.bak", tmp_dir);
     let agent_plist_bak = format!("{}/agent_plist.bak", tmp_dir);
-    // Backups are part of the update transaction. Do not allow the new
-    // service binary to overwrite either live plist unless both installed
-    // definitions have been captured successfully.
     backup_update_plist(&daemon_plist, &daemon_plist_bak)?;
     backup_update_plist(&agent_plist, &agent_plist_bak)?;
 
-    // Ensure the staged release contains the service executable before we
-    // proceed. Plist generation itself is done in this already-root process;
-    // launching a freshly extracted service binary from /tmp is not required.
     let new_service = format!("{}/Contents/MacOS/service", src_app);
     if !std::path::Path::new(&new_service).is_file() {
         bail!("[root-update] staged service binary is missing: {}", new_service);
     }
-    // The new binary writes its own plist definitions after the bundle is
-    // moved into its final root-owned location.  This avoids executing code
-    // directly from /tmp while ensuring the plist matches the new release.
 
-    // Final session check after extraction — minimize race window
     if !crate::updater::has_no_active_conns_ipc() {
         let _ = std::fs::remove_dir_all(&tmp_dir);
         bail!("[root-update] Active session detected after extraction, deferring update.");
     }
 
-    // Let the detached-script launch settle before taking the affected-user
-    // snapshot. The final IPC check then happens after the delay and as close
-    // as possible to stopping those exact launchd domains.
     std::thread::sleep(std::time::Duration::from_secs(3));
     if !crate::updater::has_no_active_conns_ipc() {
         bail!("[root-update] active session started before update launch");
     }
     let logged_in_uids = get_logged_in_uids();
-    // UIDs are parsed as integers before embedding in the root-run shell
-    // script, so they cannot alter its command structure.
     let uid_list = logged_in_uids
         .iter()
         .map(u32::to_string)
         .collect::<Vec<_>>()
         .join(" ");
 
-    // Write a shell script that runs detached after this function returns.
-    // We cannot directly replace /Applications/RustDesk.app while it is running,
-    // so we spawn a script that waits, kills processes, copies, and restarts.
     let daemon_label = format!("com.carriez.{}_service", app_name);
     let agent_label = format!("com.carriez.{}_server", app_name);
-    let script_path = format!("{}/rustdesk_update.sh", tmp_dir);
+    let script_path = format!("{}/supportdesk_update.sh", tmp_dir);
     let script = format!(
         r#"#!/bin/sh
 rollback_done=0
@@ -1616,18 +1415,18 @@ write_new_plists() {{
 restore_old_bundle() {{
     [ "$bundle_swapped" -eq 1 ] || return 0
     if [ ! -d "{app_bundle}.bak" ] || [ -L "{app_bundle}.bak" ]; then
-        echo "[root-update] CRITICAL: valid application backup is unavailable" >> {tmp_dir}/rustdesk_root_update.log
+        echo "[root-update] CRITICAL: valid application backup is unavailable" >> {tmp_dir}/supportdesk_root_update.log
         return 1
     fi
     if [ -e "{app_bundle}" ] || [ -L "{app_bundle}" ]; then
         if [ -e "{app_bundle}.failed-update" ] || [ -L "{app_bundle}.failed-update" ] || \
            ! mv "{app_bundle}" "{app_bundle}.failed-update"; then
-            echo "[root-update] CRITICAL: could not vacate failed bundle safely" >> {tmp_dir}/rustdesk_root_update.log
+            echo "[root-update] CRITICAL: could not vacate failed bundle safely" >> {tmp_dir}/supportdesk_root_update.log
             return 1
         fi
     fi
     if ! mv "{app_bundle}.bak" "{app_bundle}"; then
-        echo "[root-update] CRITICAL: failed to restore application bundle" >> {tmp_dir}/rustdesk_root_update.log
+        echo "[root-update] CRITICAL: failed to restore application bundle" >> {tmp_dir}/supportdesk_root_update.log
         if [ ! -e "{app_bundle}" ] && [ ! -L "{app_bundle}" ]; then
             mv "{app_bundle}.failed-update" "{app_bundle}" 2>/dev/null || true
         fi
@@ -1649,7 +1448,7 @@ rollback_transaction() {{
     restore_old_bundle || restore_failed=1
     cp "{daemon_plist_bak}" "{daemon_plist}" || restore_failed=1
     cp "{agent_plist_bak}" "{agent_plist}" || restore_failed=1
-    touch /var/root/.rustdeskupdate_failed || restore_failed=1
+    touch /var/root/.supportdeskupdate_failed || restore_failed=1
     if ! launchctl load -w "{daemon_plist}" 2>/dev/null && \
        ! launchctl bootstrap system "{daemon_plist}" 2>/dev/null; then
         restore_failed=1
@@ -1662,9 +1461,9 @@ rollback_transaction() {{
         restore_failed=1
     fi
     if [ "$restore_failed" -ne 0 ]; then
-        echo "[root-update] CRITICAL: rollback restoration failed" >> {tmp_dir}/rustdesk_root_update.log
+        echo "[root-update] CRITICAL: rollback restoration failed" >> {tmp_dir}/supportdesk_root_update.log
     else
-        echo "[root-update] Rollback daemon and agents verified healthy" >> {tmp_dir}/rustdesk_root_update.log
+        echo "[root-update] Rollback daemon and agents verified healthy" >> {tmp_dir}/supportdesk_root_update.log
     fi
 }}
 trap rollback_transaction EXIT
@@ -1680,31 +1479,31 @@ for agent_uid in {uid_list}; do
     done
 done
 if ! capture_agent_snapshot; then
-    echo "[root-update] old LaunchAgent readiness check failed before shutdown" >> {tmp_dir}/rustdesk_root_update.log
+    echo "[root-update] old LaunchAgent readiness check failed before shutdown" >> {tmp_dir}/supportdesk_root_update.log
     exit 1
 fi
 capture_stopping_agent_pids
 if ! stop_daemon; then
-    echo "[root-update] daemon did not stop before bundle swap" >> {tmp_dir}/rustdesk_root_update.log
+    echo "[root-update] daemon did not stop before bundle swap" >> {tmp_dir}/supportdesk_root_update.log
     exit 1
 fi
 if ! stop_agents; then
-    echo "[root-update] old LaunchAgent did not stop before bundle swap" >> {tmp_dir}/rustdesk_root_update.log
+    echo "[root-update] old LaunchAgent did not stop before bundle swap" >> {tmp_dir}/supportdesk_root_update.log
     exit 1
 fi
 # Agents have already been verified absent. Stop and verify any remaining GUI
 # processes as well so no process keeps the old bundle mapped across the swap.
 if ! stop_user_bundle_processes; then
-    echo "[root-update] RustDesk GUI process did not stop before bundle swap" >> {tmp_dir}/rustdesk_root_update.log
+    echo "[root-update] SupportDesk GUI process did not stop before bundle swap" >> {tmp_dir}/supportdesk_root_update.log
     exit 1
 fi
 staged_bundle="{tmp_dir}/staged.app"
 if [ -e "$staged_bundle" ] || [ -L "$staged_bundle" ]; then
-    echo "[root-update] staged bundle path already exists, aborting" >> {tmp_dir}/rustdesk_root_update.log
+    echo "[root-update] staged bundle path already exists, aborting" >> {tmp_dir}/supportdesk_root_update.log
     exit 1
 fi
 if ! ditto {src_app} "$staged_bundle" 2>/dev/null; then
-    echo "[root-update] ditto failed, aborting update" >> {tmp_dir}/rustdesk_root_update.log
+    echo "[root-update] ditto failed, aborting update" >> {tmp_dir}/supportdesk_root_update.log
     rm -rf "$staged_bundle"
     exit 1
 fi
@@ -1713,25 +1512,25 @@ if [ ! -d "$staged_bundle/Contents/MacOS" ] || \
    [ ! -f "$staged_bundle/Contents/MacOS/{app_name}" ] || \
    [ ! -f "$staged_bundle/Contents/MacOS/service" ] || \
    [ ! -f "$staged_bundle/Contents/Info.plist" ]; then
-    echo "[root-update] staged bundle validation failed, aborting" >> {tmp_dir}/rustdesk_root_update.log
+    echo "[root-update] staged bundle validation failed, aborting" >> {tmp_dir}/supportdesk_root_update.log
     rm -rf "$staged_bundle"
     exit 1
 fi
 if ! mv {app_bundle} {app_bundle}.bak; then
-    echo "[root-update] backup mv failed, aborting" >> {tmp_dir}/rustdesk_root_update.log
+    echo "[root-update] backup mv failed, aborting" >> {tmp_dir}/supportdesk_root_update.log
     rm -rf "$staged_bundle"
     exit 1
 fi
 bundle_swapped=1
 if ! mv "$staged_bundle" {app_bundle}; then
-    echo "[root-update] replacement mv failed, restoring backup" >> {tmp_dir}/rustdesk_root_update.log
+    echo "[root-update] replacement mv failed, restoring backup" >> {tmp_dir}/supportdesk_root_update.log
     exit 1
 fi
 # Install the entire bundle as root-owned.  The LaunchDaemon executes code
 # from this bundle, so no nested framework, helper, or resource may remain
 # user-writable.
 if ! chown -R root:wheel {app_bundle} || ! chmod -R go-w {app_bundle}; then
-    echo "[root-update] chown failed, restoring backup" >> {tmp_dir}/rustdesk_root_update.log
+    echo "[root-update] chown failed, restoring backup" >> {tmp_dir}/supportdesk_root_update.log
     exit 1
 fi
 xattr -r -d com.apple.quarantine {app_bundle} || true
@@ -1746,51 +1545,51 @@ if ! chown root:wheel {app_bundle} || \
    ! chmod 755 {app_bundle}/Contents/MacOS/service || \
    ! chown root:wheel {app_bundle}/Contents/MacOS/{app_name} || \
    ! chmod 755 {app_bundle}/Contents/MacOS/{app_name}; then
-    echo "[root-update] hardening failed, restoring backup" >> {tmp_dir}/rustdesk_root_update.log
+    echo "[root-update] hardening failed, restoring backup" >> {tmp_dir}/supportdesk_root_update.log
     exit 1
 fi
 # Generate launchd definitions from the new, final-location binary.  The
 # subprocess is bounded and its output is retained for diagnosis; failure
 # causes the existing bundle/plists to be restored by the EXIT trap.
 if ! write_new_plists; then
-    echo "[root-update] CRITICAL: new binary failed to write plists" >> {tmp_dir}/rustdesk_root_update.log
-    cat "{tmp_dir}/write-plists.log" >> {tmp_dir}/rustdesk_root_update.log 2>/dev/null || true
+    echo "[root-update] CRITICAL: new binary failed to write plists" >> {tmp_dir}/supportdesk_root_update.log
+    cat "{tmp_dir}/write-plists.log" >> {tmp_dir}/supportdesk_root_update.log 2>/dev/null || true
     exit 1
 fi
-echo "[root-update] Plist definitions written by new binary" >> {tmp_dir}/rustdesk_root_update.log
+echo "[root-update] Plist definitions written by new binary" >> {tmp_dir}/supportdesk_root_update.log
 # Check daemon registration and readiness BEFORE removing backup.  launchctl
 # load/bootstrap only registers the job; the service can still exit immediately.
 if ! launchctl load -w {daemon_plist} 2>/dev/null && \
    ! launchctl bootstrap system {daemon_plist} 2>/dev/null; then
-    echo "[root-update] CRITICAL: daemon reload failed, restoring backup" >> {tmp_dir}/rustdesk_root_update.log
+    echo "[root-update] CRITICAL: daemon reload failed, restoring backup" >> {tmp_dir}/supportdesk_root_update.log
     exit 1
 fi
 if ! daemon_ready; then
-    echo "[root-update] CRITICAL: daemon failed readiness check, restoring" >> {tmp_dir}/rustdesk_root_update.log
+    echo "[root-update] CRITICAL: daemon failed readiness check, restoring" >> {tmp_dir}/supportdesk_root_update.log
     exit 1
 fi
 # Bootstrap agent BEFORE removing backup — needed for rollback on failure.
 # This also uses launchctl load for the login-window/no-console-user case.
 if ! bootstrap_agents || ! agent_ready; then
-    echo "[root-update] CRITICAL: agent bootstrap failed, rolling back" >> {tmp_dir}/rustdesk_root_update.log
+    echo "[root-update] CRITICAL: agent bootstrap failed, rolling back" >> {tmp_dir}/supportdesk_root_update.log
     exit 1
 fi
 # Recheck daemon liveness after the agent is restored and immediately before
 # deleting the only rollback bundle.
 if ! daemon_snapshot_stable || ! agent_snapshot_stable; then
-    echo "[root-update] CRITICAL: daemon or agent stopped before commit, restoring" >> {tmp_dir}/rustdesk_root_update.log
+    echo "[root-update] CRITICAL: daemon or agent stopped before commit, restoring" >> {tmp_dir}/supportdesk_root_update.log
     exit 1
 fi
 # Only remove backup after BOTH daemon AND agent confirmed running
 rollback_done=1
 bundle_swapped=0
 if ! rm -rf "{app_bundle}.bak"; then
-    echo "[root-update] WARNING: committed update but could not remove backup" >> {tmp_dir}/rustdesk_root_update.log
+    echo "[root-update] WARNING: committed update but could not remove backup" >> {tmp_dir}/supportdesk_root_update.log
 fi
 for gui_uid in $gui_uids; do
     launchctl asuser "$gui_uid" open -a "{app_bundle}" || true
 done
-echo "[root-update] Done!" >> {tmp_dir}/rustdesk_root_update.log
+echo "[root-update] Done!" >> {tmp_dir}/supportdesk_root_update.log
 rm -rf {tmp_dir}
 "#,
         app_name = app_name,
@@ -1832,8 +1631,6 @@ rm -rf {tmp_dir}
             return Err(err.into());
         }
     }
-    // Reject session changes observed before launch, but this snapshot is
-    // best-effort: it is not atomic with shutdown in the detached script.
     if get_logged_in_uids() != logged_in_uids {
         bail!("[root-update] GUI session set changed before update launch");
     }
@@ -1875,7 +1672,6 @@ fn verified_dmg_update_source(verified_dmg: &VerifiedDmg) -> ResultType<UpdateSo
 }
 
 pub fn get_double_click_time() -> u32 {
-    // to-do: https://github.com/servo/core-foundation-rs/blob/786895643140fa0ee4f913d7b4aeb0c4626b2085/cocoa/src/appkit.rs#L2823
     500 as _
 }
 
@@ -1924,17 +1720,6 @@ pub fn handle_application_should_open_untitled_file() {
     }
 }
 
-/// Get all resolutions of the display. The resolutions are:
-/// 1. Sorted by width and height in descending order, with duplicates removed.
-/// 2. Filtered out if the width is less than 800 (800x600) if there are too many (e.g., >15).
-/// 3. Contain HiDPI resolutions and the real resolutions.
-///
-/// We don't need to distinguish between HiDPI and real resolutions.
-/// When the controlling side changes the resolution, it will call `change_resolution_directly()`.
-/// `change_resolution_directly()` will try to use the HiDPI resolution first.
-/// This is how teamviewer does it for now.
-///
-/// If we need to distinguish HiDPI and real resolutions, we can add a flag to the `Resolution` struct.
 pub fn resolutions(name: &str) -> Vec<Resolution> {
     let mut v = vec![];
     if let Ok(display) = name.parse::<u32>() {
@@ -1962,7 +1747,6 @@ pub fn resolutions(name: &str) -> Vec<Resolution> {
                                 ..Default::default()
                             })
                             .collect::<Vec<_>>();
-                        // Sort by (w, h), desc
                         v.sort_by(|a, b| {
                             if a.width == b.width {
                                 b.height.cmp(&a.height)
@@ -1970,16 +1754,11 @@ pub fn resolutions(name: &str) -> Vec<Resolution> {
                                 b.width.cmp(&a.width)
                             }
                         });
-                        // Remove duplicates
                         v.dedup_by(|a, b| a.width == b.width && a.height == b.height);
-                        // Filter out the ones that are less than width 800 (800x600) if there are too many.
-                        // We can also do this filtering on the client side, but it is better not to change the client side to reduce the impact.
                         if v.len() > 15 {
-                            // Most width > 800, so it's ok to remove the small ones.
                             v.retain(|r| r.width >= 800);
                         }
                         if v.len() > 15 {
-                            // Ignore if the length is still too long.
                         }
                     }
                 }
@@ -2101,11 +1880,11 @@ mod update_tests {
     #[test]
     fn update_tree_rejects_framework_root_symlink() {
         let test_dir = std::env::temp_dir().join(format!(
-            "rustdesk-update-tree-framework-link-test-{}-{}",
+            "supportdesk-update-tree-framework-link-test-{}-{}",
             std::process::id(),
             hbb_common::rand::random::<u64>()
         ));
-        let app_dir = test_dir.join("RustDesk.app");
+        let app_dir = test_dir.join("SupportDesk.app");
         let frameworks_dir = app_dir.join("Contents/Frameworks");
         let external_framework = test_dir.join("External.framework");
         std::fs::create_dir_all(&frameworks_dir).unwrap();
@@ -2125,16 +1904,16 @@ mod update_tests {
     #[test]
     fn update_tree_allows_internal_framework_symlink() {
         let test_dir = std::env::temp_dir().join(format!(
-            "rustdesk-update-tree-internal-link-test-{}-{}",
+            "supportdesk-update-tree-internal-link-test-{}-{}",
             std::process::id(),
             hbb_common::rand::random::<u64>()
         ));
-        let framework_dir = test_dir.join("RustDesk.app/Contents/Frameworks/Test.framework");
+        let framework_dir = test_dir.join("SupportDesk.app/Contents/Frameworks/Test.framework");
         let versions_dir = framework_dir.join("Versions");
         std::fs::create_dir_all(versions_dir.join("A")).unwrap();
         std::os::unix::fs::symlink("A", versions_dir.join("Current")).unwrap();
 
-        let result = validate_update_tree(&test_dir.join("RustDesk.app"), None);
+        let result = validate_update_tree(&test_dir.join("SupportDesk.app"), None);
 
         std::fs::remove_dir_all(test_dir).unwrap();
         assert!(result.is_ok());
@@ -2143,7 +1922,7 @@ mod update_tests {
     #[test]
     fn update_app_identity_requires_matching_bundles() {
         let test_dir = std::env::temp_dir().join(format!(
-            "rustdesk-update-identity-test-{}-{}",
+            "supportdesk-update-identity-test-{}-{}",
             std::process::id(),
             hbb_common::rand::random::<u64>()
         ));
@@ -2157,11 +1936,11 @@ mod update_tests {
         }
         std::fs::write(
             installed.join("Contents/Info.plist"),
-            info("com.carriez.rustdesk"),
+            info("com.carriez.supportdesk"),
         )
         .unwrap();
 
-        for (bundle_id, accepted) in [("com.carriez.rustdesk", true), ("example.other", false)] {
+        for (bundle_id, accepted) in [("com.carriez.supportdesk", true), ("example.other", false)] {
             std::fs::write(candidate.join("Contents/Info.plist"), info(bundle_id)).unwrap();
             assert_eq!(
                 verify_update_app_identity(&installed, &candidate).is_ok(),

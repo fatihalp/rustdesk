@@ -156,7 +156,6 @@ fn read_limited_response_bytes<R: Read>(
 
 pub fn get_update_download_file_from_url(url: &str) -> Option<PathBuf> {
     let parsed = url::Url::parse(url).ok()?;
-    // Check the raw prefix before Url normalizes default ports.
     if !url.starts_with("https://github.com/")
         || parsed.scheme() != "https"
         || parsed.host_str() != Some("github.com")

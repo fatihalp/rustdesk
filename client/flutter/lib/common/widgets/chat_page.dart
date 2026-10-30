@@ -33,7 +33,6 @@ class ChatPage extends StatelessWidget implements PageShape {
         icon: unreadTopRightBuilder(gFFI.chatModel.mobileUnreadSum,
             icon: Icon(Icons.group)),
         itemBuilder: (context) {
-          // only mobile need [appBarActions], just bind gFFI.chatModel
           final chatModel = gFFI.chatModel;
           return chatModel.messages.entries.map((entry) {
             final key = entry.key;

@@ -54,7 +54,6 @@ impl ContextSend {
         }
     }
 
-    /// make sure the clipboard context is enabled.
     pub fn make_sure_enabled() -> ResultType<()> {
         let mut lock = CONTEXT_SEND.lock().unwrap();
         if lock.is_some() {

@@ -1,4 +1,3 @@
-//! windows implementation
 #![allow(dead_code)]
 #![allow(non_camel_case_types)]
 #![allow(unused_variables)]
@@ -17,16 +16,9 @@ use std::{
     result::Result,
 };
 
-// only used error code will be recorded here
-/// success
 const CHANNEL_RC_OK: u32 = 0;
-/// error code from WinError.h
-/// success
 const ERROR_SUCCESS: u32 = 0;
-/// allocation failure
 const CHANNEL_RC_NO_MEMORY: u32 = 12;
-/// error code from WinError.h
-/// used by FreeRDP to represent errors.
 const ERROR_INTERNAL_ERROR: u32 = 0x54F;
 
 pub type size_t = ::std::os::raw::c_ulonglong;
@@ -349,7 +341,7 @@ pub type CliprdrClientContext = _cliprdr_client_context;
 #[repr(C)]
 #[derive(Debug, Copy, Clone)]
 pub struct _NOTIFICATION_MESSAGE {
-    pub r#type: UINT32, // 0 - info, 1 - warning, 2 - error
+    pub r#type: UINT32,
     pub msg: *const BYTE,
     pub details: *const BYTE,
 }
@@ -481,7 +473,6 @@ pub type pcCliprdrServerFileContentsResponse = ::std::option::Option<
     ) -> UINT,
 >;
 
-// TODO: hide more members of clipboard context
 #[repr(C)]
 #[derive(Debug, Clone)]
 pub struct _cliprdr_client_context {
@@ -515,8 +506,6 @@ pub struct _cliprdr_client_context {
     pub LastRequestedFormatId: UINT32,
 }
 
-// #[link(name = "user32")]
-// #[link(name = "ole32")]
 extern "C" {
     pub(crate) fn init_cliprdr(context: *mut CliprdrClientContext) -> BOOL;
     pub(crate) fn uninit_cliprdr(context: *mut CliprdrClientContext) -> BOOL;
@@ -622,7 +611,6 @@ impl CliprdrServiceContext for CliprdrClientContext {
 fn ret_to_result(ret: u32) -> Result<(), CliprdrError> {
     match ret {
         #[allow(unreachable_patterns)]
-        // CHANNEL_RC_OK is unreachable, but ignore it
         ERROR_SUCCESS | CHANNEL_RC_OK => Ok(()),
         CHANNEL_RC_NO_MEMORY => Err(CliprdrError::CliprdrOutOfMemory),
         ERROR_INTERNAL_ERROR => Err(CliprdrError::ClipboardInternalError),
@@ -642,7 +630,6 @@ pub fn server_clip_file(
     let mut ret = 0;
     match msg {
         ClipboardFile::NotifyCallback { .. } => {
-            // unreachable
         }
         ClipboardFile::MonitorReady => {
             log::debug!("server_monitor_ready called");
@@ -767,7 +754,6 @@ pub fn server_clip_file(
             );
         }
         ClipboardFile::Files { .. } => {
-            // unreachable
         }
     }
     ret
@@ -835,7 +821,6 @@ pub fn server_format_list(
 
         for f in formats {
             if !f.formatName.is_null() {
-                // retake pointer to free memory
                 let _ = CString::from_raw(f.formatName);
             }
         }
@@ -1027,7 +1012,6 @@ extern "C" fn notify_callback(conn_id: UINT32, msg: *const NOTIFICATION_MESSAGE)
             }
         }
     };
-    // no need to handle result here
     allow_err!(send_data(conn_id as _, data));
 
     0
@@ -1082,7 +1066,6 @@ extern "C" fn handle_clipboard_files(
 
         ClipboardFile::Files { files }
     };
-    // no need to handle result here
     allow_err!(send_data(conn_id as _, data));
 
     0
@@ -1111,7 +1094,6 @@ extern "C" fn client_format_list(
                 };
                 format_list.push((format_data.formatId as i32, format_name));
             }
-            // log::debug!("format list item {}: format id: {}, format name: {}", i, format_data.formatId, &format_name);
             i += 1;
         }
         conn_id = (*clip_format_list).connID as i32;
@@ -1122,9 +1104,7 @@ extern "C" fn client_format_list(
         &format_list
     );
     let data = ClipboardFile::FormatList { format_list };
-    // no need to handle result here
     if conn_id == 0 {
-        // msg_channel is used for debug, VEC_MSG_CHANNEL cannot be inspected by the debugger.
         let msg_channel = VEC_MSG_CHANNEL.read().unwrap();
         msg_channel
             .iter()
@@ -1236,15 +1216,6 @@ extern "C" fn client_file_contents_request(
     _context: *mut CliprdrClientContext,
     file_contents_request: *const CLIPRDR_FILE_CONTENTS_REQUEST,
 ) -> UINT {
-    // TODO: support huge file?
-    // if (!cliprdr->hasHugeFileSupport)
-    // {
-    // 	if (((UINT64)fileContentsRequest->cbRequested + fileContentsRequest->nPositionLow) >
-    // 	    UINT32_MAX)
-    // 		return ERROR_INVALID_PARAMETER;
-    // 	if (fileContentsRequest->nPositionHigh != 0)
-    // 		return ERROR_INVALID_PARAMETER;
-    // }
 
     let conn_id;
     let stream_id;

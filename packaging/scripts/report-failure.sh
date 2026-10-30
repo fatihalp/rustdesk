@@ -1,5 +1,4 @@
 #!/usr/bin/env bash
-# Tells the panel the build failed so it shows up in the build list.
 curl -sS -H "Authorization: Bearer $PANEL_BUILD_SECRET" -H "Accept: application/json" \
   --data-urlencode "status=failed" \
   --data-urlencode "error=Workflow failed, see the run log" \

@@ -5,7 +5,6 @@ fn abr_session() -> VideoQoS {
     qos.new_display("test".to_owned());
     qos.set_support_changing_quality("test", true);
     qos.store_bitrate(4000);
-    // Linux skips the first-reply adjustment; exercise it on every platform.
     qos.first_reply_adjusts_ratio = true;
     qos.advance_ms(4000);
     qos
@@ -56,7 +55,6 @@ fn severe_delay_and_timeout_bypass_bitrate_cooldown() {
 
 #[test]
 fn a_single_stall_does_not_cut_bitrate() {
-    // One probe out for 2.5 s, then its late reply: jitter, not congestion.
     let mut qos = abr_session();
     let ratio = qos.ratio();
     qos.user_delay_response_elapsed(1, 2500);
@@ -111,15 +109,12 @@ fn a_congested_viewer_does_not_lower_another_viewers_target() {
         qos.user_network_delay(1, 10);
     }
     assert_eq!(qos.fps(), FPS);
-    // Viewer 1 congests; the stream follows the slowest viewer.
     for _ in 0..2 {
         qos.user_network_delay(1, 1200);
     }
     assert_eq!(qos.fps(), 8);
-    // Viewer 2 is fine and keeps its own target rather than inheriting viewer 1's.
     qos.user_network_delay(2, 10);
     assert_eq!(qos.users[&2].delay.fps, Some(FPS));
-    // Once viewer 1 restores, the stream is back at once.
     for _ in 0..3 {
         qos.user_network_delay(1, 10);
     }

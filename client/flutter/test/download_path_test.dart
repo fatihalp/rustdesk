@@ -9,7 +9,7 @@ import 'package:uuid/uuid.dart';
 
 final _sessionId = UuidValue('00000000-0000-4000-8000-000000000001');
 
-class _Binding extends Fake implements RustdeskImpl {
+class _Binding extends Fake implements SupportdeskImpl {
   final sent = <String>[];
   final created = <String>[];
   int nextId = 0;
@@ -159,7 +159,7 @@ void main() {
 
   test('empty-directory downloads refuse existing local links', () async {
     final temporary =
-        await Directory.systemTemp.createTemp('rustdesk_download_');
+        await Directory.systemTemp.createTemp('supportdesk_download_');
     addTearDown(() => temporary.delete(recursive: true));
     final outside = await Directory('${temporary.path}/outside').create();
     final downloads = await Directory('${temporary.path}/downloads').create();

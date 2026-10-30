@@ -26,7 +26,7 @@ pub(super) fn create_event_loop() -> ResultType<()> {
 
     let event_loop = EventLoopBuilder::<(String, CustomEvent)>::with_user_event().build();
     let mut window_builder = WindowBuilder::new()
-        .with_title("RustDesk whiteboard")
+        .with_title("SupportDesk whiteboard")
         .with_transparent(true)
         .with_always_on_top(true)
         .with_skip_taskbar(true)
@@ -128,7 +128,6 @@ pub(super) fn create_event_loop() -> ResultType<()> {
                     let (radius, alpha) = ripple.get_radius_alpha();
 
                     let mut ripple_paint = Paint::default();
-                    // Note: The real color is bgra here.
                     ripple_paint.set_color_rgba8(64, 64, 255, (alpha * 128.0) as u8);
                     ripple_paint.anti_alias = true;
 
@@ -162,7 +161,6 @@ pub(super) fn create_event_loop() -> ResultType<()> {
                     if let Some(path) = pb.finish() {
                         let rgba = super::argb_to_rgba(cursor.argb);
                         let mut arrow_paint = Paint::default();
-                        // Note: The real color is bgra here.
                         arrow_paint.set_color_rgba8(rgba.2, rgba.1, rgba.0, rgba.3);
                         arrow_paint.anti_alias = true;
                         pixmap.fill_path(

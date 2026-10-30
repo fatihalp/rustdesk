@@ -62,7 +62,6 @@ fn main() -> io::Result<()> {
     let d = Display::primary().unwrap();
     let (width, height) = (d.width() as u32, d.height() as u32);
 
-    // Setup the multiplexer.
 
     let out = match {
         OpenOptions::new()
@@ -96,7 +95,6 @@ fn main() -> io::Result<()> {
 
     let mut vt = webm.add_video_track(width, height, None, mux_codec);
 
-    // Setup the encoder.
     let quality = args.flag_quality;
     let mut vpx = vpx_encode::VpxEncoder::new(
         EncoderCfg::VPX(vpx_encode::VpxEncoderConfig {
@@ -110,7 +108,6 @@ fn main() -> io::Result<()> {
     )
     .unwrap();
 
-    // Start recording.
 
     let start = Instant::now();
     let stop = Arc::new(AtomicBool::new(false));
@@ -126,7 +123,6 @@ fn main() -> io::Result<()> {
 
     let spf = Duration::from_nanos(1_000_000_000 / args.flag_fps);
 
-    // Capturer object is expensive, avoiding to create it frequently.
     let mut c = Capturer::new(d).unwrap();
     let mut yuv = Vec::new();
     let mut mid_data = Vec::new();
@@ -152,7 +148,6 @@ fn main() -> io::Result<()> {
         }
     }
 
-    // End things.
 
     let _ = webm.finalize(None);
 

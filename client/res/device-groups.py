@@ -17,7 +17,6 @@ def check_response(response):
         print(f"Error: HTTP {response.status_code}: {response.text}")
         exit(1)
     
-    # Check for {"error": "xxx"} in response
     if response.text and response.text.strip():
         try:
             json_data = response.json()
@@ -35,7 +34,6 @@ def headers_with(token):
     return {"Authorization": f"Bearer {token}", "Content-Type": "application/json"}
 
 
-# ---------- Device Group APIs ----------
 
 def list_groups(url, token, name=None, page_size=50):
     headers = headers_with(token)
@@ -115,14 +113,12 @@ def delete_groups(url, token, names):
     return "Success"
 
 
-# ---------- Device group assign APIs (name -> guid) ----------
 
 def view_devices(url, token, group_name=None, id=None, device_name=None, 
                  user_name=None, device_username=None, page_size=50):
     """View devices in a device group with filters"""
     headers = headers_with(token)
     
-    # Separate exact match and fuzzy match params
     params = {}
     fuzzy_params = {
         "id": id,
@@ -131,11 +127,9 @@ def view_devices(url, token, group_name=None, id=None, device_name=None,
         "device_username": device_username,
     }
     
-    # Add device_group_name without wildcard (exact match)
     if group_name:
         params["device_group_name"] = group_name
     
-    # Add wildcard for fuzzy search to other params
     for k, v in fuzzy_params.items():
         if v is not None:
             params[k] = "%" + v + "%" if (v != "-" and "%" not in v) else v
@@ -186,7 +180,6 @@ def parse_rules(s):
     try:
         v = json.loads(s)
         if isinstance(v, list):
-            # expect list of {"type": number, "name": string}
             return v
     except Exception:
         pass
@@ -214,7 +207,6 @@ def main():
 
     parser.add_argument("--ids", help="Comma separated device IDs for add-devices/remove-devices")
     
-    # Filters for view-devices command
     parser.add_argument("--id", help="Device ID filter (for view-devices)")
     parser.add_argument("--device-name", help="Device name filter (for view-devices)")
     parser.add_argument("--user-name", help="User name filter (owner of device, for view-devices)")

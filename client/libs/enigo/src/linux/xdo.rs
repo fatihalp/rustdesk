@@ -1,9 +1,3 @@
-//! XDO-based input emulation for Linux.
-//!
-//! This module uses libxdo-sys (patched to use dynamic loading stub) for input emulation.
-//! The stub handles dynamic loading of libxdo, so we just call the functions directly.
-//!
-//! If libxdo is not available at runtime, all operations become no-ops.
 
 use crate::{Key, KeyboardControllable, MouseButton, MouseControllable};
 
@@ -12,11 +6,8 @@ use hbb_common::x11::xlib::{Display, XCloseDisplay, XGetPointerMapping, XOpenDis
 use libxdo_sys::{self, xdo_t, CURRENTWINDOW};
 use std::{borrow::Cow, ffi::CString};
 
-/// Default delay per keypress in microseconds.
-/// This value is passed to libxdo functions and must fit in `useconds_t` (u32).
 const DEFAULT_DELAY: u64 = 12000;
 
-/// Maximum allowed delay value (u32::MAX as u64).
 const MAX_DELAY: u64 = u32::MAX as u64;
 
 fn mousebutton(button: MouseButton) -> c_int {
@@ -33,20 +24,9 @@ fn mousebutton(button: MouseButton) -> c_int {
     }
 }
 
-/// Minimum number of buttons the X11 core pointer must support.
-/// Buttons 8 (Back) and 9 (Forward) are needed for mouse side buttons.
 const MIN_POINTER_BUTTONS: usize = 9;
 
-/// Check that the X11 core pointer's button map includes at least 9 buttons
-/// so that `XTestFakeButtonEvent` can simulate Back (8) and Forward (9).
-///
-/// RustDesk's uinput "Mouse passthrough" device normally provides enough
-/// buttons, but we log a warning if the map is too small so the issue is
-/// diagnosable. `XSetPointerMapping` cannot extend the button count (its
-/// length must match `XGetPointerMapping`), so we only diagnose here.
 fn check_x11_button_map() {
-    // Skip on non-X11 sessions to avoid noisy "XOpenDisplay failed" warnings
-    // on pure Wayland or headless environments without $DISPLAY.
     if std::env::var_os("DISPLAY").is_none() {
         return;
     }
@@ -78,20 +58,13 @@ fn check_x11_button_map() {
     }
 }
 
-/// The main struct for handling the event emitting
 pub(super) struct EnigoXdo {
     xdo: *mut xdo_t,
     delay: u64,
 }
-// This is safe, we have a unique pointer.
-// TODO: use Unique<c_char> once stable.
 unsafe impl Send for EnigoXdo {}
 
 impl Default for EnigoXdo {
-    /// Create a new EnigoXdo instance.
-    ///
-    /// If libxdo is not available, the xdo pointer will be null and all
-    /// input operations will be no-ops.
     fn default() -> Self {
         let xdo = unsafe { libxdo_sys::xdo_new(std::ptr::null()) };
         if xdo.is_null() {
@@ -108,20 +81,10 @@ impl Default for EnigoXdo {
 }
 
 impl EnigoXdo {
-    /// Get the delay per keypress in microseconds.
-    ///
-    /// Default value is 12000 (12ms). This is Linux-specific.
     pub fn delay(&self) -> u64 {
         self.delay
     }
 
-    /// Set the delay per keypress in microseconds.
-    ///
-    /// This is Linux-specific. The value is clamped to `u32::MAX` (approximately
-    /// 4295 seconds) because libxdo uses `useconds_t` which is typically `u32`.
-    ///
-    /// # Arguments
-    /// * `delay` - Delay in microseconds. Values exceeding `u32::MAX` will be clamped.
     pub fn set_delay(&mut self, delay: u64) {
         self.delay = delay.min(MAX_DELAY);
         if delay > MAX_DELAY {
@@ -246,9 +209,6 @@ fn keysequence<'a>(key: Key) -> Cow<'a, str> {
         return Cow::Owned(format!("{}", k as u16));
     }
     #[allow(deprecated)]
-    // I mean duh, we still need to support deprecated keys until they're removed
-    // https://www.rubydoc.info/gems/xdo/XDo/Keyboard
-    // https://gitlab.com/cunidev/gestures/-/wikis/xdotool-list-of-key-codes
     Cow::Borrowed(match key {
         Key::Alt => "Alt",
         Key::Backspace => "BackSpace",
@@ -271,29 +231,27 @@ fn keysequence<'a>(key: Key) -> Cow<'a, str> {
         Key::F8 => "F8",
         Key::F9 => "F9",
         Key::Home => "Home",
-        //Key::Layout(_) => unreachable!(),
         Key::LeftArrow => "Left",
         Key::Option => "Option",
         Key::PageDown => "Page_Down",
         Key::PageUp => "Page_Up",
-        //Key::Raw(_) => unreachable!(),
         Key::Return => "Return",
         Key::RightArrow => "Right",
         Key::Shift => "Shift",
         Key::Space => "space",
         Key::Tab => "Tab",
         Key::UpArrow => "Up",
-        Key::Numpad0 => "U30", //"KP_0",
-        Key::Numpad1 => "U31", //"KP_1",
-        Key::Numpad2 => "U32", //"KP_2",
-        Key::Numpad3 => "U33", //"KP_3",
-        Key::Numpad4 => "U34", //"KP_4",
-        Key::Numpad5 => "U35", //"KP_5",
-        Key::Numpad6 => "U36", //"KP_6",
-        Key::Numpad7 => "U37", //"KP_7",
-        Key::Numpad8 => "U38", //"KP_8",
-        Key::Numpad9 => "U39", //"KP_9",
-        Key::Decimal => "U2E", //"KP_Decimal",
+        Key::Numpad0 => "U30",
+        Key::Numpad1 => "U31",
+        Key::Numpad2 => "U32",
+        Key::Numpad3 => "U33",
+        Key::Numpad4 => "U34",
+        Key::Numpad5 => "U35",
+        Key::Numpad6 => "U36",
+        Key::Numpad7 => "U37",
+        Key::Numpad8 => "U38",
+        Key::Numpad9 => "U39",
+        Key::Decimal => "U2E",
         Key::Cancel => "Cancel",
         Key::Clear => "Clear",
         Key::Pause => "Pause",
@@ -348,17 +306,6 @@ impl KeyboardControllable for EnigoXdo {
         if self.xdo.is_null() {
             return false;
         }
-        /*
-        // modifier keys mask
-        pub const ShiftMask: c_uint = 0x01;
-        pub const LockMask: c_uint = 0x02;
-        pub const ControlMask: c_uint = 0x04;
-        pub const Mod1Mask: c_uint = 0x08;
-        pub const Mod2Mask: c_uint = 0x10;
-        pub const Mod3Mask: c_uint = 0x20;
-        pub const Mod4Mask: c_uint = 0x40;
-        pub const Mod5Mask: c_uint = 0x80;
-        */
         let mod_shift = 1 << 0;
         let mod_lock = 1 << 1;
         let mod_control = 1 << 2;

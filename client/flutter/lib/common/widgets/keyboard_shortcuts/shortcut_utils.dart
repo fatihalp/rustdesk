@@ -44,9 +44,6 @@ Set<String> shortcutModSetFrom(dynamic rawMods) {
   return rawMods.whereType<String>().toSet();
 }
 
-/// Whether enabling shortcuts should seed the default bindings. Only a config
-/// that has never held a bindings list is seeded; an empty list means the
-/// user cleared every binding and must stay empty.
 bool shouldSeedDefaultShortcutBindings(Map<String, dynamic> config) =>
     !config.containsKey('bindings');
 
@@ -55,8 +52,6 @@ bool isSwitchTabShortcutAction(String? actionId) {
       actionId == kShortcutActionSwitchTabPrev;
 }
 
-/// USB HID usage (keyboard page 0x07) of every key accepted as a shortcut,
-/// mapped to the canonical key name used in saved bindings.
 const Map<int, String> _kUsbHidKeyNames = {
   0x04: 'a', 0x05: 'b', 0x06: 'c', 0x07: 'd', 0x08: 'e', 0x09: 'f',
   0x0A: 'g', 0x0B: 'h', 0x0C: 'i', 0x0D: 'j', 0x0E: 'k', 0x0F: 'l',
@@ -72,41 +67,17 @@ const Map<int, String> _kUsbHidKeyNames = {
   0x49: 'insert', 0x4A: 'home', 0x4B: 'page_up', 0x4C: 'delete',
   0x4D: 'end', 0x4E: 'page_down', 0x4F: 'arrow_right', 0x50: 'arrow_left',
   0x51: 'arrow_down', 0x52: 'arrow_up',
-  // Numpad Enter shares the "enter" name with the main Return key, as in the
-  // Rust matcher (`Return | KpReturn`) and the Web matcher (`NumpadEnter`).
   0x58: 'enter',
 };
 
-/// Map a [PhysicalKeyboardKey] to the canonical key name used in saved
-/// bindings, or `null` for keys we don't accept as shortcuts.
-///
-/// Bindings name physical key positions (US layout names), whatever the
-/// active keyboard layout: the native matcher sees the key through its USB
-/// HID usage (`rdev::usb_hid_key_from_code` -> `event_to_key_name` in
-/// `src/keyboard/shortcuts.rs`) and the Web matcher through
-/// `KeyboardEvent.code` (`flutter/web/js/src/shortcut_matcher.ts`). Parity
-/// is enforced against `flutter/test/fixtures/shortcut_key_usb_hid.json` by
-/// a Dart test and the Rust `usb_hid_keys_match_fixture` test.
 String? physicalKeyName(PhysicalKeyboardKey k) {
   final usage = k.usbHidUsage;
   if (usage >> 16 != 0x07) return null;
   return _kUsbHidKeyNames[usage & 0xFFFF];
 }
 
-/// The key name a [KeyEvent] records or matches as.
 String? shortcutKeyNameForEvent(KeyEvent e) => physicalKeyName(e.physicalKey);
 
-/// Bundle of "is this shortcut available on the current platform" flags.
-///
-/// Production code reaches a single source of truth via
-/// [ShortcutModel.currentPlatformCapabilities] (which encodes the per-runtime
-/// rules in one place); tests construct one directly with whichever flags
-/// they want to exercise. Two filter functions consume this:
-/// [filterDefaultBindingsForPlatform] (for trimming default-binding JSON
-/// before it hits LocalConfig) and [filterKeyboardShortcutActionGroupsForPlatform]
-/// (for trimming the configuration UI's action list). Both must agree on the
-/// same capability set, otherwise a default binding could be seeded for an
-/// action the user has no UI to manage.
 class ShortcutPlatformCapabilities {
   final bool includeFullscreenShortcut;
   final bool includeScreenshotShortcut;
@@ -147,10 +118,6 @@ List<Map<String, dynamic>> filterDefaultBindingsForPlatform(
   for (final binding in shortcutBindingMapsFrom(bindings)) {
     final action = binding['action'] as String?;
     if (cap.excludedActions.contains(action)) continue;
-    // Compact Apple keyboards can label Backspace as Delete, making this
-    // default ambiguous. Using Backspace also conflicts with Finder's
-    // "Empty Trash without confirmation" shortcut on macOS.
-    // Leave it unbound; users can still record their own shortcut.
     if ((defaultTargetPlatform == TargetPlatform.macOS ||
             defaultTargetPlatform == TargetPlatform.iOS) &&
         action == kShortcutActionSendCtrlAltDel) {

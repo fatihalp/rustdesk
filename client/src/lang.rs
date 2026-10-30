@@ -135,7 +135,6 @@ fn resolve_lang(saved_lang: &str, locale: &str, cjk_fallback: bool) -> String {
         return "en".to_owned();
     }
     if lang.is_empty() {
-        // zh_CN on Linux, zh-Hans-CN on mac, zh_CN_#Hans on Android
         if locale.starts_with("zh") {
             lang = (if locale.contains("tw") {
                 "zh-tw"
@@ -143,18 +142,12 @@ fn resolve_lang(saved_lang: &str, locale: &str, cjk_fallback: bool) -> String {
                 "zh-cn"
             })
             .to_owned();
-            // Hong Kong, Macao and the Hant script use Traditional Chinese.
             if !locale.contains("hans") && ["hk", "mo", "hant"].iter().any(|x| locale.contains(x)) {
                 lang = "zh-tw".to_owned();
             }
         }
     }
     if lang.is_empty() {
-        // pt_PT on Linux, pt-PT on mac, pt_PT on Android.
-        // Per CLDR locale inheritance, every Portuguese-speaking locale
-        // besides bare "pt" and Brazil's own variants (pt-BR/pt_BR) has
-        // pt-PT as its parent (Angola, Mozambique, Cape Verde, etc.),
-        // so it should resolve to European Portuguese.
         if locale.starts_with("pt") {
             lang = (if locale == "pt" || locale.starts_with("pt-br") || locale.starts_with("pt_br") {
                 "pt-br"
@@ -171,7 +164,6 @@ fn resolve_lang(saved_lang: &str, locale: &str, cjk_fallback: bool) -> String {
             .map(|x| x.split("_").next().unwrap_or_default())
             .unwrap_or_default()
             .to_owned();
-        // The Kazakh and Georgian tables are keyed by country code, not by language code.
         if lang == "kk" {
             lang = "kz".to_owned();
         } else if lang == "ka" {
@@ -260,29 +252,21 @@ pub fn translate_locale(name: String, locale: &str) -> String {
         if let Some(value) = placeholder_value.as_ref() {
             s = s.replace("{}", &value);
         }
-        if !crate::is_rustdesk() {
-            if s.contains("RustDesk")
-                && !name.starts_with("upgrade_rustdesk_server_pro")
+        if !crate::is_supportdesk() {
+            if s.contains("SupportDesk")
+                && !name.starts_with("upgrade_supportdesk_server_pro")
                 && name != "powered_by_me"
             {
                 let app_name = crate::get_app_name();
-                if !app_name.contains("RustDesk") {
-                    s = s.replace("RustDesk", &app_name);
+                if !app_name.contains("SupportDesk") {
+                    s = s.replace("SupportDesk", &app_name);
                 } else {
-                    // https://github.com/rustdesk/rustdesk-server-pro/issues/845
-                    // If app_name contains "RustDesk" (e.g., "RustDesk-Admin"), we need to avoid
-                    // replacing "RustDesk" within the already-substituted app_name, which would
-                    // cause duplication like "RustDesk-Admin" -> "RustDesk-Admin-Admin".
-                    //
-                    // app_name only contains alphanumeric and hyphen.
                     const PLACEHOLDER: &str = "#A-P-P-N-A-M-E#";
                     if !s.contains(PLACEHOLDER) {
                         s = s.replace(&app_name, PLACEHOLDER);
-                        s = s.replace("RustDesk", &app_name);
+                        s = s.replace("SupportDesk", &app_name);
                         s = s.replace(PLACEHOLDER, &app_name);
                     } else {
-                        // It's very unlikely to reach here.
-                        // Skip replacement to avoid incorrect result.
                     }
                 }
             }
@@ -304,12 +288,6 @@ pub fn translate_locale(name: String, locale: &str) -> String {
     replace(&name.as_str())
 }
 
-// Matching pattern is {}
-// Write {value} in the UI and {} in the translation file
-//
-// Example:
-// Write in the UI: translate("There are {24} hours in a day")
-// Write in the translation file: ("There are {} hours in a day", "{} hours make up a day")
 fn extract_placeholder(input: &str) -> (String, Option<String>) {
     if let Ok(re) = Regex::new(r#"\{(.*?)\}"#) {
         if let Some(captures) = re.captures(input) {
@@ -334,12 +312,10 @@ mod test {
             ("{} sessions".to_string(), Some("3".to_string()))
         );
         assert_eq!(f(" } { "), (" } { ".to_string(), None));
-        // Allow empty value
         assert_eq!(
             f("{} sessions"),
             ("{} sessions".to_string(), Some("".to_string()))
         );
-        // Match only the first one
         assert_eq!(
             f("{2} times {4} makes {8}"),
             ("{} times {4} makes {8}".to_string(), Some("2".to_string()))
@@ -401,7 +377,6 @@ mod test {
     fn test_translations_keep_the_placeholder_of_their_key() {
         use super::*;
 
-        // translate() puts the caller's value where `{}` is, so a translation without `{}` drops it.
         for table in [&*ru::T, &*sc::T, &*vi::T] {
             for (key, value) in table.iter() {
                 if key.contains("{}") && !value.is_empty() {

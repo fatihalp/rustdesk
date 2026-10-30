@@ -3,7 +3,6 @@ use hbb_common::log;
 
 impl AudioHandler {
     pub(in crate::client) fn cancel_pending_playback(&mut self) -> bool {
-        // Format messages bypass recovery; retain a usable candidate before superseding it.
         let failed = self
             .resolve_pending_playback(Instant::now())
             .unwrap_or(false);
@@ -57,7 +56,6 @@ impl AudioHandler {
             return Some(false);
         }
         self.playback_recovery.pending_output = Some(candidate);
-        // A second active-queue read could discard a healthy pending candidate.
         Some(false)
     }
 }

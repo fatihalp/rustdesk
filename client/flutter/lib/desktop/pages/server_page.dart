@@ -1,4 +1,3 @@
-// original cm window in Sciter version.
 
 import 'dart:async';
 import 'dart:math';
@@ -22,12 +21,6 @@ import '../../models/file_model.dart';
 import '../../models/platform_model.dart';
 import '../../models/server_model.dart';
 
-/// Set only by this window's own close control, and only once the user has confirmed. Any other
-/// way the window can go - a session logout closing every window, the window manager, a native
-/// title-bar button this app does not draw - leaves it false, which is the honest answer:
-/// nothing in that close says who asked for it. It lives at file scope because the control that
-/// sets it (`ConnectionManagerState`) and the handler that reads it (`_DesktopServerPageState`)
-/// are different widgets.
 bool _cmClosedByOperator = false;
 
 class DesktopServerPage extends StatefulWidget {
@@ -63,8 +56,6 @@ class _DesktopServerPageState extends State<DesktopServerPage>
 
   @override
   void onWindowClose() {
-    // Other platforms keep the old behaviour exactly: the ambiguity this guards against is a
-    // Linux session logout, which closes every window in the session.
     final byOperator = _cmClosedByOperator || !isLinux;
     Future.wait([gFFI.serverModel.closeAll(byOperator: byOperator), gFFI.close()]).then((_) {
       if (isMacOS) {
@@ -206,7 +197,7 @@ class ConnectionManagerState extends State<ConnectionManager>
               controller: serverModel.tabController,
               selectedBorderColor: MyTheme.accent,
               maxLabelWidth: 100,
-              tail: null, //buildScrollJumper(),
+              tail: null,
               tabBuilder: (key, icon, label, themeConf) {
                 final client = serverModel.clients
                     .firstWhereOrNull((client) => client.id.toString() == key);
@@ -350,8 +341,6 @@ class ConnectionManagerState extends State<ConnectionManager>
         res = await closeConfirmDialog();
       }
       if (res) {
-        // After the dialog, never before it: an external close while it is open must not
-        // inherit an intent the user had not expressed yet.
         _cmClosedByOperator = true;
         windowManager.close();
       }
@@ -440,7 +429,6 @@ class _CmHeaderState extends State<_CmHeader>
         _time.value = _time.value + 1;
       }
     });
-    // Call onSelected in post frame callback, since we cannot guarantee that the callback will not call setState.
     WidgetsBinding.instance.addPostFrameCallback((_) {
       gFFI.serverModel.tabController.onSelected?.call(client.id.toString());
     });
@@ -821,7 +809,6 @@ class _PrivilegeBoardState extends State<_PrivilegeBoard> {
                         translate('Enable recording session'),
                         canModify: canModifyPermission,
                       ),
-                      // only windows support block input
                       if (isWindows)
                         buildPermissionIcon(
                           client.blockInput,

@@ -11,7 +11,6 @@ def format_timestamp(timestamp):
     if timestamp is None:
         return None
     try:
-        # Convert to local time
         local_dt = datetime.fromtimestamp(timestamp)
         return local_dt.strftime("%Y-%m-%d %H:%M:%S")
     except (ValueError, TypeError):
@@ -21,17 +20,13 @@ def format_timestamp(timestamp):
 def parse_local_time_to_utc_string(time_str):
     """Parse local time string to UTC time string for API filtering"""
     try:
-        # Parse the local time string
         local_dt = datetime.strptime(time_str, "%Y-%m-%d %H:%M:%S.%f")
-        # Make the datetime object timezone-aware using system's local timezone
         local_dt = local_dt.replace(tzinfo=datetime.now().astimezone().tzinfo)
         utc_dt = local_dt.astimezone(timezone.utc)
         return utc_dt.strftime("%Y-%m-%d %H:%M:%S.000")
     except ValueError:
         try:
-            # Try without microseconds
             local_dt = datetime.strptime(time_str, "%Y-%m-%d %H:%M:%S")
-            # Make the datetime object timezone-aware using system's local timezone
             local_dt = local_dt.replace(tzinfo=datetime.now().astimezone().tzinfo)
             utc_dt = local_dt.astimezone(timezone.utc)
             return utc_dt.strftime("%Y-%m-%d %H:%M:%S.000")
@@ -114,13 +109,11 @@ def enhance_audit_data(data, audit_type):
     for item in data:
         enhanced_item = item.copy()
 
-        # Convert timestamps - replace original values
         if 'created_at' in enhanced_item:
             enhanced_item['created_at'] = format_timestamp(enhanced_item['created_at'])
         if 'end_time' in enhanced_item:
             enhanced_item['end_time'] = format_timestamp(enhanced_item['end_time'])
 
-        # Add type-specific enhancements - replace original values
         if audit_type == 'conn':
             if 'conn_type' in enhanced_item:
                 enhanced_item['conn_type'] = get_connection_type_name(enhanced_item['conn_type'])
@@ -129,16 +122,13 @@ def enhance_audit_data(data, audit_type):
 
         elif audit_type == 'console':
             if 'typ' in enhanced_item:
-                # Replace typ field with type and convert to readable name
                 enhanced_item['type'] = get_console_type_name(enhanced_item['typ'])
                 del enhanced_item['typ']
             if 'iop' in enhanced_item:
-                # Replace iop field with operation and convert to readable name
                 enhanced_item['operation'] = get_console_operation_name(enhanced_item['iop'])
                 del enhanced_item['iop']
 
         elif audit_type == 'alarm' and 'typ' in enhanced_item:
-            # Replace typ field with type and convert to readable name
             enhanced_item['type'] = get_alarm_type_name(enhanced_item['typ'])
             del enhanced_item['typ']
 
@@ -168,7 +158,6 @@ def view_audits_common(url, token, endpoint, filters=None, page_size=None, curre
     """Common function for viewing audits"""
     headers = {"Authorization": f"Bearer {token}"}
 
-    # Set default page size and current page
     if page_size is None:
         page_size = 10
     if current is None:
@@ -179,34 +168,26 @@ def view_audits_common(url, token, endpoint, filters=None, page_size=None, curre
         "current": current
     }
 
-    # Add filter parameters if provided
     if filters:
         for key, value in filters.items():
             if value is not None:
                 params[key] = value
 
-    # Handle time filters
     if days_ago is not None:
-        # Calculate datetime from days ago
         target_time = datetime.now() - timedelta(days=days_ago)
-        # Convert to UTC time string using system timezone
         utc_timestamp = target_time.timestamp()
         utc_dt = datetime.fromtimestamp(utc_timestamp, timezone.utc)
         params["created_at"] = utc_dt.strftime("%Y-%m-%d %H:%M:%S.000")
     elif created_at:
-        # Parse local time string and convert to UTC time string
         utc_time_str = parse_local_time_to_utc_string(created_at)
         if utc_time_str is not None:
             params["created_at"] = utc_time_str
         else:
-            # If parsing fails, pass the original value
             params["created_at"] = created_at
 
-    # Apply wildcard patterns for string fields (excluding specific fields)
     if non_wildcard_fields is None:
         non_wildcard_fields = set()
 
-    # Always exclude these fields from wildcard treatment
     non_wildcard_fields.update(["created_at", "pageSize", "current"])
 
     string_params = {}
@@ -222,7 +203,6 @@ def view_audits_common(url, token, endpoint, filters=None, page_size=None, curre
     response = requests.get(f"{url}/api/audits/{endpoint}", headers=headers, params=string_params)
     response_json = check_response(response)
 
-    # Enhance the data with readable formats
     data = enhance_audit_data(response_json.get("data", []), endpoint)
 
     return {
@@ -296,15 +276,12 @@ def main():
     parser.add_argument("--url", required=True, help="URL of the API")
     parser.add_argument("--token", required=True, help="Bearer token for authentication")
 
-    # Pagination parameters
     parser.add_argument("--page-size", type=int, default=10, help="Number of records per page (default: 10)")
     parser.add_argument("--current", type=int, default=1, help="Current page number (default: 1)")
 
-    # Time filtering parameters
     parser.add_argument("--created-at", help="Filter by creation time in local time (format: 2025-09-16 14:15:57 or 2025-09-16 14:15:57.000)")
     parser.add_argument("--days-ago", type=int, help="Filter by days ago (e.g., 7 for last 7 days)")
 
-    # Audit filters (simplified)
     parser.add_argument("--remote", help="Remote peer ID filter (for conn/file audits)")
     parser.add_argument("--device", help="Device ID filter (for alarm audits)")
     parser.add_argument("--conn-type", type=int, help="Connection type filter (for conn audits only): 0=Remote Desktop, 1=File Transfer, 2=Port Transfer, 3=View Camera, 4=Terminal")
@@ -312,12 +289,10 @@ def main():
 
     args = parser.parse_args()
 
-    # Remove trailing slashes from URL
     while args.url.endswith("/"):
         args.url = args.url[:-1]
 
     if args.command == "view-conn":
-        # View connection audits
         result = view_conn_audits(
             args.url,
             args.token,
@@ -331,7 +306,6 @@ def main():
         print(json.dumps(result, indent=2))
 
     elif args.command == "view-file":
-        # View file audits
         result = view_file_audits(
             args.url,
             args.token,
@@ -344,7 +318,6 @@ def main():
         print(json.dumps(result, indent=2))
 
     elif args.command == "view-alarm":
-        # View alarm audits
         result = view_alarm_audits(
             args.url,
             args.token,
@@ -357,7 +330,6 @@ def main():
         print(json.dumps(result, indent=2))
 
     elif args.command == "view-console":
-        # View console audits
         result = view_console_audits(
             args.url,
             args.token,

@@ -41,8 +41,6 @@ pub(crate) struct FixedFrameAudioResampler {
 }
 
 #[cfg(all(feature = "use_samplerate", not(feature = "use_dasp")))]
-// SAFETY: libsamplerate's src_new state owns heap data and has no thread affinity.
-// This wrapper never exposes or shares that state; processing requires &mut self.
 unsafe impl Send for FixedFrameAudioResampler {}
 
 impl FixedFrameAudioResampler {
@@ -121,7 +119,6 @@ impl AudioResampler {
         Ok(output)
     }
 
-    // Append samples so capture can retain an incomplete output packet in the same buffer.
     fn process_into(
         &mut self,
         input: &[f32],

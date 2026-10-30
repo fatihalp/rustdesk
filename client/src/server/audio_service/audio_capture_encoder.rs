@@ -26,7 +26,6 @@ struct CaptureEncoderState {
 
 impl CaptureEncoderState {
     fn new(sample_rate: u32, channels: Channels) -> Self {
-        // The encoder has already validated the supported Opus rate and channel count.
         let fade_frames = sample_rate as usize * CAPTURE_DECLICK_MS / MILLISECONDS_PER_SECOND;
         Self {
             channels: channels as usize,
@@ -47,7 +46,6 @@ impl CaptureEncoderState {
 
     fn smooth_packet(&mut self, sequence: usize, packet: &mut [f32]) {
         if sequence != self.expected_sequence {
-            // Capture packets contain 10 ms of PCM, so the transition fits in this packet.
             for (index, frame) in packet
                 .chunks_exact_mut(self.channels)
                 .take(self.fade_frames)

@@ -74,7 +74,6 @@ fn cached_sdk_entries_are_ignored_before_check_completes() {
     ];
     let mut cached = HwCodecConfig::default();
     for (_, format) in formats {
-        // A RAM fallback keeps this selection test independent of attached displays.
         cached.ram_encode.push(CodecInfo {
             format,
             ..Default::default()

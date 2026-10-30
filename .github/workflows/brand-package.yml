@@ -1,7 +1,5 @@
 name: Brand package
 
-# Triggered by the Laravel panel (workflow_dispatch). Takes the unbranded base client,
-# embeds the customer's brand.json / logo / name, signs it and uploads the result back to the panel.
 on:
   workflow_dispatch:
     inputs:
@@ -25,7 +23,6 @@ env:
   BUILD_ID: ${{ inputs.build_id }}
   APP_URL: ${{ inputs.app_url }}
   RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
-  # Release that holds client-base-macos.zip (an unsigned/ad-hoc .app) and client-base-windows.zip.
   BASE_RELEASE: ${{ vars.CLIENT_BASE_RELEASE || 'client-base' }}
 
 jobs:

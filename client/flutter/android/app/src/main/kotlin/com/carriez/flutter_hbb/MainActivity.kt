@@ -1,11 +1,5 @@
 package com.carriez.flutter_hbb
 
-/**
- * Handle events from flutter
- * Request MediaProjection permission
- *
- * Inspired by [droidVNC-NG] https://github.com/bk138/droidVNC-NG
- */
 
 import ffi.FFI
 
@@ -114,7 +108,6 @@ class MainActivity : FlutterActivity() {
     override fun dispatchKeyEvent(event: KeyEvent): Boolean {
         if (event.action == KeyEvent.ACTION_DOWN &&
             KeyEvent.isModifierKey(event.keyCode) && currentFocus == null) {
-            // Android can drop modifier-first input when the native view has no focus.
             findViewById<FlutterView>(FlutterActivity.FLUTTER_VIEW_ID)?.requestFocus()
         }
         return super.dispatchKeyEvent(event)
@@ -256,13 +249,6 @@ class MainActivity : FlutterActivity() {
     override fun onDestroy() {
         documentPicker.close()
         Log.e(logTag, "onDestroy")
-        // The process can outlive the UI whenever something keeps it alive:
-        // MainService, or the accessibility InputService on its own. Only the
-        // former gets onTaskRemoved, so close outgoing sessions here too,
-        // otherwise a session survives with no UI left to close it.
-        // `isFinishing` distinguishes the user really leaving from a destroy
-        // for recreation (configuration change, "don't keep activities"),
-        // which must not tear down a live session.
         if (isFinishing) {
             FFI.closeAllSessions()
         }
@@ -288,7 +274,6 @@ class MainActivity : FlutterActivity() {
     private fun initFlutterChannel(flutterMethodChannel: MethodChannel) {
         flutterMethodChannel.setMethodCallHandler { call, result ->
             if (documentPicker.handle(call, result)) return@setMethodCallHandler
-            // make sure result will be invoked, otherwise flutter will await forever
             when (call.method) {
                 "init_service" -> {
                     Intent(activity, MainService::class.java).also {
@@ -379,7 +364,6 @@ class MainActivity : FlutterActivity() {
                     }
                 }
                 "enable_soft_keyboard" -> {
-                    // https://blog.csdn.net/hanye2020/article/details/105553780
                     if (call.arguments as Boolean) {
                         window.clearFlags(WindowManager.LayoutParams.FLAG_ALT_FOCUSABLE_IM)
                     } else {
@@ -460,7 +444,7 @@ class MainActivity : FlutterActivity() {
                             var errorCode = "import_failed"
                             try {
                                 val temporaryFile = File.createTempFile(
-                                    ".rustdesk-import-",
+                                    ".supportdesk-import-",
                                     ".tmp",
                                     destination.parentFile
                                 )
@@ -564,7 +548,7 @@ class MainActivity : FlutterActivity() {
                                 val parent = destination.parentFile
                                     ?: throw IllegalStateException("The destination has no parent")
                                 temporary = File.createTempFile(
-                                    ".rustdesk-import-dir-",
+                                    ".supportdesk-import-dir-",
                                     ".tmp",
                                     parent
                                 ).also {
@@ -580,7 +564,7 @@ class MainActivity : FlutterActivity() {
                                         throw IllegalStateException("The destination already exists")
                                     }
                                     val backupFile = File.createTempFile(
-                                        ".rustdesk-import-backup-",
+                                        ".supportdesk-import-backup-",
                                         ".tmp",
                                         parent
                                     )
@@ -923,8 +907,6 @@ class MainActivity : FlutterActivity() {
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
                 hw = codec.isHardwareAccelerated
             } else {
-                // https://chromium.googlesource.com/external/webrtc/+/HEAD/sdk/android/src/java/org/webrtc/MediaCodecUtils.java#29
-                // https://chromium.googlesource.com/external/webrtc/+/master/sdk/android/api/org/webrtc/HardwareVideoEncoderFactory.java#229
                 if (listOf("OMX.google.", "OMX.SEC.", "c2.android").any { codec.name.startsWith(it, true) }) {
                     hw = false
                 } else if (listOf("c2.qti", "OMX.qcom.video", "OMX.Exynos", "OMX.hisi", "OMX.MTK", "OMX.Intel", "OMX.Nvidia").any { codec.name.startsWith(it, true) }) {
@@ -937,7 +919,7 @@ class MainActivity : FlutterActivity() {
             codecObject.put("hw", hw)
             var mime_type = ""
             codec.supportedTypes.forEach { type ->
-                if (listOf("video/avc", "video/hevc").contains(type)) { // "video/x-vnd.on2.vp8", "video/x-vnd.on2.vp9", "video/av01"
+                if (listOf("video/avc", "video/hevc").contains(type)) {
                     mime_type = type;
                 }
             }
@@ -945,7 +927,6 @@ class MainActivity : FlutterActivity() {
                 codecObject.put("mime_type", mime_type)
                 val caps = codec.getCapabilitiesForType(mime_type)
                 if (codec.isEncoder) {
-                    // Encoder's max_height and max_width are interchangeable
                     if (!caps.videoCapabilities.isSizeSupported(w,h) && !caps.videoCapabilities.isSizeSupported(h,w)) {
                         return@forEach
                     }
@@ -991,7 +972,6 @@ class MainActivity : FlutterActivity() {
             ok = audioRecordHandle.onVoiceCallStarted(null)
         }
         if (!ok) {
-            // Rarely happens, So we just add log and msgbox here.
             Log.e(logTag, "onVoiceCallStarted fail")
             flutterMethodChannel?.invokeMethod("msgbox", mapOf(
                 "type" to "custom-nook-nocancel-hasclose-error",
@@ -1011,7 +991,6 @@ class MainActivity : FlutterActivity() {
             ok = audioRecordHandle.onVoiceCallClosed(null)
         }
         if (!ok) {
-            // Rarely happens, So we just add log and msgbox here.
             Log.e(logTag, "onVoiceCallClosed fail")
             flutterMethodChannel?.invokeMethod("msgbox", mapOf(
                 "type" to "custom-nook-nocancel-hasclose-error",

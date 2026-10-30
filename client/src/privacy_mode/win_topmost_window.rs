@@ -30,15 +30,15 @@ use winapi::{
 pub(super) const PRIVACY_MODE_IMPL: &str = "privacy_mode_impl_mag";
 
 pub const ORIGIN_PROCESS_EXE: &'static str = "C:\\Windows\\System32\\RuntimeBroker.exe";
-pub const WIN_TOPMOST_INJECTED_PROCESS_EXE: &'static str = "RuntimeBroker_rustdesk.exe";
+pub const WIN_TOPMOST_INJECTED_PROCESS_EXE: &'static str = "RuntimeBroker_supportdesk.exe";
 pub const INJECTED_PROCESS_EXE: &'static str = WIN_TOPMOST_INJECTED_PROCESS_EXE;
-pub(super) const PRIVACY_WINDOW_CLASS: &'static str = "RustDeskPrivacyWindowClass";
-pub(super) const PRIVACY_WINDOW_NAME: &'static str = "RustDeskPrivacyWindow";
+pub(super) const PRIVACY_WINDOW_CLASS: &'static str = "SupportDeskPrivacyWindowClass";
+pub(super) const PRIVACY_WINDOW_NAME: &'static str = "SupportDeskPrivacyWindow";
 const PRIVACY_WINDOW_WAIT_MILLIS: u128 = 1_000;
 const PRIVACY_WINDOW_WAIT_EXTRA_MONITOR_MILLIS: u128 = 500;
 const PRIVACY_WINDOW_POLL_INTERVAL_MILLIS: u64 = 100;
-const WM_RUSTDESK_SHOW_WINDOWS: u32 = WM_APP + 3;
-const WM_RUSTDESK_HIDE_WINDOWS: u32 = WM_APP + 4;
+const WM_SUPPORTDESK_SHOW_WINDOWS: u32 = WM_APP + 3;
+const WM_SUPPORTDESK_HIDE_WINDOWS: u32 = WM_APP + 4;
 
 struct WindowHandlers {
     hthread: u64,
@@ -136,12 +136,7 @@ impl PrivacyMode for PrivacyModeImpl {
             self.stop();
         }
 
-        // Continue local state cleanup even after stop(); the broker has
-        // been torn down, so keeping conn_id/hwnd would leave stale state.
         if self.conn_id != INVALID_PRIVACY_MODE_CONN_ID {
-            // Only publish the off state after the hide message was posted.
-            // Otherwise the peer may receive a success-like state and then a
-            // failed turn-off response for the same request.
             if hide_result.is_ok() {
                 if let Some(state) = state {
                     allow_err!(super::set_privacy_mode_state(
@@ -219,16 +214,12 @@ impl PrivacyModeImpl {
             return Ok(());
         }
 
-        // let cmdline = cur_dir.join("MiniBroker.exe").to_string_lossy().to_string();
         let cmdline = cur_dir
             .join(INJECTED_PROCESS_EXE)
             .to_string_lossy()
             .to_string();
 
         unsafe {
-            // The path goes in as `lpApplicationName` too: given only a command line, Windows
-            // treats every whitespace-delimited prefix as a candidate image, and the default
-            // install path contains a space.
             let app_utf16: Vec<u16> = cmdline.encode_utf16().chain(Some(0).into_iter()).collect();
             let mut cmd_utf16: Vec<u16> = format!("\"{cmdline}\"")
                 .encode_utf16()
@@ -437,17 +428,11 @@ fn privacy_window_wait_millis(base_millis: u128, monitor_count: usize) -> u128 {
     if base_millis == 0 {
         return 0;
     }
-    // Privacy Mode 1 creates one overlay per monitor. Keep the single-monitor
-    // wait as the base and add time for each extra overlay before coverage
-    // verification times out.
     base_millis
         + (monitor_count.saturating_sub(1) as u128) * PRIVACY_WINDOW_WAIT_EXTRA_MONITOR_MILLIS
 }
 
 fn wait_find_privacy_hwnds_impl(msecs: u128, require_visible: bool) -> ResultType<Vec<HWND>> {
-    // This verifies initial turn-on coverage. If displays change during this
-    // short poll window, the DLL refreshes overlays asynchronously, while this
-    // check may still time out against the geometry sampled here.
     let monitor_rects = get_monitor_rects()?;
     if monitor_rects.is_empty() {
         bail!("No privacy monitor found");
@@ -527,9 +512,9 @@ fn set_privacy_windows_visible(hwnds: &[HWND], show: bool) -> ResultType<usize> 
         return Ok(0);
     };
     let message = if show {
-        WM_RUSTDESK_SHOW_WINDOWS
+        WM_SUPPORTDESK_SHOW_WINDOWS
     } else {
-        WM_RUSTDESK_HIDE_WINDOWS
+        WM_SUPPORTDESK_HIDE_WINDOWS
     };
     let mut posted = 0;
     let mut first_error = None;

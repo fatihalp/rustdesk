@@ -1,0 +1,11 @@
+[Desktop Entry]
+Name=SupportDesk
+NoDisplay=true
+MimeType=x-scheme-handler/supportdesk;
+TryExec=supportdesk
+Exec=supportdesk %u
+Icon=supportdesk
+Terminal=false
+Type=Application
+StartupNotify=false
+StartupWMClass=supportdesk

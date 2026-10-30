@@ -12,49 +12,30 @@ use hbb_common::{
 use base::message_proto::*;
 use std::sync::{Arc, Mutex};
 
-/// On the wire and fixed forever: what the controller may have in flight on a
-/// channel before `opened` brings the peer's window.
 pub const INITIAL_WINDOW: u32 = 64 * 1024;
-/// Also on the wire and fixed forever: the window a `data` frame costs at
-/// minimum, whatever its length. It bounds the per-frame bookkeeping a peer
-/// can make us hold — 1-byte frames would otherwise cost it one byte and us
-/// a queue entry.
 pub const MIN_FRAME_CHARGE: u32 = 64;
 pub const CHANNEL_WINDOW: u32 = 256 * 1024;
 pub const MAX_FRAME: usize = 64 * 1024;
-/// Cap on one framed packet once the tunnel is up: a `MAX_FRAME` data frame,
-/// its protobuf envelope and the 16-byte MAC fit with room to spare. The codec
-/// otherwise takes a header declaring up to 1 GiB, and the channel window is
-/// only checked once the whole packet has arrived.
 pub const MAX_PACKET: usize = 2 * MAX_FRAME;
 pub const UPDATE_THRESHOLD: u32 = CHANNEL_WINDOW / 2;
 pub const MAX_CHANNELS: usize = 256;
 pub const DATA_QUEUE_FRAMES: usize = 128;
-/// Never keep more than our own advertised window in flight, whatever the peer
-/// offers. The controlled side's sink is unbounded, so credit is the only bound
-/// on how much target data it buffers, and the peer chooses that number.
 pub const MAX_SEND_CREDIT: u32 = CHANNEL_WINDOW;
 
 pub fn effective_window(advertised: u32) -> u32 {
     advertised.max(INITIAL_WINDOW)
 }
 
-/// For a tunnel's stream once multiplexing is agreed, on both sides. The
-/// WebSocket and WebRTC codecs carry caps of their own.
 pub fn cap_packet_size(stream: &mut hbb_common::Stream) {
     if let hbb_common::Stream::Tcp(s) = stream {
         s.0.codec_mut().set_max_packet_length(MAX_PACKET);
     }
 }
 
-/// What a `data` frame of this length costs its channel's window.
 pub fn charge(len: usize) -> u32 {
     u32::try_from(len).unwrap_or(u32::MAX).max(MIN_FRAME_CHARGE)
 }
 
-/// Receiver-side accounting: the credit the peer still has, and what we have
-/// drained to the local socket since the last `window_update`. Both are
-/// bounded — a cumulative counter would wear out on a long transfer.
 pub struct RecvWindow {
     remaining: u32,
     drained_since_update: u32,
@@ -68,7 +49,6 @@ impl RecvWindow {
         }
     }
 
-    /// False means the peer overran the window: a protocol violation.
     pub fn accept(&mut self, len: usize) -> bool {
         match self.remaining.checked_sub(charge(len)) {
             Some(left) => {
@@ -79,13 +59,10 @@ impl RecvWindow {
         }
     }
 
-    /// Widens the window without advertising: the grant travels in `opened`.
     pub fn grant(&mut self, n: u32) {
         self.remaining = self.remaining.saturating_add(n);
     }
 
-    /// Returns the amount to advertise in a `window_update` once enough has
-    /// been drained; the same amount is credited back.
     pub fn drained(&mut self, n: usize) -> Option<u32> {
         self.drained_since_update = self.drained_since_update.saturating_add(charge(n));
         if self.drained_since_update < UPDATE_THRESHOLD {
@@ -98,8 +75,6 @@ impl RecvWindow {
     }
 }
 
-/// Sender-side credit. `take` parks until credit is available; the lock is
-/// never held across an await.
 pub struct SendCredit {
     credit: Mutex<u32>,
     notify: Notify,
@@ -113,9 +88,6 @@ impl SendCredit {
         }
     }
 
-    /// `max` must be at least `MIN_FRAME_CHARGE` (`MAX_FRAME` is), and the
-    /// caller pays `charge(bytes_read)` and refunds the rest — so this parks
-    /// until a whole minimum charge is available rather than at zero.
     pub async fn take(&self, max: usize) -> usize {
         debug_assert!(max >= MIN_FRAME_CHARGE as usize);
         loop {
@@ -139,8 +111,6 @@ impl SendCredit {
         self.notify.notify_one();
     }
 
-    /// The controller starts a channel with `INITIAL_WINDOW` of credit; when
-    /// `opened` advertises the peer's real window this re-bases to it.
     pub fn raise_initial(&self, total: u32) {
         let extra = effective_window(total) - INITIAL_WINDOW;
         if extra > 0 {
@@ -200,10 +170,6 @@ pub fn window_update_msg(id: i32, add: u32) -> Message {
     }))
 }
 
-/// Where a channel's frames go. The controller keeps two queues so
-/// `window_update` can bypass bulk data; the controlled side has the
-/// connection's single ordered `inner.tx`. `open` is not control: it rides
-/// the ordered queue so it can never arrive after the channel's first `data`.
 #[derive(Clone)]
 pub enum FrameSink {
     Queued {
@@ -252,8 +218,6 @@ impl FrameSink {
 pub enum Inbound {
     Data(Bytes),
     Close,
-    /// The demultiplexer found the peer over its window; the channel task
-    /// closes and tells the peer, so the frame still leaves in order.
     Violation,
 }
 
@@ -266,8 +230,6 @@ pub enum RelayEnd {
     TunnelGone,
 }
 
-/// Local socket -> tunnel, under the peer's credit. `prebuf` is simply the
-/// head of the byte stream.
 async fn relay_socket_to_tunnel<R: AsyncRead + Unpin>(
     id: i32,
     reader: R,
@@ -277,9 +239,6 @@ async fn relay_socket_to_tunnel<R: AsyncRead + Unpin>(
     mut cancel: watch::Receiver<bool>,
 ) -> RelayEnd {
     let mut reader = std::io::Cursor::new(prebuf).chain(reader);
-    // One scratch buffer per channel and an exact-size copy per frame: a frame
-    // that owned its read allocation would pin up to MAX_FRAME until sent,
-    // whatever its length, and interactive traffic is mostly tiny frames.
     let mut scratch = vec![0u8; MAX_FRAME];
     loop {
         let allow = tokio::select! {
@@ -307,8 +266,6 @@ async fn relay_socket_to_tunnel<R: AsyncRead + Unpin>(
     }
 }
 
-/// Tunnel -> local socket. `initial` is written before anything from the
-/// queue (the controlled side's bytes buffered while connecting).
 async fn relay_tunnel_to_socket<W: AsyncWrite + Unpin>(
     id: i32,
     mut writer: W,
@@ -351,13 +308,6 @@ async fn relay_tunnel_to_socket<W: AsyncWrite + Unpin>(
     }
 }
 
-/// Runs both halves as independent tasks; whichever ends first cancels the
-/// other. Sends `close` once, after the last data, and only when the channel
-/// ended for a local reason — the peer's own `close` is never echoed.
-/// `teardown` is the tunnel closing under the channel: it cancels both halves
-/// even when they are parked on the socket, where dropping the inbound sender
-/// reaches neither. It is a level, so a channel opened as the tunnel closes,
-/// subscribing after the signal went out, still sees it.
 pub async fn run_channel<R, W>(
     id: i32,
     reader: R,
@@ -389,8 +339,6 @@ pub async fn run_channel<R, W>(
             let _ = cancel_tx.send(true);
             (r.unwrap_or(RelayEnd::Cancelled), to_tunnel.await.unwrap_or(RelayEnd::Cancelled))
         }
-        // Wrapped so `select!` keeps a `bool`, not the `Ref` (a read guard,
-        // not `Send`) it would otherwise hold across the joins.
         _ = async { teardown.wait_for(|down| *down).await.is_ok() } => {
             let _ = cancel_tx.send(true);
             (to_tunnel.await.unwrap_or(RelayEnd::Cancelled), to_socket.await.unwrap_or(RelayEnd::Cancelled))
@@ -427,15 +375,9 @@ mod tunnel {
         time::Duration,
     };
 
-    /// A refused reason is shown once, then not again until it has been quiet
-    /// for this long: a page load's dozen refusals make one dialog, and a
-    /// target that breaks again hours later is reported again.
     const REPORT_AGAIN_AFTER: Duration = Duration::from_secs(10);
-    /// Distinct reasons remembered at once, so the dialog count stays bounded
-    /// however the peer varies the text it sends.
     const MAX_REPORTED_OPEN_ERRORS: usize = 8;
 
-    // Internal state only; `Claim` is the API listeners see.
     enum TunnelState {
         Unset,
         Muxed(Arc<TunnelHandle>),
@@ -449,13 +391,8 @@ mod tunnel {
         Legacy,
     }
 
-    /// One per listener. The accept loop owns it and reads it between
-    /// accepts; the tunnel loop resets it when it ends, so the next accept
-    /// establishes again.
     pub struct Tunnel {
         state: watch::Sender<TunnelState>,
-        /// Never sent on. The loop's receiver errors when the listener drops
-        /// this `Tunnel`, and that is what ends a tunnel nothing else ends.
         lifetime: watch::Sender<()>,
     }
 
@@ -486,9 +423,6 @@ mod tunnel {
                 teardown: watch::channel(false).0,
             });
             let state = self.state.clone();
-            // Publish before spawning: if the loop exits first and resets the
-            // state, a later publish here would pin it at Muxed with a dead
-            // handle and the listener could never re-establish.
             self.state.send_replace(TunnelState::Muxed(handle.clone()));
             tokio::spawn(tunnel_loop(
                 stream,
@@ -523,16 +457,10 @@ mod tunnel {
         channels: Mutex<HashMap<i32, ChannelEntry>>,
         next_id: AtomicI32,
         reported: Mutex<HashMap<String, Instant>>,
-        /// Raised once, by `close_all`, for the channels its `clear` cannot
-        /// reach: one parked on its local socket is not on the inbound queue.
         teardown: watch::Sender<bool>,
     }
 
     impl TunnelHandle {
-        /// `open` leaves from inside the channel's own task, down the ordered
-        /// data queue, ahead of the channel's first `data`. On the control
-        /// queue it could be overtaken by that `data` whenever the tunnel loop
-        /// resumes with both queues non-empty.
         pub fn open(
             self: &Arc<Self>,
             host: &str,
@@ -551,9 +479,6 @@ mod tunnel {
                 if channels.len() >= MAX_CHANNELS {
                     hbb_common::bail!("too many port forward channels");
                 }
-                // Once the counter has come all the way round it can land on
-                // a channel still up; fewer than MAX_CHANNELS are, so a free
-                // id is a few steps away.
                 let mut id = self.next_id.fetch_add(1, Ordering::Relaxed);
                 while channels.contains_key(&id) {
                     id = self.next_id.fetch_add(1, Ordering::Relaxed);
@@ -589,7 +514,6 @@ mod tunnel {
                     let refused = {
                         let mut channels = self.channels.lock().unwrap();
                         if o.success {
-                            // A repeated `opened` must not raise the credit again.
                             if let Some(e) = channels.get_mut(&o.channel_id) {
                                 if !e.opened {
                                     e.opened = true;
@@ -618,8 +542,6 @@ mod tunnel {
                     if delivered {
                         return None;
                     }
-                    // Dropped here and now, so the peer cannot queue anything more
-                    // for this id while the task is still on its way out.
                     if let Some(e) = channels.remove(&d.channel_id) {
                         if !accepted {
                             log::warn!("port forward channel {} overran its window", d.channel_id);
@@ -648,10 +570,6 @@ mod tunnel {
             }
         }
 
-        /// The peer's reason for refusing a channel, unless it was reported
-        /// within `REPORT_AGAIN_AFTER`. One page load can have a dozen
-        /// connections refused for the same reason, and the user needs one
-        /// dialog, not a dozen; a burst that keeps going keeps it quiet.
         fn first_report(&self, message: String) -> Option<String> {
             self.first_report_at(message, Instant::now())
         }
@@ -675,8 +593,6 @@ mod tunnel {
 
         fn close_all(&self) {
             self.channels.lock().unwrap().clear();
-            // Not `send`: with no channel live it stores nothing, and one
-            // opened as the tunnel closes would never see it.
             self.teardown.send_replace(true);
         }
 
@@ -686,14 +602,6 @@ mod tunnel {
         }
     }
 
-    /// The only task that touches the stream. The three arms keep tokio's
-    /// default random fairness: a `biased` control -> read -> data order would
-    /// starve outbound data whenever inbound is saturated (a LAN-speed
-    /// download keeps the read arm ready on every poll), and the reverse would
-    /// starve the reads that carry the peer's window updates and pings.
-    /// Random order is safe only because nothing order-sensitive is split
-    /// across the queues: `open`, `data` and `close` share the data queue and
-    /// the control queue carries `window_update` alone.
     async fn tunnel_loop(
         mut stream: Stream,
         handle: Arc<TunnelHandle>,
@@ -764,14 +672,11 @@ mod tests {
         for _ in 0..(INITIAL_WINDOW / MIN_FRAME_CHARGE) {
             assert!(w.accept(1));
         }
-        // A 64 KiB window holds 1024 one-byte frames, not 65536 of them.
         assert!(!w.accept(1));
     }
 
     #[test]
     fn accounting_survives_a_transfer_far_larger_than_the_window() {
-        // Cumulative counters used to overflow around 4 GiB on one channel and
-        // read as a protocol violation mid-transfer.
         let mut w = RecvWindow::new(CHANNEL_WINDOW);
         let mut moved: u64 = 0;
         while moved < 8 * 1024 * 1024 * 1024 {
@@ -793,8 +698,6 @@ mod tests {
             let waiter = tokio::spawn(async move { c.take(MAX_FRAME).await });
             tokio::time::sleep(std::time::Duration::from_millis(20)).await;
             assert!(!waiter.is_finished());
-            // Below one minimum charge the taker stays parked: whatever it
-            // reads next has to be payable.
             credit.add(MIN_FRAME_CHARGE - 1);
             tokio::time::sleep(std::time::Duration::from_millis(20)).await;
             assert!(!waiter.is_finished());
@@ -808,7 +711,6 @@ mod tests {
         rt().block_on(async {
             let credit = SendCredit::new(u32::MAX);
             assert_eq!(credit.take(usize::MAX).await, MAX_SEND_CREDIT as usize);
-            // A flood of window updates cannot lift it past the cap either.
             for _ in 0..10 {
                 credit.add(u32::MAX);
             }
@@ -822,13 +724,11 @@ mod tests {
             let credit = SendCredit::new(INITIAL_WINDOW);
             assert_eq!(credit.take(1000).await, 1000);
             credit.raise_initial(CHANNEL_WINDOW);
-            // Credit is now CHANNEL_WINDOW - 1000, not CHANNEL_WINDOW - 1000 + INITIAL_WINDOW.
             assert_eq!(
                 credit.take(usize::MAX).await,
                 (CHANNEL_WINDOW - 1000) as usize
             );
             credit.raise_initial(0);
-            // A zero or sub-INITIAL_WINDOW advertisement adds nothing.
             let c = std::sync::Arc::new(credit);
             let c2 = c.clone();
             let waiter = tokio::spawn(async move { c2.take(MAX_FRAME).await });
@@ -853,8 +753,6 @@ mod tests {
         task: tokio::task::JoinHandle<()>,
     }
 
-    /// A channel whose "local socket" is one end of a duplex pipe and whose
-    /// "tunnel" is a pair of queues the test reads directly.
     fn harness(id: i32, prebuf: Vec<u8>, initial_out: Vec<Bytes>) -> Harness {
         harness_on(id, prebuf, initial_out, watch::channel(false).0)
     }
@@ -875,9 +773,6 @@ mod tests {
         Harness { data_rx, _control_rx: control_rx, _inbound_tx: inbound_tx, credit, local, _teardown: teardown, task }
     }
 
-    // `PortForwardData.data` is generated as `bytes::Bytes` (hbb_common builds
-    // rust-protobuf with the bytes feature), so it converts with `to_vec()`, not
-    // `clone()`, and needs no wrapping when it becomes an `Inbound::Data`.
     fn frame_kind(m: &Message) -> (&'static str, i32, Vec<u8>) {
         match &m.union {
             Some(message::Union::PortForwardChannel(ch)) => match &ch.union {
@@ -889,9 +784,6 @@ mod tests {
                 Some(port_forward_channel::Union::Open(o)) => ("open", o.channel_id, vec![]),
                 Some(port_forward_channel::Union::Opened(o)) => ("opened", o.channel_id, vec![]),
                 None => ("none", 0, vec![]),
-                // `port_forward_channel::Union` is `#[non_exhaustive]` in the
-                // generated protobuf code, so it needs a catch-all here even
-                // though every current variant is already matched above.
                 _ => ("other", 0, vec![]),
             },
             _ => ("other", 0, vec![]),
@@ -915,7 +807,6 @@ mod tests {
             )
             .await
             .is_err());
-            // One minimum charge is enough to send the 5-byte tail.
             h.credit.add(MIN_FRAME_CHARGE);
             assert_eq!(frame_kind(&h.data_rx.recv().await.unwrap()).2.len(), 5);
         });
@@ -945,8 +836,6 @@ mod tests {
             Stream,
         };
 
-        /// A loopback TCP pair wrapped as two `Stream`s: one for the tunnel,
-        /// one for the fake peer.
         async fn stream_pair() -> (Stream, Stream) {
             let l = TcpListener::bind("127.0.0.1:0").await.unwrap();
             let addr = l.local_addr().unwrap();
@@ -985,9 +874,6 @@ mod tests {
                 t.claim();
                 let _h = t.set_muxed(Stream::Tcp(FramedStream::from(ours, addr)), NoUi::default());
                 assert!(matches!(t.claim(), Claim::Muxed(_)));
-                // The codec's three-byte header form, declaring one byte more
-                // than the cap, and nothing behind it: an uncapped codec waits
-                // for the whole packet and the tunnel stays up.
                 let head = ((MAX_PACKET as u32 + 1) << 2) | 0x2;
                 theirs.write_all(&head.to_le_bytes()[..3]).await.unwrap();
                 let deadline = Instant::now() + Duration::from_secs(2);
@@ -1045,8 +931,6 @@ mod tests {
                 };
                 peer.send(&close_msg(id)).await.unwrap();
                 drop(app);
-                // The loop holds a handle of its own, so dropping ours proves
-                // nothing; the listener's `Tunnel` is what must end the peer.
                 drop(h);
                 drop(t);
                 let end = hbb_common::timeout(2000, peer.next()).await;
@@ -1077,8 +961,6 @@ mod tests {
                     let mut buf = [0u8; 1];
                     assert_eq!(app.read(&mut buf).await.unwrap(), 0);
                 }
-                // A page load can have a dozen connections refused for one
-                // reason; the user gets one dialog per reason, not per socket.
                 assert_eq!(
                     ui.messages(),
                     vec!["unreachable".to_owned(), "no permission".to_owned()]
@@ -1106,8 +988,6 @@ mod tests {
                     ..Default::default()
                 });
                 h.on_frame(ch.clone());
-                // Gone on the spot: a peer that keeps sending past the window
-                // can no longer queue anything for this channel.
                 assert_eq!(h.live_channels(), 0);
                 h.on_frame(ch);
                 assert_eq!(h.live_channels(), 0);
@@ -1126,13 +1006,11 @@ mod tests {
                 h.open("localhost", 1, sock_a, vec![]).unwrap();
                 h.open("localhost", 1, sock_b, vec![]).unwrap();
                 drop(peer);
-                // One tunnel is one failure domain: every channel on it ends.
                 let mut buf = [0u8; 1];
                 assert_eq!(app_a.read(&mut buf).await.unwrap(), 0);
                 assert_eq!(app_b.read(&mut buf).await.unwrap(), 0);
                 tokio::time::sleep(std::time::Duration::from_millis(50)).await;
                 assert!(h.open("localhost", 1, local_pair().await.1, vec![]).is_err());
-                // The next accept establishes again on the same `Tunnel`.
                 assert!(matches!(t.claim(), Claim::Claimed));
                 let (ours, mut peer) = stream_pair().await;
                 let h = t.set_muxed(ours, NoUi::default());
@@ -1145,8 +1023,6 @@ mod tests {
             });
         }
 
-        /// An `Interface` that records the dialogs it was asked to show. The
-        /// tunnel needs it for `handle_test_delay` and for refusal messages.
         #[derive(Clone, Default)]
         pub struct NoUi(Arc<Mutex<Vec<String>>>);
 
@@ -1193,8 +1069,6 @@ mod tests {
         use crate::server::port_forward_mux::PortForwardMux;
         use hbb_common::tokio::time::Instant;
 
-        /// Stands in for `Connection`: one task owning the stream, draining
-        /// `inner.tx` into it and dispatching inbound frames to the mux.
         fn fake_controlled(mut stream: Stream, login_target: String) {
             tokio::spawn(async move {
                 let (tx, mut rx) = mpsc::unbounded_channel::<(Instant, Arc<Message>)>();
@@ -1236,8 +1110,6 @@ mod tests {
             port
         }
 
-        /// The `Tunnel` comes back too: dropping it is what ends the peer, so
-        /// a test that wants a live tunnel has to keep holding it.
         async fn muxed_tunnel() -> (Tunnel, Arc<TunnelHandle>, u16) {
             let (ours, theirs) = stream_pair().await;
             let port = echo_target().await;
@@ -1258,10 +1130,6 @@ mod tests {
                     h.open("127.0.0.1", port as i32, sock, vec![i]).unwrap();
                     apps.push(app);
                 }
-                // Twenty channels round-trip concurrently: channel 0 streams 4 MiB
-                // while the other nineteen each exchange one byte.
-                // Read and write the bulk socket from separate tasks: the echo can only
-                // drain if this side keeps reading while it writes.
                 let bulk = vec![0xAB; 4 << 20];
                 let (mut bulk_rd, mut bulk_wr) = apps.remove(0).into_split();
                 let bulk_reader = {
@@ -1277,8 +1145,6 @@ mod tests {
                     let bulk = bulk.clone();
                     tokio::spawn(async move {
                         bulk_wr.write_all(&bulk).await.unwrap();
-                        // Hold the write half open: dropping it half-closes the
-                        // socket, which ends the whole channel by design.
                         bulk_wr
                     })
                 };
@@ -1324,9 +1190,6 @@ mod tests {
                     app.read_exact(&mut b).await.unwrap();
                     assert_eq!(b[0], i as u8);
                     drop(app);
-                    // The controller's entry goes when its coordinator task exits,
-                    // which takes a cancel and a join; wait for it rather than
-                    // trusting a single yield, or the cap trips around round 256.
                     while h.live_channels() != 0 {
                         tokio::task::yield_now().await;
                     }

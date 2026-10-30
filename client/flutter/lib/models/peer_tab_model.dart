@@ -21,7 +21,7 @@ enum PeerTabIndex {
 class PeerTabModel with ChangeNotifier {
   WeakReference<FFI> parent;
   int get currentTab => _currentTab;
-  int _currentTab = 0; // index in tabNames
+  int _currentTab = 0;
   static const int maxTabCount = 5;
   static const List<String> tabNames = [
     'Recent sessions',
@@ -68,7 +68,6 @@ class PeerTabModel with ChangeNotifier {
   String get lastId => _lastId;
 
   PeerTabModel(this.parent) {
-    // visible
     try {
       final option = bind.getLocalFlutterOption(k: kOptionPeerTabVisible);
       if (option.isNotEmpty) {
@@ -84,7 +83,6 @@ class PeerTabModel with ChangeNotifier {
     } catch (e) {
       debugPrint("failed to get peer tab visible list:$e");
     }
-    // order
     try {
       final option = bind.getLocalFlutterOption(k: kOptionPeerTabOrder);
       if (option.isNotEmpty) {
@@ -108,7 +106,6 @@ class PeerTabModel with ChangeNotifier {
     } catch (e) {
       debugPrint("failed to get peer tab order list: $e");
     }
-    // init currentTab
     _currentTab =
         int.tryParse(bind.getLocalFlutterOption(k: kOptionPeerTabIndex)) ?? 0;
     if (_currentTab < 0 || _currentTab >= maxTabCount) {
@@ -149,9 +146,6 @@ class PeerTabModel with ChangeNotifier {
 
   select(Peer peer) {
     if (!_multiSelectionMode) {
-      // https://github.com/flutter/flutter/issues/101275#issuecomment-1604541700
-      // After onTap, the shift key should be pressed for a while when not in multiselection mode,
-      // because onTap is delayed when onDoubleTap is not null
       if (isDesktop || isWebDesktop) return;
       _multiSelectionMode = true;
     }
@@ -184,9 +178,6 @@ class PeerTabModel with ChangeNotifier {
     notifyListeners();
   }
 
-  // `notifyListeners()` will cause many rebuilds.
-  // So, we need to reduce the calls to "notifyListeners()" only when necessary.
-  // A better way is to use a new model.
   setCurrentTabCachedPeers(List<Peer> peers) {
     Future.delayed(Duration.zero, () {
       final isPreEmpty = _currentTabCachedPeers.isEmpty;

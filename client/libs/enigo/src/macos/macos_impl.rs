@@ -1,5 +1,4 @@
 use core_graphics;
-// TODO(dustin): use only the things i need
 
 use self::core_graphics::display::*;
 use self::core_graphics::event::*;
@@ -41,7 +40,6 @@ const KEYBOARD_ERROR_LOG_INTERVAL: std::time::Duration = std::time::Duration::fr
 const MOUSE_EVENT_BUTTON_NUMBER_BACK: i64 = 3;
 const MOUSE_EVENT_BUTTON_NUMBER_FORWARD: i64 = 4;
 
-/// The event source user data value of cgevent.
 pub const ENIGO_INPUT_EXTRA_VALUE: i64 = 100;
 
 #[allow(improper_ctypes)]
@@ -56,7 +54,7 @@ extern "C" {
     static kTISPropertyUnicodeKeyLayoutData: *mut c_void;
     static kTISPropertyInputSourceID: *mut c_void;
     fn UCKeyTranslate(
-        keyLayoutPtr: *const u8, //*const UCKeyboardLayout,
+        keyLayoutPtr: *const u8,
         virtualKeyCode: u16,
         keyAction: u16,
         modifierKeyState: u32,
@@ -76,10 +74,8 @@ extern "C" {
     ) -> Boolean;
 
     fn CGEventPost(tapLocation: CGEventTapLocation, event: *mut MyCGEvent);
-    // Actually return CFDataRef which is const here, but for coding convenience, return *mut c_void
     fn TISGetInputSourceProperty(source: TISInputSourceRef, property: *const c_void)
         -> *mut c_void;
-    // not present in servo/core-graphics
     fn CGEventCreateScrollWheelEvent(
         source: &CGEventSourceRef,
         units: ScrollUnit,
@@ -97,16 +93,13 @@ struct NSPoint {
     y: f64,
 }
 
-// not present in servo/core-graphics
 #[allow(dead_code)]
 #[derive(Debug)]
 enum ScrollUnit {
     Pixel = 0,
     Line = 1,
 }
-// hack
 
-/// The main struct for handling the event emitting
 pub struct Enigo {
     event_source: Option<CGEventSource>,
     double_click_interval: u32,
@@ -118,17 +111,14 @@ pub struct Enigo {
 }
 
 impl Enigo {
-    /// Set if ignore flags when posting events.
     pub fn set_ignore_flags(&mut self, ignore: bool) {
         self.ignore_flags = ignore;
     }
 
-    ///
     pub fn reset_flag(&mut self) {
         self.flags = CGEventFlags::CGEventFlagNull;
     }
 
-    ///
     pub fn add_flag(&mut self, key: &Key) {
         let flag = match key {
             &Key::CapsLock => CGEventFlags::CGEventFlagAlphaShift,
@@ -142,21 +132,10 @@ impl Enigo {
         self.flags |= flag;
     }
 
-    // Just check F11 for minimal changes.
-    // Since enigo (legacy mode) is deprecated, it is currently in maintenance only.
     fn post(&self, event: CGEvent, keycode: Option<u16>) {
         if keycode == Some(kVK_F11) {
-            // Some key events require the flags to work.
-            // We can't simply set the flag to `CGEventFlags::CGEventFlagNull`.
-            // eg. `F11` requires flags `CGEventFlags::CGEventFlagSecondaryFn | 0x20000000` to work.
             self.post_event(event, false);
         } else {
-            // macOS system may use the previous event flag to generate the next event.
-            // Only found this issue when locking the screen.
-            // When we use enigo to lock the screen, the next mouse event will have the flag
-            // `CGEventFlagControl | CGEventFlagCommand | 0x20000000`.
-            // The key event will also have the flag `CGEventFlagControl | CGEventFlagCommand | 0x20000000`.
-            // Therefore, we need to set the flag to `event.set_flags(self.flags)` to avoid this.
             self.post_event(event, true);
         }
     }
@@ -181,7 +160,6 @@ impl Default for Enigo {
             }
         }
         Self {
-            // TODO(dustin): return error rather than panic here
             event_source: if let Ok(src) =
                 CGEventSource::new(CGEventSourceStateID::CombinedSessionState)
             {
@@ -209,8 +187,6 @@ impl MouseControllable for Enigo {
     }
 
     fn mouse_move_to(&mut self, x: i32, y: i32) {
-        // For absolute movement, we don't set delta values
-        // This maintains backward compatibility
         self.mouse_move_to_impl(x, y, None);
     }
 
@@ -218,21 +194,13 @@ impl MouseControllable for Enigo {
         let (display_width, display_height) = Self::main_display_size();
         let (current_x, y_inv) = Self::mouse_location_raw_coords();
         let current_y = (display_height as i32) - y_inv;
-        // Use saturating arithmetic to prevent overflow/wraparound
         let mut new_x = current_x.saturating_add(x);
         let mut new_y = current_y.saturating_add(y);
 
-        // Define screen center and edge margins for cursor reset
         let center_x = (display_width / 2) as i32;
         let center_y = (display_height / 2) as i32;
-        // Margin calculation: 5% of the smaller screen dimension with a minimum of 50px.
-        // This provides a comfortable buffer zone to detect when the cursor is approaching
-        // screen edges, allowing us to reset it to center before it hits the boundary.
-        // This ensures continuous relative mouse movement without getting stuck at edges.
         let margin = (display_width.min(display_height) / 20).max(50) as i32;
 
-        // Check if cursor is approaching screen boundaries
-        // Use saturating_sub to prevent negative thresholds on very small displays
         let right = (display_width as i32).saturating_sub(margin);
         let bottom = (display_height as i32).saturating_sub(margin);
         let near_edge = new_x < margin
@@ -241,23 +209,15 @@ impl MouseControllable for Enigo {
             || new_y > bottom;
 
         if near_edge {
-            // Reset cursor to screen center to allow continuous movement
-            // The delta values are still passed correctly for games/apps
             new_x = center_x;
             new_y = center_y;
         }
 
-        // Clamp to screen bounds as a safety measure.
-        // Use saturating_sub(1) to ensure coordinates don't exceed the last valid pixel.
         let max_x = (display_width as i32).saturating_sub(1).max(0);
         let max_y = (display_height as i32).saturating_sub(1).max(0);
         new_x = new_x.clamp(0, max_x);
         new_y = new_y.clamp(0, max_y);
 
-        // Pass delta values for relative movement
-        // This is critical for browser Pointer Lock API support
-        // The delta fields (MOUSE_EVENT_DELTA_X/Y) are used by browsers
-        // to calculate movementX/Y in Pointer Lock mode
         self.mouse_move_to_impl(new_x, new_y, Some((x, y)));
     }
 
@@ -353,7 +313,7 @@ impl MouseControllable for Enigo {
     }
 
     fn mouse_scroll_x(&mut self, length: i32) {
-        let mut scroll_direction = -1; // 1 left -1 right;
+        let mut scroll_direction = -1;
         let mut length = length;
 
         if length < 0 {
@@ -367,7 +327,7 @@ impl MouseControllable for Enigo {
                     let mouse_ev = CGEventCreateScrollWheelEvent(
                         &src,
                         ScrollUnit::Line,
-                        2, // CGWheelCount 1 = y 2 = xy 3 = xyz
+                        2,
                         0,
                         scroll_direction,
                     );
@@ -380,7 +340,7 @@ impl MouseControllable for Enigo {
     }
 
     fn mouse_scroll_y(&mut self, length: i32) {
-        let mut scroll_direction = -1; // 1 left -1 right;
+        let mut scroll_direction = -1;
         let mut length = length;
 
         if length < 0 {
@@ -394,7 +354,7 @@ impl MouseControllable for Enigo {
                     let mouse_ev = CGEventCreateScrollWheelEvent(
                         &src,
                         ScrollUnit::Line,
-                        1, // CGWheelCount 1 = y 2 = xy 3 = xyz
+                        1,
                         scroll_direction,
                     );
 
@@ -406,8 +366,6 @@ impl MouseControllable for Enigo {
     }
 }
 
-// https://stackoverflow.
-// com/questions/1918841/how-to-convert-ascii-character-to-cgkeycode
 
 impl KeyboardControllable for Enigo {
     fn as_any(&self) -> &dyn std::any::Any {
@@ -419,9 +377,6 @@ impl KeyboardControllable for Enigo {
     }
 
     fn key_sequence(&mut self, sequence: &str) {
-        // NOTE(dustin): This is a fix for issue https://github.com/enigo-rs/enigo/issues/68
-        // TODO(dustin): This could be improved by aggregating 20 bytes worth of graphemes at a time
-        // but i am unsure what would happen for grapheme clusters greater than 20 bytes ...
         use unicode_segmentation::UnicodeSegmentation;
         let clusters = UnicodeSegmentation::graphemes(sequence, true).collect::<Vec<&str>>();
         for cluster in clusters {
@@ -542,17 +497,9 @@ impl Enigo {
         }
     }
 
-    /// Internal implementation for mouse movement with optional delta values.
-    ///
-    /// The `delta` parameter is crucial for browser Pointer Lock API support.
-    /// When a browser enters Pointer Lock mode, it reads mouse delta values
-    /// (MOUSE_EVENT_DELTA_X/Y) directly from CGEvent to calculate movementX/Y.
-    /// Without setting these fields, the browser sees zero movement.
     fn mouse_move_to_impl(&mut self, x: i32, y: i32, delta: Option<(i32, i32)>) {
         let pressed = Self::pressed_buttons();
 
-        // Determine event type and corresponding mouse button based on pressed buttons.
-        // The CGMouseButton must match the event type for drag events.
         let (event_type, button) = if pressed & 1 > 0 {
             (CGEventType::LeftMouseDragged, CGMouseButton::Left)
         } else if pressed & 2 > 0 {
@@ -560,7 +507,7 @@ impl Enigo {
         } else if pressed & 4 > 0 {
             (CGEventType::OtherMouseDragged, CGMouseButton::Center)
         } else {
-            (CGEventType::MouseMoved, CGMouseButton::Left) // Button doesn't matter for MouseMoved
+            (CGEventType::MouseMoved, CGMouseButton::Left)
         };
 
         let dest = CGPoint::new(x as f64, y as f64);
@@ -568,8 +515,6 @@ impl Enigo {
             if let Ok(event) =
                 CGEvent::new_mouse_event(src.clone(), event_type, dest, button)
             {
-                // Set delta fields for relative mouse movement
-                // This is essential for Pointer Lock API in browsers
                 if let Some((dx, dy)) = delta {
                     event.set_integer_value_field(EventField::MOUSE_EVENT_DELTA_X, dx as i64);
                     event.set_integer_value_field(EventField::MOUSE_EVENT_DELTA_Y, dy as i64);
@@ -579,7 +524,6 @@ impl Enigo {
         }
     }
 
-    /// Fetches the `(width, height)` in pixels of the main display
     pub fn main_display_size() -> (usize, usize) {
         let display_id = unsafe { CGMainDisplayID() };
         let width = unsafe { CGDisplayPixelsWide(display_id) };
@@ -587,10 +531,6 @@ impl Enigo {
         (width, height)
     }
 
-    /// Returns the current mouse location in Cocoa coordinates which have Y
-    /// inverted from the Carbon coordinates used in the rest of the API.
-    /// This function exists so that mouse_move_relative only has to fetch
-    /// the screen size once.
     fn mouse_location_raw_coords() -> (i32, i32) {
         if let Some(ns_event) = Class::get("NSEvent") {
             let pt: NSPoint = unsafe { msg_send![ns_event, mouseLocation] };
@@ -600,7 +540,6 @@ impl Enigo {
         }
     }
 
-    /// The mouse coordinates in points, only works on the main display
     pub fn mouse_location() -> (i32, i32) {
         let (x, y_inv) = Self::mouse_location_raw_coords();
         let (_, display_height) = Self::main_display_size();
@@ -609,7 +548,6 @@ impl Enigo {
 
     fn key_to_keycode(&mut self, key: Key) -> CGKeyCode {
         #[allow(deprecated)]
-        // I mean duh, we still need to support deprecated keys until they're removed
         match key {
             Key::Alt => kVK_Option,
             Key::Backspace => kVK_Delete,
@@ -681,8 +619,6 @@ impl Enigo {
 
     #[inline]
     fn map_key_board(&mut self, ch: char) -> CGKeyCode {
-        // no idea why below char not working with shift, https://github.com/rustdesk/rustdesk/issues/406#issuecomment-1145157327
-        // seems related to numpad char
         if ch == '-' || ch == '=' || ch == '.' || ch == '/' || (ch >= '0' && ch <= '9') {
             return self.map_key_board_en(ch);
         }
@@ -770,7 +706,7 @@ impl Enigo {
 
     #[inline]
     fn mouse_scroll_impl(&mut self, length: i32, is_track_pad: bool, is_horizontal: bool) {
-        let mut scroll_direction = -1; // 1 left -1 right;
+        let mut scroll_direction = -1;
         let mut length = length;
 
         if length < 0 {
@@ -790,7 +726,7 @@ impl Enigo {
                         CGEventCreateScrollWheelEvent(
                             &src,
                             units,
-                            2, // CGWheelCount 1 = y 2 = xy 3 = xyz
+                            2,
                             0,
                             scroll_direction,
                         )
@@ -798,7 +734,7 @@ impl Enigo {
                         CGEventCreateScrollWheelEvent(
                             &src,
                             units,
-                            1, // CGWheelCount 1 = y 2 = xy 3 = xyz
+                            1,
                             scroll_direction,
                         )
                     };
@@ -810,12 +746,10 @@ impl Enigo {
         }
     }
 
-    /// handle scroll vertically
     pub fn mouse_scroll_y(&mut self, length: i32, is_track_pad: bool) {
         self.mouse_scroll_impl(length, is_track_pad, false)
     }
 
-    /// handle scroll horizontally
     pub fn mouse_scroll_x(&mut self, length: i32, is_track_pad: bool) {
         self.mouse_scroll_impl(length, is_track_pad, true)
     }
@@ -852,7 +786,6 @@ unsafe fn get_layout() -> (TISInputSourceRef, *const u8) {
         if !keyboard.is_null() {
             CFRelease(keyboard);
         }
-        // https://github.com/microsoft/vscode/issues/23833
         keyboard = TISCopyCurrentKeyboardLayoutInputSource();
         if !keyboard.is_null() {
             layout = TISGetInputSourceProperty(keyboard, kTISPropertyUnicodeKeyLayoutData);

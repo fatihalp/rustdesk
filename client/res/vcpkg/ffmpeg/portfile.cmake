@@ -1,5 +1,3 @@
-# FFmpeg 7.1.1 includes the HEVC WPP slice-thread deadlock fix:
-# https://github.com/FFmpeg/FFmpeg/commit/79c47dfd25f101b6842bbec8c6ffef8d5077c3ae
 vcpkg_from_github(
     OUT_SOURCE_PATH SOURCE_PATH
     REPO ffmpeg/ffmpeg
@@ -214,7 +212,6 @@ if(VCPKG_DETECTED_MSVC)
     string(APPEND OPTIONS " --disable-inline-asm") # clang-cl has inline assembly but this leads to undefined symbols.
     set(OPTIONS "--toolchain=msvc ${OPTIONS}")
 
-    # This is required because ffmpeg depends upon optimizations to link correctly
     string(APPEND VCPKG_COMBINED_C_FLAGS_DEBUG " -O2")
     string(REGEX REPLACE "(^| )-RTC1( |$)" " " VCPKG_COMBINED_C_FLAGS_DEBUG "${VCPKG_COMBINED_C_FLAGS_DEBUG}")
     string(REGEX REPLACE "(^| )-Od( |$)" " " VCPKG_COMBINED_C_FLAGS_DEBUG "${VCPKG_COMBINED_C_FLAGS_DEBUG}")
@@ -229,7 +226,6 @@ if(VCPKG_TARGET_IS_WINDOWS)
     string(APPEND VCPKG_COMBINED_C_FLAGS_RELEASE " -I \"${CURRENT_INSTALLED_DIR}/include/mfx\"")
 endif()
 
-# # Setup vcpkg toolchain
 set(prog_env "")
 
 if(VCPKG_DETECTED_CMAKE_C_COMPILER)
@@ -251,7 +247,6 @@ if(VCPKG_DETECTED_CMAKE_CXX_COMPILER)
     set(ENV{CXX} "${CXX_filename}")
     string(APPEND OPTIONS " --cxx=${CXX_filename}")
 
-    # string(APPEND OPTIONS " --host_cxx=${CC_filename}")
     list(APPEND prog_env "${CXX_path}")
 endif()
 
@@ -269,7 +264,6 @@ if(VCPKG_DETECTED_CMAKE_LINKER AND VCPKG_TARGET_IS_WINDOWS AND NOT VCPKG_TARGET_
     set(ENV{LD} "${LD_filename}")
     string(APPEND OPTIONS " --ld=${LD_filename}")
 
-    # string(APPEND OPTIONS " --host_ld=${LD_filename}")
     list(APPEND prog_env "${LD_path}")
 endif()
 
@@ -317,20 +311,17 @@ if(VCPKG_HOST_IS_WINDOWS)
     set(SHELL "${MSYS_ROOT}/usr/bin/bash.exe")
     list(APPEND prog_env "${MSYS_ROOT}/usr/bin" "${MSYS_ROOT}/usr/share/automake-1.16")
 else()
-    # find_program(SHELL bash)
 endif()
 
 list(REMOVE_DUPLICATES prog_env)
 vcpkg_add_to_path(PREPEND ${prog_env})
 
-# More? OBJCC BIN2C
 file(REMOVE_RECURSE "${CURRENT_BUILDTREES_DIR}/${TARGET_TRIPLET}-dbg" "${CURRENT_BUILDTREES_DIR}/${TARGET_TRIPLET}-rel")
 
 set(FFMPEG_PKGCONFIG_MODULES libavutil)
 
 set(OPTIONS_CROSS "--enable-cross-compile")
 
-# ffmpeg needs --cross-prefix option to use appropriate tools for cross-compiling.
 if(VCPKG_DETECTED_CMAKE_C_COMPILER MATCHES "([^\/]*-)gcc$")
     string(APPEND OPTIONS_CROSS " --cross-prefix=${CMAKE_MATCH_1}")
 endif()
@@ -372,7 +363,6 @@ endif()
 
 message(STATUS "Building Options: ${OPTIONS}")
 
-# Release build
 if(NOT VCPKG_BUILD_TYPE OR VCPKG_BUILD_TYPE STREQUAL "release")
     if(VCPKG_DETECTED_MSVC)
         set(OPTIONS_RELEASE "${OPTIONS_RELEASE} --extra-ldflags=-libpath:\"${CURRENT_INSTALLED_DIR}/lib\"")
@@ -385,7 +375,6 @@ if(NOT VCPKG_BUILD_TYPE OR VCPKG_BUILD_TYPE STREQUAL "release")
     message(STATUS "Building ${PORT} for Release")
     file(MAKE_DIRECTORY "${CURRENT_BUILDTREES_DIR}/${TARGET_TRIPLET}-rel")
 
-    # We use response files here as the only known way to handle spaces in paths
     set(crsp "${CURRENT_BUILDTREES_DIR}/${TARGET_TRIPLET}-rel/cflags.rsp")
     string(REGEX REPLACE "-arch [A-Za-z0-9_]+" "" VCPKG_COMBINED_C_FLAGS_RELEASE_SANITIZED "${VCPKG_COMBINED_C_FLAGS_RELEASE}")
     file(WRITE "${crsp}" "${VCPKG_COMBINED_C_FLAGS_RELEASE_SANITIZED}")
@@ -394,8 +383,6 @@ if(NOT VCPKG_BUILD_TYPE OR VCPKG_BUILD_TYPE STREQUAL "release")
     file(WRITE "${ldrsp}" "${VCPKG_COMBINED_SHARED_LINKER_FLAGS_RELEASE_SANITIZED}")
     set(ENV{CFLAGS} "@${crsp}")
 
-    # All tools except the msvc arm{,64} assembler accept @... as response file syntax.
-    # For that assembler, there is no known way to pass in flags. We must hope that not passing flags will work acceptably.
     if(NOT VCPKG_DETECTED_MSVC OR NOT VCPKG_TARGET_ARCHITECTURE MATCHES "^arm")
         set(ENV{ASFLAGS} "@${crsp}")
     endif()
@@ -421,7 +408,6 @@ if(NOT VCPKG_BUILD_TYPE OR VCPKG_BUILD_TYPE STREQUAL "release")
     z_vcpkg_restore_pkgconfig_path()
 endif()
 
-# Debug build
 if(NOT VCPKG_BUILD_TYPE OR VCPKG_BUILD_TYPE STREQUAL "debug")
     if(VCPKG_DETECTED_MSVC)
         set(OPTIONS_DEBUG "${OPTIONS_DEBUG} --extra-ldflags=-libpath:\"${CURRENT_INSTALLED_DIR}/debug/lib\"")
@@ -531,7 +517,6 @@ if(VCPKG_TARGET_IS_WINDOWS)
         foreach(PKGCONFIG_MODULE IN LISTS FFMPEG_PKGCONFIG_MODULES)
             set(PKGCONFIG_FILE "${CURRENT_PACKAGES_DIR}${_debug}lib/pkgconfig/${PKGCONFIG_MODULE}.pc")
 
-            # remove redundant cygwin style -libpath entries
             execute_process(
                 COMMAND "${MSYS_ROOT}/usr/bin/cygpath.exe" -u "${CURRENT_INSTALLED_DIR}"
                 OUTPUT_VARIABLE CYG_INSTALLED_DIR
@@ -539,7 +524,6 @@ if(VCPKG_TARGET_IS_WINDOWS)
             )
             vcpkg_replace_string("${PKGCONFIG_FILE}" "-libpath:${CYG_INSTALLED_DIR}${_debug}lib/pkgconfig/../../lib " "")
 
-            # transform libdir, includedir, and prefix paths from cygwin style to windows style
             file(READ "${PKGCONFIG_FILE}" PKGCONFIG_CONTENT)
 
             foreach(PATH_NAME prefix libdir includedir)
@@ -559,7 +543,6 @@ if(VCPKG_TARGET_IS_WINDOWS)
                 vcpkg_replace_string("${PKGCONFIG_FILE}" "${PATH_NAME}=${PATH_VALUE}" "${PATH_NAME}=${FIXED_PATH}")
             endforeach()
 
-            # list libraries with -l flag (so pkgconf knows they are libraries and not just linker flags)
             foreach(LIBS_ENTRY Libs Libs.private)
                 string(REGEX MATCH "${LIBS_ENTRY}: [^\n]*" LIBS_VALUE "${PKGCONFIG_CONTENT}")
 
@@ -582,7 +565,6 @@ endif()
 
 vcpkg_fixup_pkgconfig()
 
-# Handle dependencies
 x_vcpkg_pkgconfig_get_modules(PREFIX FFMPEG_PKGCONFIG MODULES ${FFMPEG_PKGCONFIG_MODULES} LIBS)
 
 function(append_dependencies_from_libs out)
@@ -617,7 +599,6 @@ endfunction()
 append_dependencies_from_libs(FFMPEG_DEPENDENCIES_RELEASE LIBS "${FFMPEG_PKGCONFIG_LIBS_RELEASE}")
 append_dependencies_from_libs(FFMPEG_DEPENDENCIES_DEBUG LIBS "${FFMPEG_PKGCONFIG_LIBS_DEBUG}")
 
-# must remove duplicates from the front to respect link order so reverse first
 list(REVERSE FFMPEG_DEPENDENCIES_RELEASE)
 list(REVERSE FFMPEG_DEPENDENCIES_DEBUG)
 list(REMOVE_DUPLICATES FFMPEG_DEPENDENCIES_RELEASE)
@@ -628,7 +609,6 @@ list(REVERSE FFMPEG_DEPENDENCIES_DEBUG)
 message(STATUS "Dependencies (release): ${FFMPEG_DEPENDENCIES_RELEASE}")
 message(STATUS "Dependencies (debug):   ${FFMPEG_DEPENDENCIES_DEBUG}")
 
-# Handle version strings
 function(extract_regex_from_file out)
     cmake_parse_arguments(PARSE_ARGV 1 "arg" "MAJOR" "FILE_WITHOUT_EXTENSION;REGEX" "")
     file(READ "${arg_FILE_WITHOUT_EXTENSION}.h" contents)
@@ -696,7 +676,6 @@ extract_version_from_component(LIBSWRESAMPLE_VERSION
 extract_version_from_component(LIBSWSCALE_VERSION
     COMPONENT libswscale)
 
-# Handle copyright
 file(STRINGS "${CURRENT_BUILDTREES_DIR}/build-${TARGET_TRIPLET}-rel-out.log" LICENSE_STRING REGEX "License: .*" LIMIT_COUNT 1)
 
 if(LICENSE_STRING STREQUAL "License: LGPL version 2.1 or later")

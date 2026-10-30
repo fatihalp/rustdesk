@@ -6,7 +6,7 @@ use std::{io, mem};
 pub struct Capturer {
     inner: quartz::Capturer,
     frame: Arc<Mutex<Option<quartz::Frame>>>,
-    saved_raw_data: Vec<u8>, // for faster compare and copy
+    saved_raw_data: Vec<u8>,
 }
 
 impl Capturer {

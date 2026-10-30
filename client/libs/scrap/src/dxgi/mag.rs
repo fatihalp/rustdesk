@@ -1,4 +1,3 @@
-// logic from webrtc -- https://github.com/shiguredo/libwebrtc/blob/main/modules/desktop_capture/win/screen_capturer_win_magnifier.cc
 #![allow(non_snake_case)]
 
 use lazy_static;
@@ -96,7 +95,6 @@ pub struct tagMAGIMAGEHEADER {
 pub type MAGIMAGEHEADER = tagMAGIMAGEHEADER;
 pub type PMAGIMAGEHEADER = *mut tagMAGIMAGEHEADER;
 
-// Function types
 pub type MagImageScalingCallback = ::std::option::Option<
     unsafe extern "C" fn(
         hwnd: HWND,
@@ -141,8 +139,6 @@ struct MagInterface {
     pub set_image_scaling_callback_func: MagSetImageScalingCallbackFunc,
 }
 
-// NOTE: MagInitialize and MagUninitialize should not be called in global init and uninit.
-// If so, strange errors occur.
 impl MagInterface {
     fn new() -> Result<Self> {
         let mut s = MagInterface {
@@ -156,7 +152,6 @@ impl MagInterface {
         };
         s.init_succeeded = false;
         unsafe {
-            // load lib
             let lib_file_name = "Magnification.dll";
             let lib_file_name_c = CString::new(lib_file_name)?;
             s.lib_handle = LoadLibraryExA(
@@ -175,7 +170,6 @@ impl MagInterface {
                 ));
             };
 
-            // load functions
             s.mag_initialize_func = Some(std::mem::transmute(Self::load_func(
                 s.lib_handle,
                 "MagInitialize",
@@ -197,7 +191,6 @@ impl MagInterface {
                 "MagSetImageScalingCallback",
             )?));
 
-            // MagInitialize
             if let Some(init_func) = s.mag_initialize_func {
                 if FALSE == init_func() {
                     return Err(Error::new(
@@ -290,10 +283,6 @@ impl CapturerMag {
         MagInterface::new().is_ok()
     }
 
-    // This captures through the legacy Windows Magnification API. Do not infer
-    // multi-monitor capture support from privacy overlay coverage: WebRTC also
-    // disables its magnifier capturer when SM_CMONITORS != 1.
-    // https://webrtc.googlesource.com/src/+/1845922d5a1bf9c27deeffb4a8c8daea124434c1/modules/desktop_capture/win/screen_capturer_win_magnifier.cc
     pub(crate) fn new(origin: (i32, i32), width: usize, height: usize) -> Result<Self> {
         unsafe {
             let x = GetSystemMetrics(SM_XVIRTUALSCREEN);
@@ -359,8 +348,6 @@ impl CapturerMag {
                 ));
             }
 
-            // Register the host window class. See the MSDN documentation of the
-            // Magnification API for more information.
             let wcex = WNDCLASSEXA {
                 cbSize: size_of::<WNDCLASSEXA>() as _,
                 style: 0,
@@ -376,7 +363,6 @@ impl CapturerMag {
                 hIconSm: 0 as _,
             };
 
-            // Ignore the error which may happen when the class is already registered.
             if 0 == RegisterClassExA(&wcex) {
                 let code = GetLastError();
                 if code != ERROR_CLASS_ALREADY_EXISTS {
@@ -390,7 +376,6 @@ impl CapturerMag {
                 }
             }
 
-            // Create the host window.
             s.host_window = CreateWindowExA(
                 WS_EX_LAYERED,
                 s.magnifier_host_class.as_ptr(),
@@ -415,7 +400,6 @@ impl CapturerMag {
                 ));
             }
 
-            // Create the magnifier control.
             s.magnifier_window = CreateWindowExA(
                 0,
                 s.magnifier_window_class.as_ptr(),
@@ -440,10 +424,8 @@ impl CapturerMag {
                 ));
             }
 
-            // Hide the host window.
             let _ = ShowWindow(s.host_window, SW_HIDE);
 
-            // Set the scaling callback to receive captured image.
             if let Some(set_callback_func) = s.mag_interface.set_image_scaling_callback_func {
                 if FALSE
                     == set_callback_func(
@@ -490,10 +472,6 @@ impl CapturerMag {
         };
         let mut hwnds = find_windows(cls, name)?;
         hwnds.sort_unstable_by_key(|hwnd| *hwnd as usize);
-        // This runs from frame() because refreshed privacy overlays get new
-        // HWNDs. It is only used on the legacy magnifier backend while privacy
-        // mode is active; if it shows up as hot-path cost, throttle this check.
-        // Keep the previous filter list while privacy windows are being recreated.
         if hwnds.is_empty() || hwnds == self.excluded_windows {
             return Ok(());
         }
@@ -605,8 +583,6 @@ impl CapturerMag {
                 ));
             }
 
-            // on_gag_image_scaling_callback will be called and fill in the
-            // frame before set_window_source_func_ returns.
             if let Some(set_window_source_func) = self.mag_interface.set_window_source_func {
                 if FALSE == set_window_source_func(self.magnifier_window, self.rect) {
                     return Err(Error::new(
@@ -645,7 +621,6 @@ impl CapturerMag {
         if !self.magnifier_window.is_null() {
             unsafe {
                 if FALSE == DestroyWindow(self.magnifier_window) {
-                    //
                     println!(
                         "Failed DestroyWindow magnifier window, error {}",
                         Error::last_os_error()
@@ -658,7 +633,6 @@ impl CapturerMag {
         if !self.host_window.is_null() {
             unsafe {
                 if FALSE == DestroyWindow(self.host_window) {
-                    //
                     println!(
                         "Failed DestroyWindow host window, error {}",
                         Error::last_os_error()
@@ -682,7 +656,6 @@ impl CapturerMag {
         Self::clear_data();
 
         if !IsEqualGUID(&srcheader.format, &GUID_WICPixelFormat32bppRGBA) {
-            // log warning?
             return FALSE;
         }
         let mut lock = MAG_BUFFER.lock().unwrap();

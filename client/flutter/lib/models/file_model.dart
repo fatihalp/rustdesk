@@ -40,7 +40,6 @@ class JobID {
     } catch (e) {
       debugPrint("Failed to get transfer job id: $e");
     }
-    // Finally increase the count if on the web or if failed to get the id.
     _count++;
     return _count;
   }
@@ -57,7 +56,6 @@ const _kRemoteSessionChangedError =
 
 class FileModel {
   final WeakReference<FFI> parent;
-  // late final String sessionId;
   late final FileFetcher fileFetcher;
   late final JobController jobController;
 
@@ -112,7 +110,6 @@ class FileModel {
 
   void receiveFileDir(Map<String, dynamic> evt) {
     if (evt['is_local'] == "false") {
-      // init remote home, the remote connection will send one dir event when established. TODO opt
       remoteController.initDirAndHome(evt);
     }
     fileFetcher.tryCompleteTask(evt['value'], evt['is_local']);
@@ -122,22 +119,6 @@ class FileModel {
     fileFetcher.tryCompleteEmptyDirsTask(evt['value'], evt['is_local']);
   }
 
-  // This method fixes a deadlock that occurred when the previous code directly
-  // called jobController.jobError(evt) in the job_error event handler.
-  //
-  // The problem with directly calling jobController.jobError():
-  //   1. fetchDirectoryRecursiveToRemove(jobID) registers readRecursiveTasks[jobID]
-  //      and waits for completion
-  //   2. If the remote has no permission (or some other errors), it returns a FileTransferError
-  //   3. The error triggers job_error event, which called jobController.jobError()
-  //   4. jobController.jobError() calls getJob(jobID) to find the job in jobTable
-  //   5. But addDeleteDirJob() is called AFTER fetchDirectoryRecursiveToRemove(),
-  //      so the job doesn't exist yet in jobTable
-  //   6. Result: jobController.jobError() does nothing useful, and
-  //      readRecursiveTasks[jobID] never completes, causing a 2s timeout
-  //
-  // Solution: Before calling jobController.jobError(), we first check if there's
-  // a pending readRecursiveTasks with this ID and complete it with the error.
   void handleJobError(Map<String, dynamic> evt) {
     final id = int.tryParse(evt['id']?.toString() ?? '');
     if (id != null) {
@@ -148,9 +129,6 @@ class FileModel {
         fileFetcher.tryCompleteRecursiveTaskWithError(id, err);
       }
     }
-    // Always call jobController.jobError(evt) to ensure all error events are processed,
-    // even if the event does not have a valid job ID. This allows for generic error handling
-    // or logging of unexpected errors.
     jobController.jobError(evt);
   }
 
@@ -171,9 +149,6 @@ class FileModel {
       debugPrint("Ignore override confirm for inactive job: $evt");
       return;
     }
-    // If `skip == true`, it means to skip this file without showing dialog.
-    // Because `resp` may be null after the user operation or the last remembered operation,
-    // and we should distinguish them.
     final resp = overrideConfirm ??
         (!skip
             ? await showFileConfirmDialog(translate("Overwrite"),
@@ -188,13 +163,10 @@ class FileModel {
     } else {
       var need_override = false;
       if (resp == null) {
-        // skip
         need_override = false;
       } else {
-        // overwrite
         need_override = true;
       }
-      // Update the loop config.
       if (fileConfirmCheckboxRemember) {
         jobController.rememberTransferConflictBatch(id, resp);
         evtLoop.setSkip(!need_override);
@@ -207,7 +179,6 @@ class FileModel {
           remember: fileConfirmCheckboxRemember,
           isUpload: evt['is_upload'] == "true");
     }
-    // Update the loop config.
     if (fileConfirmCheckboxRemember) {
       evtLoop.setOverrideConfirm(resp);
     }
@@ -363,7 +334,6 @@ class FileController {
   final history = RxList<String>.empty(growable: true);
   final sortBy = SortBy.name.obs;
   var sortAscending = true;
-  // Incremented for each navigation; only the latest generation applies results.
   int _directoryRequestGeneration = 0;
   final JobController jobController;
   final WeakReference<FFI> rootState;
@@ -398,7 +368,6 @@ class FileController {
       var path = dirPath.replaceFirst(homePath, "");
       if (path.isEmpty) return "";
       if (path[0] == "/" || path[0] == "\\") {
-        // remove more '/' or '\'
         path = path.replaceFirst(path[0], "");
       }
       return path;
@@ -451,7 +420,7 @@ class FileController {
       for (final dir in dirs) {
         if (isAndroid && isLocal) await _restoreWorkspaceHome(dir);
         if (await _openDirectoryPath(dir, isBack: true)) {
-          final documentRoot = RegExp(r'^/@rustdesk/tree/[^/]+/[^/]+')
+          final documentRoot = RegExp(r'^/@supportdesk/tree/[^/]+/[^/]+')
               .stringMatch(directory.value.path);
           if (isLocal && documentRoot != null) {
             homePath = documentRoot;
@@ -467,14 +436,11 @@ class FileController {
     await Future.delayed(Duration(seconds: 1));
 
     if (!opened) {
-      // The peer may become ready during the reconnect delay, so retry the
-      // same candidates instead of only retrying the default home directory.
       await tryOpenReadyDirs();
     }
   }
 
   Future<void> close() async {
-    // save config
     Map<String, String> msgMap = {};
     msgMap[isLocal ? "local_dir" : "remote_dir"] = directory.value.path;
     msgMap[isLocal ? "local_show_hidden" : "remote_show_hidden"] =
@@ -501,8 +467,6 @@ class FileController {
   }
 
   Future<bool> refresh() async {
-    // "." can be both a refresh command and a real remote directory path.
-    // Refresh must bypass openDirectory's command dispatch to avoid recursion.
     return await _openDirectoryPath(directory.value.path, isBack: true);
   }
 
@@ -525,7 +489,6 @@ class FileController {
     }
     final showHidden = options.value.showHidden;
     final isWindows = options.value.isWindows;
-    // process /C:\ -> C:\ on Windows
     if (isWindows && path.length > 1 && path[0] == '/') {
       path = path.substring(1);
       if (path[path.length - 1] != '\\') {
@@ -595,14 +558,12 @@ class FileController {
     if (!_isPathAllowed(parent)) {
       return true;
     }
-    // specially for C:\, D:\, goto '/'
     if (parent == dirPath && isWindows) {
       return await _openDirectoryPath('/', isBack: isBack);
     }
     return await _openDirectoryPath(parent, isBack: isBack);
   }
 
-  // TODO deprecated this
   void initDirAndHome(Map<String, dynamic> evt) {
     try {
       final fd = FileDirectory.fromJson(jsonDecode(evt['value']));
@@ -634,15 +595,12 @@ class FileController {
     }
   }
 
-  /// sendFiles from current side (FileController.isLocal) to other side (SelectedItems).
   Future<void> sendFiles(
       SelectedItems items, DirectoryData otherSideData) async {
-    /// ignore wrong items side status
     if (items.isLocal != isLocal) {
       return;
     }
 
-    // alias
     final isRemoteToLocal = !isLocal;
 
     final toPath = otherSideData.directory.path;
@@ -652,8 +610,6 @@ class FileController {
     final transferJobIds = <int>[];
     for (var from in items.items) {
       final jobID = jobController.addTransferJob(from, isRemoteToLocal);
-      // Keep this check before PathUtil.join: Rust does not receive the selected
-      // root separately, and Web transfers bypass Rust validation.
       if (isRemoteToLocal &&
           !DownloadPaths.validName(from.name, windows: isWindows)) {
         jobController.jobError({
@@ -844,7 +800,6 @@ class FileController {
           if (confirm == true) {
             sendRemoveFile(entries[i].path, i, deleteJobId);
             final res = await jobController.jobResultListener.start();
-            // handle remove res;
             if (item.isDirectory &&
                 res['file_num'] == (entries.length - 1).toString()) {
               await sendRemoveEmptyDir(item.path, i, deleteJobId);
@@ -1118,7 +1073,6 @@ class JobController {
     }
   }
 
-  // return jobID
   int addTransferJob(Entry from, bool isRemoteToLocal) {
     final jobID = JobController.jobID.next();
     jobTable.add(JobProgress()
@@ -1162,7 +1116,6 @@ class JobController {
   void tryUpdateJobProgress(Map<String, dynamic> evt) {
     try {
       int id = int.parse(evt['id']);
-      // id = index + 1
       final jobIndex = getJob(id);
       if (jobIndex >= 0 && jobTable.length > jobIndex) {
         final job = jobTable[jobIndex];
@@ -1181,7 +1134,6 @@ class JobController {
     final waitingForResult = jobResultListener.isListening;
     if (waitingForResult) {
       jobResultListener.complete(evt);
-      // return;
     }
     int id = -1;
     int? fileNum = 0;
@@ -1208,7 +1160,7 @@ class JobController {
         fileNum = int.tryParse(evt['file_num']);
       } catch (_) {}
       if (fileNum != null) {
-        if (fileNum < job.fileNum) return true; // file_num can be 0 at last
+        if (fileNum < job.fileNum) return true;
         job.fileNum = fileNum;
         if (fileNum >= job.fileCount - 1) {
           job.state = JobState.done;
@@ -1230,7 +1182,6 @@ class JobController {
     if (job.type == JobType.deleteDir) {
       return job.state == JobState.done;
     } else {
-      // An awaiting file-deletion batch refreshes when removeAction finishes.
       return job.type != JobType.deleteFile || !waitingForResult;
     }
   }
@@ -1356,7 +1307,6 @@ class JobController {
     bool isAutoStart = jobDetail['auto_start'] == true;
     int currJobId = -1;
     if (isAutoStart) {
-      // Ensure jobDetail['id'] exists and is an int
       if (jobDetail.containsKey('id') &&
           jobDetail['id'] != null &&
           jobDetail['id'] is int) {
@@ -1364,19 +1314,15 @@ class JobController {
       }
     }
     if (currJobId < 0) {
-      // If id is missing or invalid, disable auto-start and assign a new job id
       isAutoStart = false;
       currJobId = JobController.jobID.next();
     }
 
     if (!isAutoStart) {
       if (!(isDesktop || isWebDesktop)) {
-        // Don't add to job table if not auto start on mobile.
-        // Because mobile does not support job list view now.
         return;
       }
 
-      // Add to job table if not auto start on desktop.
       String fileName = path.basename(isRemote ? remote : to);
       final jobProgress = JobProgress()
         ..type = JobType.transfer
@@ -1422,7 +1368,6 @@ class JobController {
   }
 
   void updateFolderFiles(Map<String, dynamic> evt) {
-    // ret: "{\"id\":1,\"num_entries\":12,\"total_size\":1264822.0}"
     Map<String, dynamic> info = json.decode(evt['info']);
     int id = info['id'];
     int num_entries = info['num_entries'];
@@ -1496,7 +1441,6 @@ class _RemoteReadTask {
 }
 
 class FileFetcher {
-  // Map<String,Completer<FileDirectory>> localTasks = {}; // now we only use read local dir sync
   final Map<String, _RemoteReadTask> _remoteReadTasks = {};
   Map<String, Completer<List<FileDirectory>>> remoteEmptyDirsTasks = {};
   Map<int, Completer<FileDirectory>> readRecursiveTasks = {};
@@ -1567,8 +1511,7 @@ class FileFetcher {
 
   Future<List<FileDirectory>> registerReadEmptyDirsTask(
       bool isLocal, String path) {
-    // final jobs = isLocal?localJobs:remoteJobs; // maybe we will use read local dir async later
-    final tasks = remoteEmptyDirsTasks; // bypass now
+    final tasks = remoteEmptyDirsTasks;
     if (tasks.containsKey(path)) {
       throw "Failed to registerReadEmptyDirsTask, already have same read job";
     }
@@ -1629,7 +1572,6 @@ class FileFetcher {
     try {
       final fd = FileDirectory.fromJson(jsonDecode(msg));
       if (fd.id > 0) {
-        // fd.id > 0 is result for read recursive
         final completer = readRecursiveTasks.remove(fd.id);
         completer?.complete(fd);
         return;
@@ -1638,7 +1580,6 @@ class FileFetcher {
         if (_completeRemoteReadTask(fd.path, fd)) {
           return;
         }
-        // A Home request uses an empty path but returns its resolved path.
         if (isLikelyRemoteHomeResponse(fd.path)) {
           _completeRemoteReadTask("", fd);
         }
@@ -1657,8 +1598,6 @@ class FileFetcher {
     return true;
   }
 
-  // Complete a pending recursive read task with an error.
-  // See FileModel.handleJobError() for why this is necessary.
   void tryCompleteRecursiveTaskWithError(int id, String error) {
     final completer = readRecursiveTasks.remove(id);
     if (completer != null && !completer.isCompleted) {
@@ -1735,7 +1674,6 @@ class FileFetcher {
 
   Future<FileDirectory> fetchDirectoryRecursiveToRemove(
       int actID, String path, bool isLocal, bool showHidden) async {
-    // TODO test Recursive is show hidden default?
     try {
       await bind.sessionReadDirToRemoveRecursive(
           sessionId: sessionId,
@@ -1765,7 +1703,6 @@ class FileDirectory {
     });
   }
 
-  // generate full path for every entry , init sort style if need.
   format(bool isWindows, {SortBy? sort}) {
     for (var entry in entries) {
       entry.path = PathUtil.join(path, entry.name, isWindows);
@@ -1844,9 +1781,6 @@ class JobProgress {
   var finishedSize = 0;
   var totalSize = 0;
   var fileCount = 0;
-  // [isRemote == true] means [remote -> local]
-  // var isRemote = false;
-  // to-do use enum
   var isRemoteToLocal = false;
   var jobName = "";
   var fileName = "";
@@ -2073,58 +2007,44 @@ class SelectedItems {
 
   static bool valid(RxList<Entry> items) {
     if (items.isNotEmpty) {
-      // exclude DirDrive type
       return items.any((item) => !item.isDrive);
     }
     return false;
   }
 }
 
-// edited from [https://github.com/DevsOnFlutter/file_manager/blob/c1bf7f0225b15bcb86eba602c60acd5c4da90dd8/lib/file_manager.dart#L22]
 List<Entry> _sortList(List<Entry> list, SortBy sortType, bool ascending) {
   if (sortType == SortBy.name) {
-    // making list of only folders.
     final dirs = list
         .where((element) => element.isDirectory || element.isDrive)
         .toList();
-    // sorting folder list by name.
     dirs.sort((a, b) => a.name.toLowerCase().compareTo(b.name.toLowerCase()));
 
-    // making list of only flies.
     final files = list.where((element) => element.isFile).toList();
-    // sorting files list by name.
     files.sort((a, b) => a.name.toLowerCase().compareTo(b.name.toLowerCase()));
 
-    // first folders will go to list (if available) then files will go to list.
     return ascending
         ? [...dirs, ...files]
         : [...dirs.reversed.toList(), ...files.reversed.toList()];
   } else if (sortType == SortBy.modified) {
-    // making the list of Path & DateTime
     List<_PathStat> pathStat = [];
     for (Entry e in list) {
       pathStat.add(_PathStat(e.name, e.lastModified()));
     }
 
-    // sort _pathStat according to date
     pathStat.sort((b, a) => a.dateTime.compareTo(b.dateTime));
 
-    // sorting [list] according to [_pathStat]
     list.sort((a, b) => pathStat
         .indexWhere((element) => element.path == a.name)
         .compareTo(pathStat.indexWhere((element) => element.path == b.name)));
     return ascending ? list : list.reversed.toList();
   } else if (sortType == SortBy.type) {
-    // making list of only folders.
     final dirs = list.where((element) => element.isDirectory).toList();
 
-    // sorting folders by name.
     dirs.sort((a, b) => a.name.toLowerCase().compareTo(b.name.toLowerCase()));
 
-    // making the list of files
     final files = list.where((element) => element.isFile).toList();
 
-    // sorting files list by extension.
     files.sort((a, b) => a.name
         .toLowerCase()
         .split('.')
@@ -2134,25 +2054,19 @@ List<Entry> _sortList(List<Entry> list, SortBy sortType, bool ascending) {
         ? [...dirs, ...files]
         : [...dirs.reversed.toList(), ...files.reversed.toList()];
   } else if (sortType == SortBy.size) {
-    // create list of path and size
     Map<String, int> sizeMap = {};
     for (Entry e in list) {
       sizeMap[e.name] = e.size;
     }
 
-    // making list of only folders.
     final dirs = list.where((element) => element.isDirectory).toList();
-    // sorting folder list by name.
     dirs.sort((a, b) => a.name.toLowerCase().compareTo(b.name.toLowerCase()));
 
-    // making list of only flies.
     final files = list.where((element) => element.isFile).toList();
 
-    // creating sorted list of [_sizeMapList] by size.
     final List<MapEntry<String, int>> sizeMapList = sizeMap.entries.toList();
     sizeMapList.sort((b, a) => a.value.compareTo(b.value));
 
-    // sort [list] according to [_sizeMapList]
     files.sort((a, b) => sizeMapList
         .indexWhere((element) => element.key == a.name)
         .compareTo(sizeMapList.indexWhere((element) => element.key == b.name)));
@@ -2163,10 +2077,6 @@ List<Entry> _sortList(List<Entry> list, SortBy sortType, bool ascending) {
   return [];
 }
 
-/// Define a general queue which can accepts different dialog type.
-///
-/// [Visibility]
-/// The `_FileDialogType` and `_DialogEvent` are invisible for other models.
 enum FileDialogType { overwrite, unknown }
 
 class _FileDialogEvent extends BaseEvent<FileDialogType, Map<String, dynamic>> {
@@ -2220,8 +2130,6 @@ class FileDialogEventLoop
         : model.jobController.transferConflictBatchId(jobId);
     final keepRemembered = model != null &&
         model.jobController.isTransferConflictRememberBatch(batchId);
-    // The loop only preloads the remembered batch choice. The model updates it
-    // after the user answers the current overwrite dialog.
     if (_batchId != batchId && !keepRemembered) {
       _batchId = batchId;
       _overrideConfirm = null;

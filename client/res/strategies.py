@@ -17,7 +17,6 @@ def check_response(response):
         print(f"Error: HTTP {response.status_code}: {response.text}")
         exit(1)
     
-    # Check for {"error": "xxx"} in response
     if response.text and response.text.strip():
         try:
             json_data = response.json()
@@ -35,7 +34,6 @@ def headers_with(token):
     return {"Authorization": f"Bearer {token}", "Content-Type": "application/json"}
 
 
-# ---------- Strategies APIs ----------
 
 def list_strategies(url, token):
     """List all strategies"""
@@ -148,7 +146,6 @@ def assign_strategy(url, token, strategy_name, peers=None, users=None, device_gr
     """
     headers = headers_with(token)
     
-    # Get strategy GUID if strategy_name is provided
     strategy_guid = None
     if strategy_name:
         strategy = get_strategy_by_name(url, token, strategy_name)
@@ -157,52 +154,42 @@ def assign_strategy(url, token, strategy_name, peers=None, users=None, device_gr
             exit(1)
         strategy_guid = strategy.get("guid")
     
-    # Convert device IDs to GUIDs
     peer_guids = []
     if peers:
         for peer in peers:
-            # Check if it's already a GUID format
             if len(peer) == 36 and peer.count('-') == 4:
                 peer_guids.append(peer)
             else:
-                # Treat as device ID, look it up
                 guid = get_device_guid_by_id(url, token, peer)
                 if not guid:
                     print(f"Error: Device '{peer}' not found")
                     exit(1)
                 peer_guids.append(guid)
     
-    # Convert user names to GUIDs
     user_guids = []
     if users:
         for user in users:
-            # Check if it's already a GUID format
             if len(user) == 36 and user.count('-') == 4:
                 user_guids.append(user)
             else:
-                # Treat as username, look it up
                 guid = get_user_guid_by_name(url, token, user)
                 if not guid:
                     print(f"Error: User '{user}' not found")
                     exit(1)
                 user_guids.append(guid)
     
-    # Convert device group names to GUIDs
     device_group_guids = []
     if device_groups:
         for dg in device_groups:
-            # Check if it's already a GUID format
             if len(dg) == 36 and dg.count('-') == 4:
                 device_group_guids.append(dg)
             else:
-                # Treat as device group name, look it up
                 guid = get_device_group_guid_by_name(url, token, dg)
                 if not guid:
                     print(f"Error: Device group '{dg}' not found")
                     exit(1)
                 device_group_guids.append(guid)
     
-    # Build payload
     payload = {}
     if strategy_guid:
         payload["strategy"] = strategy_guid
@@ -226,7 +213,6 @@ def main():
     parser.add_argument("--name", help="Strategy name (for view/enable/disable/assign commands)")
     parser.add_argument("--guid", help="Strategy GUID (for view command, alternative to --name)")
     
-    # For assign/unassign commands
     parser.add_argument("--peers", help="Comma separated device IDs or GUIDs (requires Device Permission:r)")
     parser.add_argument("--users", help="Comma separated user names or GUIDs (requires User Permission:r)")
     parser.add_argument("--device-groups", help="Comma separated device group names or GUIDs (requires Device Group Permission:r)")
@@ -247,7 +233,6 @@ def main():
             if not strategy:
                 print(f"Error: Strategy '{args.name}' not found")
                 exit(1)
-            # Get full details by GUID
             guid = strategy.get("guid")
             res = get_strategy_by_guid(args.url, args.token, guid)
             print(json.dumps(res, indent=2))

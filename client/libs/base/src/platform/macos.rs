@@ -16,15 +16,6 @@ struct AlertResult {
     button: String,
 }
 
-/// Firstly run the specified app, then alert a dialog. Return the clicked button value.
-///
-/// # Arguments
-///
-/// * `app` - The app to execute the script.
-/// * `alert_type` - Alert type. . informational, warning, critical
-/// * `title` - The alert title.
-/// * `message` - The alert message.
-/// * `buttons` - The buttons to show.
 pub fn alert(
     app: String,
     alert_type: String,

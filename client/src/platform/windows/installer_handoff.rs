@@ -56,20 +56,18 @@ fn prepare_install_commands(cmds: &InstallCommands) -> ResultType<String> {
         .map(|file| path_for_cmd_environment(file.path()).map(|path| format!("\"{path}\"")))
         .collect::<ResultType<Vec<_>>>()?
         .join(" ");
-    // Call a fixed label so early EXIT /B still reaches cleanup, without reparsing a path.
-    // Exit the dedicated cmd after self-deletion; EXIT /B would reopen the missing BAT.
     Ok(format!(
         "@echo off\r\nsetlocal EnableExtensions DisableDelayedExpansion\r\n\
          set \"ERRORLEVEL=\"\r\n\
-         call :rustdesk_install\r\n\
-         set \"RUSTDESK_INSTALL_EXIT_CODE=%ERRORLEVEL%\"\r\n\
+         call :supportdesk_install\r\n\
+         set \"SUPPORTDESK_INSTALL_EXIT_CODE=%ERRORLEVEL%\"\r\n\
          rd /s /q \"%~f0.dir\" > nul 2>&1\r\n\
-         (del /q \"%~f0\" {files} > nul 2>&1 & exit %RUSTDESK_INSTALL_EXIT_CODE%)\r\n\
-         :rustdesk_install\r\n\
+         (del /q \"%~f0\" {files} > nul 2>&1 & exit %SUPPORTDESK_INSTALL_EXIT_CODE%)\r\n\
+         :supportdesk_install\r\n\
          \"{chcp}\" {UTF8_CODE_PAGE} > nul || exit /b \
          {BATCH_CODE_PAGE_FAILURE_EXIT_CODE}\r\n\
          {}\r\n\
-         set \"RUSTDESK_OUTPUT_DIR=%~f0.dir\"\r\n{commands}\r\nexit /b 0\r\n",
+         set \"SUPPORTDESK_OUTPUT_DIR=%~f0.dir\"\r\n{commands}\r\nexit /b 0\r\n",
         trusted_install_environment()?
     ))
 }
@@ -89,7 +87,7 @@ fn protected_install_parameters(
     let path = path_for_cmd_environment(script.file.path())?;
     let pipe = gate.name();
     let parameters =
-        format!("/D /E:ON /V:OFF /C \"set /p RUSTDESK_HANDOFF=<\"{pipe}\" >nul && \"{path}\"\"");
+        format!("/D /E:ON /V:OFF /C \"set /p SUPPORTDESK_HANDOFF=<\"{pipe}\" >nul && \"{path}\"\"");
     let length = parameters.encode_utf16().count();
     if length >= WIN7_SHELL_EXECUTE_MAX_PARAMETER_CHARS {
         bail!("Elevated command is too long: {length} UTF-16 characters");
@@ -114,12 +112,9 @@ pub(super) fn run_cmds(cmds: impl Into<InstallCommands>, show: bool, tip: &str) 
         ))
     })?;
     gate.wait_for_client(process.handle())?;
-    // Keep DELETE-capable handles through UAC cancellation, but close them before
-    // cmd opens the BAT or copies its inputs. The protected DACL stays unchanged.
     script.release_files();
     gate.release(process.handle())?;
     let exit_code = process.wait()?;
-    // Cleanup must not change the result of an installation that already ran.
     match fs::symlink_metadata(&directory) {
         Ok(_) => log::warn!(
             "Protected installer directory may remain at {}",
@@ -163,11 +158,11 @@ mod tests {
         const COMMAND_FAILURE: u32 = 77;
         for exit_code in [0, COMMAND_FAILURE] {
             let root =
-                std::env::temp_dir().join(format!("rustdesk-handoff-{}", uuid::Uuid::new_v4()));
+                std::env::temp_dir().join(format!("supportdesk-handoff-{}", uuid::Uuid::new_v4()));
             let source = root.join("source !&^@().bat");
             let runner = source.with_extension("bat.dir");
             fs::create_dir_all(&runner).unwrap();
-            let bytes = shortcut_bytes(r"C:\RustDesk.exe", Some("--tray"), None).unwrap();
+            let bytes = shortcut_bytes(r"C:\SupportDesk.exe", Some("--tray"), None).unwrap();
             let shortcut =
                 ProtectedInstallFile::new(&root.join("shortcut !&^@().tmp"), &bytes).unwrap();
             let marker = root.join("copied.lnk");
@@ -202,7 +197,7 @@ mod tests {
     #[test]
     fn interrupted_handoff_does_not_execute_the_batch() {
         let root =
-            std::env::temp_dir().join(format!("rustdesk-interrupted-{}", uuid::Uuid::new_v4()));
+            std::env::temp_dir().join(format!("supportdesk-interrupted-{}", uuid::Uuid::new_v4()));
         fs::create_dir(&root).unwrap();
         let source = root.join("source.bat");
         let marker = root.join("executed");
@@ -215,7 +210,6 @@ mod tests {
         assert!(!source.exists());
         fs::remove_dir(&root).unwrap();
 
-        // A child exiting without connecting must also retire the pending pipe I/O.
         let gate = InstallGate::new().unwrap();
         let mut child =
             std::process::Command::new(get_system_executable(CMD_RELATIVE_PATH).unwrap())

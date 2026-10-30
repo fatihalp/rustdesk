@@ -109,7 +109,6 @@ void changeIdDialog() {
         status = await bind.mainGetAsyncStatus();
       }
       if (status.isEmpty) {
-        // ok
         close();
         return;
       }
@@ -138,7 +137,6 @@ void changeIdDialog() {
                 suffixStyle: const TextStyle(fontSize: 12, color: Colors.grey)),
             inputFormatters: [
               LengthLimitingTextInputFormatter(16),
-              // FilteringTextInputFormatter(RegExp(r"[a-zA-z][a-zA-z0-9\_]*"), allow: true)
             ],
             controller: controller,
             autofocus: true,
@@ -172,7 +170,6 @@ void changeIdDialog() {
                     }).toList(),
                   )).marginOnly(bottom: 8)
               : SizedBox.shrink(),
-          // NOT use Offstage to wrap LinearProgressIndicator
           if (isInProgress) const LinearProgressIndicator(),
         ],
       ),
@@ -227,7 +224,6 @@ void changeWhiteList({Function()? callback}) async {
           const SizedBox(
             height: 4.0,
           ),
-          // NOT use Offstage to wrap LinearProgressIndicator
           if (isInProgress) const LinearProgressIndicator(),
         ],
       ),
@@ -251,11 +247,9 @@ void changeWhiteList({Function()? callback}) async {
               newWhiteListField = controller.text.trim();
               var newWhiteList = "";
               if (newWhiteListField.isEmpty) {
-                // pass
               } else {
                 final ips =
                     newWhiteListField.trim().split(RegExp(r"[\s,;\n]+"));
-                // test ip
                 final ipMatch = RegExp(
                     r"^(25[0-5]|2[0-4][0-9]|1[0-9][0-9]|[1-9][0-9]?|0)\.(25[0-5]|2[0-4][0-9]|1[0-9][0-9]|[1-9][0-9]?|0)\.(25[0-5]|2[0-4][0-9]|1[0-9][0-9]|[1-9][0-9]?|0)\.(25[0-5]|2[0-4][0-9]|1[0-9][0-9]|[1-9][0-9]?|0)(\/([1-9]|[1-2][0-9]|3[0-2])){0,1}$");
                 final ipv6Match = RegExp(
@@ -331,7 +325,6 @@ void changeIdWhiteList({Function()? callback}) async {
           const SizedBox(
             height: 4.0,
           ),
-          // NOT use Offstage to wrap LinearProgressIndicator
           if (isInProgress) const LinearProgressIndicator(),
         ],
       ),
@@ -355,14 +348,12 @@ void changeIdWhiteList({Function()? callback}) async {
               newIdWhiteListField = controller.text.trim();
               var newIdWhiteList = "";
               if (newIdWhiteListField.isEmpty) {
-                // pass
               } else {
                 final ids = newIdWhiteListField
                     .trim()
                     .split(RegExp(r"[\s,;\n]+"))
                     .where((e) => e.isNotEmpty)
                     .toList();
-                // Separators are handled above; allow all other Unicode characters.
                 for (final id in ids) {
                   final hasControlCharacters = id.runes.any(
                       (char) => char <= 0x1f || (char >= 0x7f && char <= 0x9f));
@@ -773,8 +764,6 @@ class _DialogVerificationCodeField extends State<DialogVerificationCodeField> {
       }
     }
 
-    // software secure keyboard will take the focus since flutter 3.13
-    // request focus again when android account password obtain focus
     if (isAndroid && widget.reRequestFocus) {
       _focusNode.addListener(() {
         if (_focusNode.hasFocus) {
@@ -846,8 +835,6 @@ class _PasswordWidgetState extends State<PasswordWidget> {
       _timer =
           Timer(Duration(milliseconds: 50), () => _focusNode.requestFocus());
     }
-    // software secure keyboard will take the focus since flutter 3.13
-    // request focus again when android account password obtain focus
     if (isAndroid && widget.reRequestFocus) {
       _focusNode.addListener(() {
         if (_focusNode.hasFocus) {
@@ -877,11 +864,9 @@ class _PasswordWidgetState extends State<PasswordWidget> {
       prefixIcon: DialogTextField.kPasswordIcon,
       suffixIcon: IconButton(
         icon: Icon(
-            // Based on passwordVisible state choose the icon
             _passwordVisible ? Icons.visibility : Icons.visibility_off,
             color: MyTheme.lightTheme.primaryColor),
         onPressed: () {
-          // Update the state i.e. toggle the state of passwordVisible variable
           setState(() {
             _passwordVisible = !_passwordVisible;
           });
@@ -1086,7 +1071,7 @@ _connectDialog(
       }
       return Column(
         children: [
-          descWidget(translate('verify_rustdesk_password_tip')),
+          descWidget(translate('verify_supportdesk_password_tip')),
           PasswordWidget(
             controller: passwordController,
             autoFocus: osUsernameController == null,
@@ -1156,7 +1141,6 @@ void showWaitUacDialog(
           ));
 }
 
-// Another username && password dialog?
 void showRequestElevationDialog(
     SessionID sessionId, OverlayDialogManager dialogManager) {
   RxString groupValue = ''.obs;
@@ -1171,7 +1155,6 @@ void showRequestElevationDialog(
     }
   }
 
-  // TODO get from theme
   final double fontSizeNote = 13.00;
 
   Widget OptionRequestPermissions = Obx(
@@ -1601,9 +1584,6 @@ bool allowAskForNoteAtEndOfConnection(FFI? ffi, bool closedByControlling) {
           bind.willSessionCloseCloseSession(sessionId: ffi.sessionId));
 }
 
-// return value: close canceled
-//  true: return
-//  false: go on
 Future<bool> desktopTryShowTabAuditDialogCloseCancelled(
     {required String id, required DesktopTabController tabController}) async {
   try {
@@ -1618,9 +1598,6 @@ Future<bool> desktopTryShowTabAuditDialogCloseCancelled(
   }
 }
 
-// return value:
-//  true: return
-//  false: go on
 Future<bool> showConnEndAuditDialogCloseCanceled(
     {required FFI ffi, String? type, String? title, String? text}) async {
   final res = await _showConnEndAuditDialogCloseCanceled(
@@ -1631,9 +1608,6 @@ Future<bool> showConnEndAuditDialogCloseCanceled(
   return false;
 }
 
-// return value:
-//  true: return
-//  false / null: go on
 Future<bool?> _showConnEndAuditDialogCloseCanceled({
   required FFI ffi,
   String? type,
@@ -1704,7 +1678,6 @@ Future<bool?> _showConnEndAuditDialogCloseCanceled({
           debugPrint('updateAuditNoteByGuid timeout after 6s');
         });
       }
-      // Save the "ask for note" preference
       if (!isOptFixed) {
         await mainSetLocalBoolOption(
             kOptionAllowAskForNoteAtEndOfConnection, askForNote);
@@ -1870,7 +1843,6 @@ customImageQualityDialog(SessionID sessionId, String id, FFI ffi) async {
     ffi.dialogManager.dismissAll();
   });
 
-  // quality
   final quality = await bind.sessionGetCustomImageQuality(sessionId: sessionId);
   initQuality = quality != null && quality.isNotEmpty
       ? quality[0].toDouble()
@@ -1879,7 +1851,6 @@ customImageQualityDialog(SessionID sessionId, String id, FFI ffi) async {
       initQuality > (!hideMoreQuality ? kMaxMoreQuality : kMaxQuality)) {
     initQuality = kDefaultQuality;
   }
-  // fps
   final fpsOption =
       await bind.sessionGetOption(sessionId: sessionId, arg: 'custom-fps');
   initFps = fpsOption == null
@@ -2088,7 +2059,6 @@ void editAbTagDialog(
                   .toList(growable: false),
             ),
           ),
-          // NOT use Offstage to wrap LinearProgressIndicator
           if (isInProgress) const LinearProgressIndicator(),
         ],
       ),
@@ -2131,7 +2101,6 @@ void editAbPeerNoteDialog(String id) {
               labelText: translate('Note'),
             ),
           ).workaroundFreezeLinuxMint(),
-          // NOT use Offstage to wrap LinearProgressIndicator
           if (isInProgress) const LinearProgressIndicator(),
         ],
       ),
@@ -2192,7 +2161,6 @@ void renameDialog(
               ).workaroundFreezeLinuxMint(),
             ),
           ),
-          // NOT use Offstage to wrap LinearProgressIndicator
           Obx(() =>
               isInProgress.value ? const LinearProgressIndicator() : Offstage())
         ],
@@ -2411,7 +2379,6 @@ void enter2FaDialog(
   });
 }
 
-// This dialog should not be dismissed, otherwise it will be black screen, have not reproduced this.
 void showWindowsSessionsDialog(
     String type,
     String title,
@@ -2469,7 +2436,6 @@ void addPeersToAbDialog(
   Future<bool> addTo(String abname) async {
     final mapList = peers.map((e) {
       var json = e.toJson();
-      // remove password when add to another address book to avoid re-share
       json.remove('password');
       json.remove('hash');
       return json;
@@ -2484,7 +2450,6 @@ void addPeersToAbDialog(
     }
   }
 
-  // if only one address book and it is personal, add to it directly
   if (gFFI.abModel.addressbooks.length == 1 &&
       gFFI.abModel.current.isPersonal()) {
     await addTo(gFFI.abModel.currentName.value);
@@ -2535,7 +2500,6 @@ void addPeersToAbDialog(
       content: Obx(() => Column(
             crossAxisAlignment: CrossAxisAlignment.center,
             children: [
-              // https://github.com/flutter/flutter/issues/145081
               DropdownMenu(
                 initialSelection: currentName.value,
                 onSelected: (value) {
@@ -2552,7 +2516,6 @@ void addPeersToAbDialog(
                 enableFilter: true,
                 controller: controller,
               ),
-              // NOT use Offstage to wrap LinearProgressIndicator
               isInProgress.value ? const LinearProgressIndicator() : Offstage()
             ],
           )),
@@ -2636,7 +2599,6 @@ void setSharedAbPasswordDialog(String abName, Peer peer) {
                   style: TextStyle(fontSize: 12),
                 )
               ]).marginSymmetric(vertical: 10),
-            // NOT use Offstage to wrap LinearProgressIndicator
             isInProgress.value ? const LinearProgressIndicator() : Offstage()
           ])),
       actions: [

@@ -18,16 +18,13 @@ const APP_METADATA: &[u8] = &[];
 const APP_METADATA_CONFIG: &str = "meta.toml";
 const META_LINE_PREFIX_TIMESTAMP: &str = "timestamp = ";
 const META_LINE_PREFIX_FILE: &str = "file = ";
-const APP_PREFIX: &str = "rustdesk";
+const APP_PREFIX: &str = "supportdesk";
 #[cfg(windows)]
-const VERIFIED_UPDATE_FILE_PREFIX: &str = "rustdesk-verified-";
-const APPNAME_RUNTIME_ENV_KEY: &str = "RUSTDESK_APPNAME";
+const VERIFIED_UPDATE_FILE_PREFIX: &str = "supportdesk-verified-";
+const APPNAME_RUNTIME_ENV_KEY: &str = "SUPPORTDESK_APPNAME";
 #[cfg(windows)]
 const SET_FOREGROUND_WINDOW_ENV_KEY: &str = "SET_FOREGROUND_WINDOW";
 
-// The extraction directory follows whatever executable the payload asks for, so a
-// custom client gets its own directory instead of sharing RustDesk's. Falls back to
-// APP_PREFIX when no package is injected, which keeps stock builds unchanged.
 fn app_dir_name(exe: &str) -> String {
     Path::new(&exe.replace('\\', "/"))
         .file_stem()
@@ -71,7 +68,6 @@ fn write_meta(dir: &Path, ts: u64, package_paths: &[String]) {
     for path in package_paths {
         content.push_str(&format!("{}{}\n", META_LINE_PREFIX_FILE, path));
     }
-    // Ignore is ok here
     let _ = std::fs::write(meta_file, content);
 }
 
@@ -86,10 +82,6 @@ fn previous_package_files(dir: &Path) -> Vec<String> {
         .collect()
 }
 
-// meta.toml is plain text in a user-writable directory, and it now drives deletion,
-// so the path is rebuilt from plain components rather than joined as written. A
-// prefix, root or parent component would otherwise escape the extraction directory:
-// Path::join replaces the base entirely when given an absolute path.
 fn resolve_within(dir: &Path, relative: &str) -> Option<PathBuf> {
     use std::path::Component;
     let mut path = dir.to_path_buf();
@@ -97,9 +89,6 @@ fn resolve_within(dir: &Path, relative: &str) -> Option<PathBuf> {
     for component in Path::new(&relative.replace('\\', "/")).components() {
         match component {
             Component::Normal(part) => {
-                // A drive-relative name like "C:x" parses as Normal, and only a
-                // Windows host would classify "C:/..." as a Prefix, so the colon is
-                // rejected outright rather than relying on the host's parser.
                 if part.to_string_lossy().contains(':') {
                     return None;
                 }
@@ -117,10 +106,6 @@ fn resolve_within(dir: &Path, relative: &str) -> Option<PathBuf> {
     }
 }
 
-// A customer who drops a branding asset gets a package without it, and the file
-// would otherwise linger in an existing extraction and keep being used. The wipe
-// cannot cover this: it is keyed on the packer's build timestamp, which is now the
-// same for every customer of a release.
 fn remove_dropped_package_files_with<F>(
     dir: &Path,
     current: &[String],
@@ -164,7 +149,6 @@ fn setup(
     let dir = if let Some(dir) = dir {
         dir
     } else {
-        // home dir
         if let Some(dir) = dirs::data_local_dir() {
             dir.join(app_dir_name(&reader.exe))
         } else {
@@ -198,8 +182,6 @@ fn setup(
 fn use_null_stdio() -> bool {
     #[cfg(windows)]
     {
-        // When running in CMD on Windows 7, using Stdio::inherit() with spawn returns an "invalid handle" error.
-        // Since using Stdio::null() didn’t cause any issues, and determining whether the program is launched from CMD or by double-clicking would require calling more APIs during startup, we also use Stdio::null() when launched by double-clicking on Windows 7.
         let is_windows_7 = is_windows_7();
         println!("is windows7: {}", is_windows_7);
         return is_windows_7;
@@ -218,7 +200,6 @@ fn is_windows_7() -> bool {
         version_info.dwOSVersionInfoSize = std::mem::size_of::<OSVERSIONINFOW>() as u32;
 
         if RtlGetVersion(&mut version_info).is_ok() {
-            // Windows 7 is version 6.1
             println!(
                 "Windows version: {}.{}",
                 version_info.dwMajorVersion, version_info.dwMinorVersion
@@ -231,10 +212,8 @@ fn is_windows_7() -> bool {
 
 fn execute(path: PathBuf, args: Vec<String>, _ui: bool) {
     println!("executing {}", path.display());
-    // setup env
     let exe = std::env::current_exe().unwrap_or_default();
     let exe_name = exe.file_name().unwrap_or_default();
-    // run executable
     let mut cmd = Command::new(path);
     cmd.args(args);
     #[cfg(windows)]
@@ -319,9 +298,8 @@ fn main() -> Result<(), String> {
 mod win {
     use std::{fs, os::windows::process::CommandExt, path::Path, process::Command};
 
-    // Used for privacy mode(magnifier impl).
     pub const RUNTIME_BROKER_EXE: &'static str = "C:\\Windows\\System32\\RuntimeBroker.exe";
-    pub const WIN_TOPMOST_INJECTED_PROCESS_EXE: &'static str = "RuntimeBroker_rustdesk.exe";
+    pub const WIN_TOPMOST_INJECTED_PROCESS_EXE: &'static str = "RuntimeBroker_supportdesk.exe";
 
     pub(super) fn schedule_verified_update_cleanup() -> std::io::Result<()> {
         use windows::{
@@ -364,14 +342,12 @@ mod win {
             }
         }
         let _allow_err = Command::new("taskkill")
-            .args(&["/F", "/IM", "RuntimeBroker_rustdesk.exe"])
+            .args(&["/F", "/IM", "RuntimeBroker_supportdesk.exe"])
             .creation_flags(winapi::um::winbase::CREATE_NO_WINDOW)
             .output();
         let _allow_err = std::fs::copy(src, &format!("{}\\{}", dir.to_string_lossy(), tgt));
     }
 
-    /// Check if the executable is a Quick Support version.
-    /// Note: This function must be kept in sync with `src/core_main.rs`.
     #[inline]
     pub(super) fn is_quick_support_exe(exe: &str) -> bool {
         let exe = exe.to_lowercase();
@@ -394,7 +370,6 @@ mod meta_tests {
             resolve_within(base, ".\\data\\logo.png"),
             Some(base.join("data").join("logo.png"))
         );
-        // meta.toml is user-writable, so these must not reach remove_file.
         assert_eq!(resolve_within(base, "../../etc/passwd"), None);
         assert_eq!(resolve_within(base, "/etc/passwd"), None);
         assert_eq!(resolve_within(base, "C:\\Windows\\System32\\x.dll"), None);

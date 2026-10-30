@@ -47,7 +47,6 @@ pub(super) async fn failed_block_cleans_pending_receive(path: &str, output: &Pat
         let mut job = receiving(&format!("{path}/{name}"));
         job.is_remote = false;
         let block = block(0, b"more data");
-        // Tokio queues the first write and reports its I/O failure on the next block.
         job.write(block.clone()).await.unwrap();
         assert_eq!(std::fs::read(output).unwrap(), b"partial");
         let error = job.write(block).await.unwrap_err();
