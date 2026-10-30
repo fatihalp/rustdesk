@@ -1,0 +1,20 @@
+services:
+  hbbs:
+    image: rustdesk/rustdesk-server:latest
+    command: hbbs -r ${RELAY_HOST}:21117
+    container_name: rustdesk-hbbs
+    restart: unless-stopped
+    network_mode: host
+    volumes:
+      - ./data:/root
+    depends_on:
+      - hbbr
+
+  hbbr:
+    image: rustdesk/rustdesk-server:latest
+    command: hbbr
+    container_name: rustdesk-hbbr
+    restart: unless-stopped
+    network_mode: host
+    volumes:
+      - ./data:/root
