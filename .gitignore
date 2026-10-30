@@ -1,62 +1,42 @@
-/build
-/target
-.vscode
-.idea
+*.log
+*.mobileprovision
+*.p12
+*.pem
+*.pfx
+*.sqlite
+*.sqlite-journal
 .DS_Store
 .env
-libsciter-gtk.so
-src/ui/inline.rs
-extractor
-__pycache__
-src/version.rs
-*dmg
-*exe
-*tgz
-cert.pfx
-*.bak
-*png
-*svg
-*jpg
-sciter.dll
-**pdb
-src/bridge_generated.rs
-src/bridge_generated.io.rs
-*deb
-rustdesk
-*.cache
-# appimage
-appimage/AppDir
-appimage/*.AppImage
-appimage/appimage-build
-appimage/*.xz
-# flutter
-flutter/linux/build/**
-flutter/linux/cmake-build-debug/**
-# flatpak
-flatpak/.flatpak-builder/**
-flatpak/ccache/**
-flatpak/.flatpak-builder/build/**
-flatpak/.flatpak-builder/shared-modules/**
-flatpak/.flatpak-builder/shared-modules/*.tar.xz
-flatpak/.flatpak-builder/debian-binary
-flatpak/build/**
-flatpak/repo/**
-flatpak/*.flatpak
-# bridge file
-lib/generated_bridge.dart
-# vscode devcontainer
-.gitconfig
-.vscode-server/
-.ssh
-.devcontainer/.*
-# build cache in examples
-examples/**/target/
-# ===
-vcpkg_installed
-flutter/lib/generated_plugin_registrant.dart
-libsciter.dylib
-flutter/web/
-# libdrmtap is cloned at build time by build.py (not a submodule)
-/third_party/libdrmtap/
-# Local git worktrees
-.worktrees/
+.env.backup
+.env.production
+.phpactor.json
+.phpunit.result.cache
+/.codex
+/.cursor/
+/.idea
+/.nova
+/.phpunit.cache
+/.vscode
+/.zed
+/auth.json
+/bootstrap/cache/*.php
+/client/target
+/node_modules
+/public/build
+/public/css
+/public/css/filament
+/public/fonts
+/public/fonts-manifest.dev.json
+/public/fonts/filament
+/public/hot
+/public/js
+/public/js/filament
+/public/storage
+/relay/data
+/storage/*.key
+/storage/pail
+/vendor
+Homestead.json
+Homestead.yaml
+Thumbs.db
+_ide_helper.php

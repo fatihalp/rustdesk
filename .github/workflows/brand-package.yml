@@ -1,0 +1,74 @@
+name: Brand package
+
+on:
+  workflow_dispatch:
+    inputs:
+      build_id:
+        description: Panel client_builds.id
+        required: true
+      platform:
+        description: windows or macos
+        required: true
+        type: choice
+        options: [windows, macos]
+      app_url:
+        description: Panel base URL
+        required: true
+
+permissions:
+  contents: read
+
+env:
+  PANEL_BUILD_SECRET: ${{ secrets.PANEL_BUILD_SECRET }}
+  BUILD_ID: ${{ inputs.build_id }}
+  APP_URL: ${{ inputs.app_url }}
+  RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+  BASE_RELEASE: ${{ vars.CLIENT_BASE_RELEASE || 'client-base' }}
+
+jobs:
+  macos:
+    if: inputs.platform == 'macos'
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Fetch manifest and base client
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: bash packaging/scripts/fetch.sh macos
+      - name: Brand, sign, notarize
+        env:
+          MACOS_CERT_P12: ${{ secrets.MACOS_CERT_P12 }}
+          MACOS_CERT_PASSWORD: ${{ secrets.MACOS_CERT_PASSWORD }}
+          MACOS_SIGN_IDENTITY: ${{ secrets.MACOS_SIGN_IDENTITY }}
+          APPLE_ID: ${{ secrets.APPLE_ID }}
+          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+          APPLE_APP_PASSWORD: ${{ secrets.APPLE_APP_PASSWORD }}
+        run: bash packaging/scripts/package-macos.sh
+      - name: Upload to panel
+        run: bash packaging/scripts/upload.sh
+      - name: Report failure
+        if: failure()
+        run: bash packaging/scripts/report-failure.sh
+
+  windows:
+    if: inputs.platform == 'windows'
+    runs-on: windows-latest
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - uses: actions/checkout@v4
+      - name: Fetch manifest and base client
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: bash packaging/scripts/fetch.sh windows
+      - name: Brand and sign
+        env:
+          WINDOWS_CERT_PFX: ${{ secrets.WINDOWS_CERT_PFX }}
+          WINDOWS_CERT_PASSWORD: ${{ secrets.WINDOWS_CERT_PASSWORD }}
+        run: bash packaging/scripts/package-windows.sh
+      - name: Upload to panel
+        run: bash packaging/scripts/upload.sh
+      - name: Report failure
+        if: failure()
+        run: bash packaging/scripts/report-failure.sh

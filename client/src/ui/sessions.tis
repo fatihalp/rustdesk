@@ -1,0 +1,243 @@
+var current_menu_peer_id = '';
+
+class SessionList: Reactor.Component {
+    this var sessions = [];
+    this var type = "";
+
+    function this(params) {
+        this.sessions = params.sessions;
+        this.type = params.type || "";
+    }
+
+    function render() {
+        var sessions = this.sessions;
+        if (sessions.length == 0) {
+            return <div .empty-sessions>
+                <div .empty-title>{translate("Empty")}</div>
+            </div>;
+        }
+        var me = this;
+        var favs = handler.get_fav();
+        sessions = sessions.map(function(x) { return me.getSession(x, favs); });
+        return <div .recent-sessions-content key={sessions.length}>
+            <popup>
+                <menu.context #remote-context>
+                    <li #connect>{translate('Connect')}</li>
+                    <li #tunnel>{translate('TCP tunneling')}</li>
+                    <li #force-always-relay><span>{svg_checkmark}</span>{translate('Always connect via relay')}</li>
+                    <li #rdp>RDP<EditRdpPort /></li>
+                    <li #wol>{translate('WOL')}</li>
+                    <div .separator />
+                    <li #rename>{translate('Rename')}</li>
+                    <li #remove>{translate('Remove')}</li>
+                    {is_win && <li #shortcut>{translate('Create desktop shortcut')}</li>}
+                    <li #forget-password>{translate('Forget Password')}</li>
+                    <li #add-fav>{translate('Add to Favorites')}</li>
+                    <li #remove-fav>{translate('Remove from Favorites')}</li>
+                </menu>
+            </popup>
+            {sessions}
+        </div>;
+    }
+
+    function getSession(s, favs) {
+        var id = s[0] || s.id || "";
+        var username = s[1] || s.username || "";
+        var hostname = s[2] || s.hostname || "";
+        var platform = s[3] || s.platform || "";
+        var alias = s[4] || s.alias || "";
+        var is_fav = favs.indexOf(id) >= 0;
+        return <div .remote-session-link .remote-session id={id} platform={platform} title={alias ? "ID: " + id : ""}>
+            <div .platform>
+                {platform && platformSvg(platform, "white")}
+            </div>
+            <div .name>
+                <div>
+                    <div #alias .ellipsis>{is_fav ? <span .fav-mark>★</span> : ""}{alias ? alias : formatId(id)}</div>
+                    <div .username .ellipsis>{username}@{hostname}</div>
+                </div>
+            </div>
+            <div .more>
+                {svg_menu}
+            </div>
+        </div>;
+    }
+
+    event dblclick $(div.remote-session-link) (evt, me) {
+        createNewConnect(me.id, "connect");
+    }
+
+    event click $(#menu) (_, me) {
+        var id = me.parent.parent.id;
+        var platform = me.parent.parent.attributes["platform"];
+        this.$(#rdp).style.set{
+            display: (platform == "Windows" && is_win) ? "block" : "none",
+        };
+        this.$(#forget-password).style.set{
+            display: handler.peer_has_password(id) ? "block" : "none",
+        };
+        var in_fav = handler.get_fav().indexOf(id) >= 0;
+        this.$(#add-fav).style.set{
+            display: in_fav ? "none" : "block",
+        };
+        this.$(#remove-fav).style.set{
+            display: in_fav ? "block" : "none",
+        };
+        var menu = this.$(menu#remote-context);
+        current_menu_peer_id = id;
+        var el = this.$(li#force-always-relay);
+        if (el) {
+          var force = handler.get_peer_option(id, "force-always-relay");
+          el.attributes.toggleClass("selected", force == "Y");
+        }
+        var conn = this.$(menu #connect);
+        if (conn) {
+          var alias = me.parent.parent.$(#alias);
+          if (alias) {
+            alias = alias.text.replace(' ', '');
+            if (alias != id) {
+              conn.text = translate('Connect') + ' ' + id;
+            } else {
+              conn.text = translate('Connect');
+            }
+          }
+        }
+        me.popup(menu);
+    }
+
+    event click $(menu#remote-context li) (evt, me) {
+        var action = me.id;
+        var id = current_menu_peer_id;
+        if (action == "connect") {
+            createNewConnect(id, "connect");
+        } else if (action == "wol") {
+            handler.send_wol(id);
+        } else if (action == "remove") {
+            handler.remove_peer(id);
+            app.update();
+        } else if (action == "forget-password") {
+            handler.forget_password(id);
+        } else if (action == "shortcut") {
+            handler.create_shortcut(id);
+        } else if (action == "rdp") {
+            if (is_edit_rdp_port) {
+                is_edit_rdp_port = false;
+                return;
+            }
+            createNewConnect(id, "rdp");
+        } else if (action == "add-fav") {
+            var favs = handler.get_fav();
+            if (favs.indexOf(id) < 0) {
+                favs = [id].concat(favs);
+                handler.store_fav(favs);
+            }
+            app.multipleSessions.update();
+            app.update();
+        } else if (action == "remove-fav") {
+            var favs = handler.get_fav();
+            var i = favs.indexOf(id);
+            favs.splice(i, 1);
+            handler.store_fav(favs);
+            app.multipleSessions.update();
+            app.update();
+        } else if (action == "tunnel") {
+            createNewConnect(id, "port-forward");
+        } else if (action == "rename") {
+            var old_name = handler.get_peer_option(id, "alias");
+            msgbox("custom-rename", "Rename", "<div .form> \
+                <div><input|text name='name' .outline-focus style='width: *; height: 23px', value='" + old_name + "' /></div> \
+                </div> \
+                ", "", function(res=null) {
+                    if (!res) return;
+                    var name = (res.name || "").trim();
+                    if (name != old_name) {
+                        handler.set_peer_option(id, "alias", name);
+                    }
+                    app.update();
+                });
+        } else if (action == "force-always-relay") {
+            var force = handler.get_peer_option(id, "force-always-relay");
+            handler.set_peer_option(id, "force-always-relay", force == "Y" ? "" : "Y");
+        }
+    }
+}
+
+class MultipleSessions: Reactor.Component {
+    function render() {
+        var favs = handler.get_fav();
+        var recent = handler.get_recent_sessions();
+        var sessions = [];
+        for (var f in favs) {
+            var p = handler.get_peer(f);
+            if (p) sessions.push(p);
+        }
+        for (var r in recent) {
+            var id = r[0] || r.id || "";
+            if (favs.indexOf(id) < 0) sessions.push(r);
+        }
+        return <div style="size: *">
+                {!this.hidden && <SessionList sessions={sessions} />}
+            </div>;
+    }
+
+    function stupidUpdate() {
+        this.hidden = true;
+        this.update();
+        var me = this;
+        self.timer(60ms, function() {
+            me.hidden = false;
+            me.update();
+        });
+    }
+}
+
+var is_edit_rdp_port;
+class EditRdpPort: Reactor.Component {
+    function render() {
+        return <span style="margin-left: 12px; padding: 0 6px; display: inline-block;" .link>{svg_edit}</span>;
+    }
+
+    function onMouse(evt) {
+        if (evt.type == Event.MOUSE_DOWN) {
+            is_edit_rdp_port = true;
+            editRdpPort();
+        }
+    }
+}
+
+function editRdpPort() {
+    var id = current_menu_peer_id;
+    var p0 = handler.get_peer_option(id, "rdp_port");
+    var port = p0 ? <input|text name='port' value={p0} /> : 
+                    <input|text name='port' novalue={3389} />;
+    var name0 = handler.get_peer_option(id, "rdp_username");
+    var pass0 = handler.get_peer_option(id, "rdp_password");
+    msgbox("custom-rdp-port", 'RDP ' + translate('Settings'), <div .form .set-password> 
+            <div><span>{translate('Port')}:</span>{port}</div> 
+            <div><span>{translate('Username')}:</span><input|text name="username" value={name0} /></div> 
+            <div><span>{translate('Password')}:</span><PasswordComponent value={pass0} /></div> 
+        </div>, "", function(res=null) {
+        if (!res) return;
+        var p = (res.port || '').trim();
+        if (p != p0) {
+            if (!p) p = '0';
+            p = p.toNumber();
+            if (p < 0 || p != p.toInteger()) {
+                return translate("Invalid port");
+            }
+            if (p == 0) p = "";
+            else p = p.toInteger() + '';
+            handler.set_peer_option(id, "rdp_port", p);
+        }
+
+        var name = (res.username || '').trim();
+        if (name != name0) {
+            handler.set_peer_option(id, "rdp_username", name);
+        }
+
+        var pass = (res.password || '').trim();
+        if (pass != pass0) {
+            handler.set_peer_option(id, "rdp_password", pass);
+        }
+      }, 240);
+}

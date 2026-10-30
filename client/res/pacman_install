@@ -1,0 +1,47 @@
+# arg 1:  the new package version
+#pre_install() {
+#}
+
+# arg 1:  the new package version
+post_install() {
+	# do something here
+	cp /usr/share/supportdesk/files/supportdesk.service /etc/systemd/system/supportdesk.service
+	cp /usr/share/supportdesk/files/supportdesk.desktop /usr/share/applications/
+	cp /usr/share/supportdesk/files/supportdesk-link.desktop /usr/share/applications/
+	systemctl daemon-reload
+	systemctl enable supportdesk
+	systemctl start supportdesk
+	update-desktop-database
+}
+
+# arg 1:  the new package version
+# arg 2:  the old package version
+pre_upgrade() {
+    systemctl stop supportdesk || true
+}
+
+# arg 1:  the new package version
+# arg 2:  the old package version
+post_upgrade() {
+	cp /usr/share/supportdesk/files/supportdesk.service /etc/systemd/system/supportdesk.service
+	cp /usr/share/supportdesk/files/supportdesk.desktop /usr/share/applications/
+	cp /usr/share/supportdesk/files/supportdesk-link.desktop /usr/share/applications/
+	systemctl daemon-reload
+	systemctl enable supportdesk
+	systemctl start supportdesk
+	update-desktop-database
+}
+
+# arg 1:  the old package version
+pre_remove() {
+	systemctl stop supportdesk || true
+	systemctl disable supportdesk || true
+	rm /etc/systemd/system/supportdesk.service || true
+}
+
+# arg 1:  the old package version
+post_remove() {
+	rm /usr/share/applications/supportdesk.desktop || true
+	rm /usr/share/applications/supportdesk-link.desktop || true
+	update-desktop-database
+}

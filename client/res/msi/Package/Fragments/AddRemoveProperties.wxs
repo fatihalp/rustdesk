@@ -1,0 +1,24 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<Wix xmlns="http://wixtoolset.org/schemas/v4/wxs">
+	<?include ../Includes.wxi?>
+
+	<Fragment>
+
+		<Property Id="AddRemovePropertiesFile" Value="1" />
+
+				<Property Id="STOP_SERVICE" Value="&apos;Y&apos;" />
+
+		<Property Id="LAUNCH_TRAY_APP" Value="Y" />
+
+				
+		<Property Id="ARPPRODUCTICON" Value="AppIcon" />
+
+				
+		<SetProperty Action="SetArpInstallLocation" Id="ARPINSTALLLOCATION" Value="[INSTALLFOLDER_INNER]" After="CostFinalize" Sequence="execute" />
+
+				
+		<Property Id="APP_WINDOWS_INSTALLER" Secure="yes">
+			<RegistrySearch Id="AppWindowsInstallerFolderSearch" Root="HKLM" Key="Software\Microsoft\Windows\CurrentVersion\Uninstall\$(var.Product)" Name="WindowsInstaller" Type="raw" />
+		</Property>
+	</Fragment>
+</Wix>

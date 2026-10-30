@@ -1,0 +1,33 @@
+<Wix xmlns="http://wixtoolset.org/schemas/v4/wxs"
+	xmlns:util="http://wixtoolset.org/schemas/v4/wxs/util">
+	<?include ../Includes.wxi?>
+
+	<Fragment>
+				<Property Id="INSTALLFOLDER" Secure="yes">
+      		<RegistrySearch Id="InstallFolderSearch" Root="HKCR" Key="$(var.RegKeyRoot)" Name="INSTALLFOLDER" Type="raw" />
+    	</Property>
+
+				<SetProperty Id="SavedInstallFolderCmdLineValue" Value="[INSTALLFOLDER]" Before="AppSearch" Sequence="first" Condition="INSTALLFOLDER" />
+
+				<SetProperty Action="RestoreSavedInstallFolderValue" Id="INSTALLFOLDER" Value="[SavedInstallFolderCmdLineValue]" After="AppSearch" Sequence="first" Condition="SavedInstallFolderCmdLineValue" />
+
+						<SetProperty Action="SetInstallFolderInnerFromProductDir" Id="INSTALLFOLDER_INNER" Value="[INSTALLFOLDER]" After="RestoreSavedInstallFolderValue" Sequence="first" Condition="INSTALLFOLDER AND INSTALLFOLDER ~&gt;&gt; &quot;\$(var.Product)\&quot;" />
+				<SetProperty Action="SetInstallFolderInnerFromProductDirNoSlash" Id="INSTALLFOLDER_INNER" Value="[INSTALLFOLDER]\" After="RestoreSavedInstallFolderValue" Sequence="first" Condition="INSTALLFOLDER AND INSTALLFOLDER ~&gt;&gt; &quot;\$(var.Product)&quot;" />
+				<SetProperty Action="SetInstallFolderInnerAppendProduct" Id="INSTALLFOLDER_INNER" Value="[INSTALLFOLDER]$(var.Product)\" After="RestoreSavedInstallFolderValue" Sequence="first" Condition="INSTALLFOLDER AND INSTALLFOLDER ~&gt;&gt; &quot;\&quot; AND NOT (INSTALLFOLDER ~&gt;&gt; &quot;\$(var.Product)\&quot; OR INSTALLFOLDER ~&gt;&gt; &quot;\$(var.Product)&quot;)" />
+				<SetProperty Action="SetInstallFolderInnerAppendSlashProduct" Id="INSTALLFOLDER_INNER" Value="[INSTALLFOLDER]\$(var.Product)\" After="RestoreSavedInstallFolderValue" Sequence="first" Condition="INSTALLFOLDER AND NOT INSTALLFOLDER ~&gt;&gt; &quot;\&quot; AND NOT (INSTALLFOLDER ~&gt;&gt; &quot;\$(var.Product)\&quot; OR INSTALLFOLDER ~&gt;&gt; &quot;\$(var.Product)&quot;)" />
+
+						<StandardDirectory Id="ProgramFiles6432Folder">
+			<Directory Id="INSTALLFOLDER_INNER" Name="$(var.Product)" />
+		</StandardDirectory>
+
+		<StandardDirectory Id="CommonAppDataFolder">
+			<Directory Id="App.Data.Folder" Name="$(var.Product)" />
+		</StandardDirectory>
+
+		<StandardDirectory Id="ProgramMenuFolder">
+			<Directory Id="App.StartMenu" Name="$(var.Product)" />
+		</StandardDirectory>
+
+		<StandardDirectory Id="DesktopFolder" />
+	</Fragment>
+</Wix>

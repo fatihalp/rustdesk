@@ -1,0 +1,383 @@
+html {
+    background-color: transparent;
+}
+
+body {
+    overflow: hidden;
+    font-family: system-ui, "SF Pro Text", "Helvetica Neue", "Segoe UI", sans-serif;
+}
+
+@media platform != "OSX" {
+    body {
+        border-top: color(separator) solid 1px;
+    }
+}
+
+.title {
+    font-size: 1.5em;
+    font-weight: bold;
+}
+
+.app {
+    flow: horizontal;
+    size: *;
+}
+
+.lighter-text {
+    color: color(lighter-text);
+    font-size: 0.9em;
+    line-height: 1.4em;
+}
+
+.left-pane {
+    width: 260px;
+    height: *;
+    background: color(card);
+    position: relative;
+}
+
+@media platform == "OSX" {
+    .left-pane {
+        background: color(gray-bg-osx);
+    }
+}
+
+.left-pane > div:nth-child(1) {
+    border-spacing: 16px;
+    padding: 28px 24px;
+    padding-bottom: 60px;
+}
+
+.left-pane > div.connect-status {
+    position: absolute;
+    bottom: 0;
+    left: 0;
+    right: 0;
+}
+
+.left-pane div {
+    word-wrap: break-word;
+}
+
+.your-desktop {
+    border-spacing: 6px;
+    padding: 14px 16px;
+    background: color(bg);
+    border: color(separator) solid 1px;
+    border-radius: 12px;
+}
+
+.your-desktop > div {
+    color: color(light-text);
+    font-size: 0.9em;
+}
+
+.your-desktop input[type=text] {
+    padding: 0;
+    border: none;
+    height: 1.6em;
+    font-size: 1.6em;
+    background: transparent;
+    color: color(text);
+}
+
+.right-pane {
+    size: *;
+    background: color(bg);
+}
+
+.right-content {
+    overflow: scroll-indicator;
+    padding: 36px 40px 24px 40px;
+    border-spacing: 28px;
+    size: *;
+    flow: vertical;
+}
+
+.card-connect {
+    border-spacing: 14px;
+    width: *;
+}
+
+.card-connect .title {
+    font-size: 2em;
+}
+
+.card-connect input[type=text] {
+    height: 46px;
+    font-size: 1.4em;
+    padding: 0 16px;
+    background: color(card);
+    border: color(card) solid 1px;
+    border-radius: 12px;
+    color: color(text);
+}
+
+.card-connect input[type=text]:focus {
+    border-color: color(accent);
+    outline: color(accent-ring) solid 4px;
+}
+
+.right-buttons {
+    flow: horizontal;
+    text-align: left;
+}
+
+.right-buttons > button {
+    margin-right: 12px;
+}
+
+.app button.button {
+    height: 2.6em;
+    min-width: 96px;
+    padding: 0 20px;
+    border-radius: 10px;
+    background: color(accent);
+    border-color: color(accent);
+    color: white;
+    font-size: 1em;
+}
+
+.app button.button:hover {
+    border-color: color(accent);
+    opacity: 0.9;
+}
+
+.app button.button:active {
+    opacity: 0.75;
+}
+
+.app button.button.outline {
+    background: color(accent-soft);
+    border-color: transparent;
+    color: color(accent);
+}
+
+div.recent-sessions-content {
+    flow: vertical;
+    margin-top: 14px;
+    background: color(card);
+    border-radius: 12px;
+    overflow: hidden;
+}
+
+div.remote-session {
+    flow: horizontal;
+    padding: 10px 8px 10px 14px;
+    border-bottom: color(separator) solid 1px;
+    cursor: pointer;
+}
+
+div.remote-session:last-child {
+    border-bottom: none;
+}
+
+div.remote-session:hover {
+    background: color(accent-soft);
+}
+
+div.remote-session .platform {
+    size: 38px;
+    border-radius: 10px;
+    background: color(accent);
+}
+
+div.remote-session .platform svg {
+    size: 22px;
+    margin: 8px;
+    background: none;
+}
+
+div.remote-session .name {
+    size: *;
+    padding-left: 14px;
+}
+
+div.remote-session .name > div {
+    margin-top: *;
+    margin-bottom: *;
+    width: *;
+}
+
+div.remote-session .name #alias {
+    font-size: 1.1em;
+    font-weight: bold;
+}
+
+div.remote-session .name .username {
+    margin-top: 2px;
+    font-size: 0.85em;
+    color: color(lighter-text);
+}
+
+div.remote-session .more {
+    margin: * 0;
+}
+
+span.fav-mark {
+    margin-right: 6px;
+    color: #ff9f0a;
+}
+
+div.empty-sessions {
+    margin-top: 14px;
+    padding: 48px 0;
+    background: color(card);
+    border-radius: 12px;
+    text-align: center;
+    color: color(lighter-text);
+    font-size: 1.2em;
+}
+
+svg#menu {
+    size: 1em;
+    background: none;
+    padding: 0.5em;
+    margin: 0.5em;
+    color: color(light-text);
+}
+
+svg#menu:hover {
+    color: color(text);
+    border-radius: 1em;
+    background: color(gray-bg);
+}
+
+svg#edit:hover {
+    color: color(text);
+}
+
+svg#edit {
+    display: inline-block;
+}
+
+div#myid {
+    position: relative;
+}
+
+div#myid svg#menu {
+    position: absolute;
+    right: -0.5em;
+    top: -0.4em;
+}
+
+div.connect-status {
+    width: 100%;
+    padding: 14px 40px;
+    color: color(lighter-text);
+    font-size: 0.9em;
+}
+
+.left-pane > div.connect-status {
+    padding: 14px 24px;
+}
+
+div.connect-status > span.connect-status-icon {
+    border-radius: 4px;
+    width: 8px;
+    height: 8px;
+    display: inline-block;
+    margin-right: 8px;
+}
+
+div.connect-status > span.link {
+    margin-left: 1em;
+    display: inline-block;
+}
+
+div.connect-status span.link {
+    color: color(accent);
+    text-decoration: none;
+}
+
+span.connect-status-1 {
+    background: #ff3b30;
+}
+
+span.connect-status1 {
+    background: #34c759;
+}
+
+span.connect-status0 {
+    background: #ff9500;
+}
+
+div.install-me, div.trust-me {
+    margin: 0 24px 16px 24px;
+    padding: 14px 16px;
+    color: color(text);
+    background: color(notice);
+    border-radius: 12px;
+}
+
+div.trust-me > div:nth-child(1) {
+    font-size: 1em;
+    font-weight: bold;
+    margin-bottom: 4px;
+}
+
+div.install-me > span {
+    display: none;
+}
+
+div.install-me > div:nth-child(2) {
+    line-height: 1.4em;
+}
+
+div.trust-me > div:nth-child(2) {
+    font-size: 0.9em;
+    line-height: 1.4em;
+    margin-bottom: 10px;
+    color: color(light-text);
+}
+
+div.trust-me > div:nth-child(3),
+div.trust-me > div:nth-child(4),
+div.install-me .link {
+    display: inline-block;
+    margin-right: 16px;
+    color: color(accent);
+    text-decoration: none;
+    font-weight: bold;
+}
+
+#install-me.link {
+    margin-top: 8px;
+}
+
+.install-me .button {
+    min-width: 0;
+    height: 2.2em;
+    margin-top: 10px;
+    font-weight: bold;
+}
+
+svg#refresh-password {
+    display: inline-block;
+    stroke: color(lighter-text);
+}
+
+svg#refresh-password:hover {
+    stroke: color(text);
+}
+
+li:disabled, li:disabled:hover {
+    color: color(lighter-text);
+    background: color(menu);
+    opacity: 0.8;
+}
+
+.grey-text {
+    color: #888 !important;
+}
+
+input.grey-text,
+textarea.grey-text {
+    color: #888 !important;
+}
+
+@media platform == "OSX" {
+    div.eye-area > input {
+        font-size: 1em;
+    }
+}
