@@ -62,19 +62,31 @@ class Device extends Model
         return is_string($raw) && $raw !== '';
     }
 
-    public function connectUri(): string
+    public function connectUri(): ?string
     {
-        $uri = sprintf('%s://connection/new/%s', config('panel.support_url_scheme'), $this->supportdesk_id);
-        $password = $this->unattended_password;
+        if (! $this->unattended_password) {
+            return null;
+        }
 
-        return $password ? $uri.'?password='.rawurlencode($password) : $uri;
+        return sprintf(
+            '%s://connection/new/%s?password=%s',
+            config('panel.support_url_scheme'),
+            $this->supportdesk_id,
+            rawurlencode($this->unattended_password),
+        );
     }
 
-    public function connectCommand(): string
+    public function connectCommand(): ?string
     {
-        $command = sprintf('%s --connect %s', config('panel.support_url_scheme'), escapeshellarg($this->supportdesk_id));
-        $password = $this->unattended_password;
+        if (! $this->unattended_password) {
+            return null;
+        }
 
-        return $password ? $command.' --password '.escapeshellarg($password) : $command;
+        return sprintf(
+            '%s --connect %s --password %s',
+            config('panel.support_url_scheme'),
+            escapeshellarg($this->supportdesk_id),
+            escapeshellarg($this->unattended_password),
+        );
     }
 }
