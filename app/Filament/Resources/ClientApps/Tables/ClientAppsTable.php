@@ -3,9 +3,8 @@
 namespace App\Filament\Resources\ClientApps\Tables;
 
 use App\Models\ClientApp;
-use App\Models\ClientBuild;
 use App\Models\DownloadLink;
-use App\Services\GitHubWorkflowDispatcher;
+use App\Filament\Actions\StartBuildAction;
 use Filament\Actions\Action;
 use Filament\Actions\ActionGroup;
 use Filament\Actions\BulkActionGroup;
@@ -25,17 +24,17 @@ class ClientAppsTable
         return $table
             ->columns([
                 ImageColumn::make('logo_path')->label('')->disk('public')->circular(),
-                TextColumn::make('app_name')->label('Uygulama')->searchable()->weight('bold'),
-                TextColumn::make('customer.name')->label('Müşteri')->searchable(),
-                TextColumn::make('devices_count')->label('Cihaz')->counts('devices')->badge(),
-                IconColumn::make('unattended')->label('Şifresiz')->boolean(),
-                IconColumn::make('is_active')->label('Aktif')->boolean(),
+                TextColumn::make('app_name')->label('Application')->searchable()->weight('bold'),
+                TextColumn::make('customer.name')->label('Customer')->searchable(),
+                TextColumn::make('devices_count')->label('Devices')->counts('devices')->badge(),
+                IconColumn::make('unattended')->label('Unattended')->boolean(),
+                IconColumn::make('is_active')->label('Active')->boolean(),
             ])
             ->recordActions([
                 ActionGroup::make([
-                    self::buildAction('windows', 'Windows derle'),
-                    self::buildAction('macos', 'macOS derle'),
-                ])->label('Derle')->icon('heroicon-o-cog-6-tooth')->button(),
+                    self::buildAction('windows', 'Build Windows'),
+                    self::buildAction('macos', 'Build macOS'),
+                ])->label('Build')->icon('heroicon-o-cog-6-tooth')->button(),
                 self::linkAction(),
                 EditAction::make(),
             ])
@@ -49,32 +48,22 @@ class ClientAppsTable
         return Action::make("build_$platform")
             ->label($label)
             ->requiresConfirmation()
-            ->action(function (ClientApp $record) use ($platform) {
-                $build = $record->builds()->create(['platform' => $platform, 'status' => ClientBuild::PENDING]);
-                try {
-                    app(GitHubWorkflowDispatcher::class)->queue($build);
-                } catch (\Throwable $e) {
-                    Notification::make()->title('Derleme başlatılamadı')->body($e->getMessage())->danger()->send();
-
-                    return;
-                }
-                Notification::make()->title('Derleme kuyruğa alındı')->success()->send();
-            });
+            ->action(fn (ClientApp $record) => StartBuildAction::run($record, $platform));
     }
 
     private static function linkAction(): Action
     {
         return Action::make('create_link')
-            ->label('İndirme linki')
+            ->label('Download Link')
             ->icon('heroicon-o-link')
             ->schema([
-                TextInput::make('label')->label('Etiket'),
-                TextInput::make('days')->label('Geçerlilik (gün)')->numeric()->default(7)->minValue(1),
-                TextInput::make('max_downloads')->label('En fazla indirme')->numeric()->minValue(1),
+                TextInput::make('label')->label('Label')->default('Custom Download Link'),
+                TextInput::make('days')->label('Validity (days)')->numeric()->default(7)->minValue(1),
+                TextInput::make('max_downloads')->label('Max Downloads')->numeric()->minValue(1),
             ])
             ->action(function (ClientApp $record, array $data) {
                 $link = $record->downloadLinks()->create([
-                    'label' => $data['label'] ?? null,
+                    'label' => $data['label'] ?? 'Custom Download Link',
                     'expires_at' => ! empty($data['days']) ? now()->addDays((int) $data['days']) : null,
                     'max_downloads' => $data['max_downloads'] ?: null,
                 ]);
@@ -85,8 +74,14 @@ class ClientAppsTable
     public static function notifyLink(DownloadLink $link): void
     {
         Notification::make()
-            ->title('Link oluşturuldu')
+            ->title('Download Link Created')
             ->body($link->url())
+            ->actions([
+                \Filament\Notifications\Actions\Action::make('open')
+                    ->label('Open Link')
+                    ->url($link->url(), shouldOpenInNewTab: true)
+                    ->button(),
+            ])
             ->success()
             ->persistent()
             ->send();

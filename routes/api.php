@@ -8,6 +8,7 @@ use Illuminate\Support\Facades\Route;
 Route::post('heartbeat', [DeviceSyncController::class, 'heartbeat'])->middleware('throttle:120,1');
 Route::post('sysinfo', [DeviceSyncController::class, 'sysinfo'])->middleware('throttle:30,1');
 Route::post('sysinfo_ver', [DeviceSyncController::class, 'sysinfoVersion'])->middleware('throttle:120,1');
+Route::post('audit/{type?}', fn () => response()->json(['ok' => true]))->middleware('throttle:120,1');
 
 Route::middleware(AuthenticateBuildRunner::class)->prefix('builds/{build}')->group(function () {
     Route::get('manifest', [BuildRunnerController::class, 'manifest']);

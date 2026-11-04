@@ -10,9 +10,11 @@ use Illuminate\Support\Str;
 
 class ClientApp extends Model
 {
+    public const DEFAULT_COLOR = '#2563eb';
+
     protected $fillable = [
         'customer_id', 'app_name', 'slug', 'logo_path', 'enroll_token',
-        'is_active', 'unattended', 'notes',
+        'is_active', 'unattended', 'primary_color', 'website', 'notes',
     ];
 
     protected $hidden = ['enroll_token'];
@@ -36,10 +38,11 @@ class ClientApp extends Model
     public static function uniqueSlug(string $name): string
     {
         $base = Str::slug($name) ?: 'client';
+        $taken = static::where('slug', $base)->orWhere('slug', 'like', $base.'-%')->pluck('slug')->flip();
+
         $slug = $base;
-        $i = 2;
-        while (static::where('slug', $slug)->exists()) {
-            $slug = $base.'-'.$i++;
+        for ($i = 2; $taken->has($slug); $i++) {
+            $slug = $base.'-'.$i;
         }
 
         return $slug;
@@ -72,6 +75,17 @@ class ClientApp extends Model
             ->where('status', ClientBuild::READY)
             ->latest('finished_at')
             ->first();
+    }
+
+    public function defaultDownloadLink(): DownloadLink
+    {
+        return $this->downloadLinks()->whereNull('revoked_at')->latest()->first()
+            ?? $this->downloadLinks()->create(['label' => DownloadLink::DEFAULT_LABEL]);
+    }
+
+    public function shortUrl(): string
+    {
+        return route('shortlink.show', $this->slug);
     }
 
     public function logoUrl(): ?string

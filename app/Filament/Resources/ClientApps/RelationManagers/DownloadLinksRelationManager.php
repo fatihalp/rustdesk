@@ -17,14 +17,14 @@ class DownloadLinksRelationManager extends RelationManager
 {
     protected static string $relationship = 'downloadLinks';
 
-    protected static ?string $title = 'İndirme linkleri';
+    protected static ?string $title = 'Download Links';
 
     public function form(Schema $schema): Schema
     {
         return $schema->components([
-            TextInput::make('label')->label('Etiket'),
-            DateTimePicker::make('expires_at')->label('Bitiş'),
-            TextInput::make('max_downloads')->label('En fazla indirme')->numeric()->minValue(1),
+            TextInput::make('label')->label('Label')->default('Custom Download Link'),
+            DateTimePicker::make('expires_at')->label('Expires At'),
+            TextInput::make('max_downloads')->label('Max Downloads')->numeric()->minValue(1),
         ]);
     }
 
@@ -33,25 +33,40 @@ class DownloadLinksRelationManager extends RelationManager
         return $table
             ->defaultSort('id', 'desc')
             ->columns([
-                TextColumn::make('label')->label('Etiket'),
+                TextColumn::make('label')->label('Label')->placeholder('-'),
                 TextColumn::make('url')
                     ->label('Link')
                     ->state(fn (DownloadLink $record) => $record->url())
+                    ->url(fn (DownloadLink $record) => $record->url(), shouldOpenInNewTab: true)
+                    ->color('primary')
                     ->copyable()
-                    ->limit(40),
-                TextColumn::make('download_count')->label('İndirme')
+                    ->copyMessage('Download link copied')
+                    ->tooltip('Click to open in a new tab or copy'),
+                TextColumn::make('download_count')->label('Downloads')
                     ->formatStateUsing(fn ($state, DownloadLink $r) => $state.($r->max_downloads ? " / {$r->max_downloads}" : '')),
-                TextColumn::make('expires_at')->label('Bitiş')->dateTime(),
-                TextColumn::make('status')->label('Durum')->badge()
-                    ->state(fn (DownloadLink $r) => $r->revoked_at ? 'İptal' : ($r->isUsable() ? 'Geçerli' : 'Geçersiz'))
-                    ->color(fn (string $state) => $state === 'Geçerli' ? 'success' : 'gray'),
+                TextColumn::make('expires_at')->label('Expires At')->dateTime()->placeholder('Unlimited'),
+                TextColumn::make('status')->label('Status')->badge()
+                    ->state(fn (DownloadLink $r) => $r->revoked_at ? 'Revoked' : ($r->isUsable() ? 'Valid' : 'Expired'))
+                    ->color(fn (string $state) => $state === 'Valid' ? 'success' : 'gray'),
             ])
             ->headerActions([
-                CreateAction::make()->after(fn (DownloadLink $record) => ClientAppsTable::notifyLink($record)),
+                CreateAction::make()
+                    ->label('Create Download Link')
+                    ->icon('heroicon-o-plus')
+                    ->after(fn (DownloadLink $record) => ClientAppsTable::notifyLink($record)),
+                Action::make('open_shortlink')
+                    ->label(fn () => 'Permanent Short Link: '.url('/s/'.$this->getOwnerRecord()->slug))
+                    ->icon('heroicon-o-link')
+                    ->url(fn () => url('/s/'.$this->getOwnerRecord()->slug), shouldOpenInNewTab: true)
+                    ->color('gray'),
             ])
             ->recordActions([
+                Action::make('open')
+                    ->label('Open')
+                    ->icon('heroicon-o-arrow-top-right-on-square')
+                    ->url(fn (DownloadLink $r) => $r->url(), shouldOpenInNewTab: true),
                 Action::make('revoke')
-                    ->label('İptal et')
+                    ->label('Revoke')
                     ->color('danger')
                     ->requiresConfirmation()
                     ->visible(fn (DownloadLink $r) => $r->revoked_at === null)

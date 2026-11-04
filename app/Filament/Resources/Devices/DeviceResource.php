@@ -19,9 +19,9 @@ class DeviceResource extends Resource
 
     protected static ?string $recordTitleAttribute = 'hostname';
 
-    protected static ?string $modelLabel = 'Cihaz';
+    protected static ?string $modelLabel = 'Device';
 
-    protected static ?string $pluralModelLabel = 'Cihazlar';
+    protected static ?string $pluralModelLabel = 'Devices';
 
     protected static ?int $navigationSort = 0;
 

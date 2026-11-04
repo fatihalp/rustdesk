@@ -1,0 +1,18 @@
+<?php
+
+namespace App\Http\Resources;
+
+use Illuminate\Http\Request;
+
+class DeviceConnectionResource extends DeviceResource
+{
+    public function toArray(Request $request): array
+    {
+        return parent::toArray($request) + [
+            'has_unattended' => $this->hasUnattendedPassword(),
+            'unattended_password' => $this->unattended_password,
+            'connect_command' => $this->connectCommand(),
+            'connect_uri' => $this->connectUri(),
+        ];
+    }
+}

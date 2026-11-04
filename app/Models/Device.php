@@ -21,6 +21,7 @@ class Device extends Model
     {
         return [
             'unattended_password' => 'encrypted',
+            'active_connections' => 'integer',
             'first_seen_at' => 'datetime',
             'last_seen_at' => 'datetime',
         ];
@@ -47,20 +48,18 @@ class Device extends Model
         $os = strtolower((string) $os);
 
         return match (true) {
+            $os === '' => null,
             str_contains($os, 'windows') => 'windows',
             str_contains($os, 'mac') || str_contains($os, 'darwin') => 'macos',
-            str_contains($os, 'linux') || $os !== '' => 'linux',
-            default => null,
+            default => 'linux',
         };
     }
 
-    public function connectCommand(): ?string
+    public function hasUnattendedPassword(): bool
     {
-        if (! $this->unattended_password) {
-            return null;
-        }
+        $raw = $this->getRawOriginal('unattended_password');
 
-        return sprintf('supportdesk --connect %s --password %s', $this->supportdesk_id, $this->unattended_password);
+        return is_string($raw) && $raw !== '';
     }
 
     public function connectUri(): ?string
@@ -69,6 +68,25 @@ class Device extends Model
             return null;
         }
 
-        return sprintf('supportdesk://connection/new/%s?password=%s', $this->supportdesk_id, rawurlencode($this->unattended_password));
+        return sprintf(
+            '%s://connection/new/%s?password=%s',
+            config('panel.support_url_scheme'),
+            $this->supportdesk_id,
+            rawurlencode($this->unattended_password),
+        );
+    }
+
+    public function connectCommand(): ?string
+    {
+        if (! $this->unattended_password) {
+            return null;
+        }
+
+        return sprintf(
+            '%s --connect %s --password %s',
+            config('panel.support_url_scheme'),
+            escapeshellarg($this->supportdesk_id),
+            escapeshellarg($this->unattended_password),
+        );
     }
 }

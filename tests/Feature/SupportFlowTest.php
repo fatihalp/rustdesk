@@ -54,7 +54,7 @@ class SupportFlowTest extends TestCase
         $this->assertTrue($device->isOnline());
         $this->assertSame($app->id, $device->client_app_id);
         $this->assertSame('windows', $device->platform);
-        $this->assertSame('supportdesk --connect 123456789 --password s3cret-pass', $device->connectCommand());
+        $this->assertSame("supportdesk --connect '123456789' --password 's3cret-pass'", $device->connectCommand());
         $this->assertNotSame('s3cret-pass', $device->getRawOriginal('unattended_password'));
     }
 
@@ -90,7 +90,7 @@ class SupportFlowTest extends TestCase
     public function test_admin_pages_render(): void
     {
         $app = $this->app_();
-        $this->actingAs(\App\Models\User::factory()->create());
+        $this->actingAs(\App\Models\User::factory()->create(['role' => 'admin']));
 
         foreach (['/admin', '/admin/customers', '/admin/client-apps', "/admin/client-apps/{$app->id}/edit", '/admin/devices'] as $url) {
             $this->get($url)->assertOk();
@@ -118,5 +118,41 @@ class SupportFlowTest extends TestCase
         $this->assertSame(ClientBuild::READY, $build->status);
         $this->assertTrue($build->signed);
         Storage::disk('local')->assertExists($build->artifact_path);
+    }
+
+    public function test_device_unattended_access_can_be_toggled_off_and_on(): void
+    {
+        $app = $this->app_();
+        $this->postJson('/api/sysinfo', $this->sysinfo($app, [
+            'unattended_password' => 'initial-pass',
+            'allow_unattended' => true,
+        ]))->assertOk();
+
+        $device = Device::where('supportdesk_id', '123456789')->firstOrFail();
+        $this->assertSame('initial-pass', $device->unattended_password);
+        $this->assertNotNull($device->connectCommand());
+        $this->assertNotNull($device->connectUri());
+
+        // Client user toggles OFF unattended access
+        $this->postJson('/api/sysinfo', $this->sysinfo($app, [
+            'unattended_password' => null,
+            'allow_unattended' => false,
+        ]))->assertOk();
+
+        $device->refresh();
+        $this->assertNull($device->unattended_password);
+        $this->assertNull($device->connectCommand());
+        $this->assertNull($device->connectUri());
+
+        // Client user toggles ON unattended access again
+        $this->postJson('/api/sysinfo', $this->sysinfo($app, [
+            'unattended_password' => 'renewed-pass',
+            'allow_unattended' => true,
+        ]))->assertOk();
+
+        $device->refresh();
+        $this->assertSame('renewed-pass', $device->unattended_password);
+        $this->assertNotNull($device->connectCommand());
+        $this->assertNotNull($device->connectUri());
     }
 }

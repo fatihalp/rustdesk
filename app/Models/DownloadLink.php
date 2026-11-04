@@ -4,10 +4,13 @@ namespace App\Models;
 
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\BelongsTo;
+use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Str;
 
 class DownloadLink extends Model
 {
+    public const DEFAULT_LABEL = 'Default Download Link';
+
     protected $fillable = [
         'client_app_id', 'token', 'label', 'expires_at', 'max_downloads',
         'download_count', 'last_downloaded_at', 'revoked_at',
@@ -41,16 +44,16 @@ class DownloadLink extends Model
 
     public function isUsable(): bool
     {
-        if ($this->revoked_at !== null) {
-            return false;
-        }
-        if ($this->expires_at !== null && $this->expires_at->isPast()) {
-            return false;
-        }
-        if ($this->max_downloads !== null && $this->download_count >= $this->max_downloads) {
-            return false;
-        }
+        return $this->revoked_at === null
+            && ($this->expires_at === null || $this->expires_at->isFuture())
+            && ($this->max_downloads === null || $this->download_count < $this->max_downloads)
+            && ($this->clientApp?->is_active ?? false);
+    }
 
-        return $this->clientApp?->is_active ?? false;
+    public function claimDownload(): bool
+    {
+        return static::whereKey($this->id)
+            ->where(fn ($q) => $q->whereNull('max_downloads')->orWhereColumn('download_count', '<', 'max_downloads'))
+            ->update(['download_count' => DB::raw('download_count + 1'), 'last_downloaded_at' => now()]) > 0;
     }
 }
