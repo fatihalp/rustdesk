@@ -22,9 +22,9 @@ class CustomerResource extends Resource
 
     protected static ?string $recordTitleAttribute = 'name';
 
-    protected static ?string $modelLabel = 'Müşteri';
+    protected static ?string $modelLabel = 'Customer';
 
-    protected static ?string $pluralModelLabel = 'Müşteriler';
+    protected static ?string $pluralModelLabel = 'Customers';
 
     protected static ?int $navigationSort = 1;
 

@@ -2,61 +2,65 @@
 
 namespace App\Http\Controllers;
 
-use App\Http\Controllers\Api\BuildRunnerController;
+use App\Models\ClientApp;
+use App\Models\ClientBuild;
 use App\Models\DownloadLink;
+use App\Services\BuildArtifactStore;
+use Illuminate\Contracts\View\View;
+use Illuminate\Http\RedirectResponse;
 use Illuminate\Http\Request;
-use Illuminate\Support\Facades\DB;
+use Symfony\Component\HttpFoundation\StreamedResponse;
 
 class DownloadController extends Controller
 {
-    private const PLATFORMS = ['windows', 'macos'];
+    private const LABELS = ['macos' => 'macOS', 'windows' => 'Windows'];
 
-    public function show(Request $request, string $token)
+    public function __construct(private readonly BuildArtifactStore $artifacts) {}
+
+    public function short(string $slug): RedirectResponse
     {
-        $link = DownloadLink::with('clientApp')->where('token', $token)->first();
-        abort_if(! $link, 404);
+        $app = ClientApp::where('slug', $slug)->where('is_active', true)->firstOrFail();
 
+        return redirect()->route('download.show', $app->defaultDownloadLink()->token);
+    }
+
+    public function show(Request $request, string $token): View
+    {
+        $link = DownloadLink::with('clientApp')->where('token', $token)->firstOrFail();
         $app = $link->clientApp;
         $usable = $link->isUsable();
+        $detected = $this->detectPlatform($request->userAgent());
 
-        return view('download', [
-            'app' => $app,
-            'usable' => $usable,
-            'link' => $link,
-            'detected' => $this->detectPlatform($request->userAgent()),
-            'builds' => collect(self::PLATFORMS)->mapWithKeys(
-                fn ($p) => [$p => $usable ? $app->latestReadyBuild($p) : null]
-            ),
-        ]);
+        $builds = collect(self::LABELS)
+            ->sortKeysUsing(fn ($a, $b) => ($b === $detected) <=> ($a === $detected))
+            ->filter(fn ($label, $platform) => $usable && $app->latestReadyBuild($platform))
+            ->all();
+
+        return view('download', compact('app', 'link', 'usable', 'builds', 'detected'));
     }
 
-    public function download(string $token, string $platform)
+    public function download(string $token, string $platform): StreamedResponse
     {
-        abort_unless(in_array($platform, self::PLATFORMS, true), 404);
+        abort_unless(isset(self::LABELS[$platform]), 404);
 
-        $link = DownloadLink::with('clientApp')->where('token', $token)->first();
-        abort_if(! $link || ! $link->isUsable(), 404);
+        $link = DownloadLink::with('clientApp')->where('token', $token)->firstOrFail();
+        abort_unless($link->isUsable(), 404);
 
         $build = $link->clientApp->latestReadyBuild($platform);
-        abort_if(! $build, 404);
+        abort_unless($build && $link->claimDownload(), 404);
 
-        $claimed = DB::table('download_links')
-            ->where('id', $link->id)
-            ->where(fn ($q) => $q->whereNull('max_downloads')->orWhereColumn('download_count', '<', 'max_downloads'))
-            ->update(['download_count' => DB::raw('download_count + 1'), 'last_downloaded_at' => now()]);
-        abort_if($claimed === 0, 404);
-
-        return BuildRunnerController::stream($build);
+        return $this->artifacts->download($build);
     }
 
-    private function detectPlatform(?string $ua): string
+    public function adminDownload(ClientBuild $build): StreamedResponse
     {
-        $ua = strtolower((string) $ua);
+        return $this->artifacts->download($build);
+    }
 
-        return match (true) {
-            str_contains($ua, 'windows') => 'windows',
-            str_contains($ua, 'mac os') || str_contains($ua, 'macintosh') => 'macos',
-            default => 'windows',
-        };
+    private function detectPlatform(?string $userAgent): string
+    {
+        $ua = strtolower((string) $userAgent);
+
+        return str_contains($ua, 'mac os') || str_contains($ua, 'macintosh') ? 'macos' : 'windows';
     }
 }

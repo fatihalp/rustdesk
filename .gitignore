@@ -32,7 +32,8 @@
 /public/js
 /public/js/filament
 /public/storage
-/relay/data
+/RelayServer/data
+/RelayServer/target
 /storage/*.key
 /storage/pail
 /vendor
@@ -40,3 +41,6 @@ Homestead.json
 Homestead.yaml
 Thumbs.db
 _ide_helper.php
+certs/*.keychain-db
+certs/*.key
+client/brand.json

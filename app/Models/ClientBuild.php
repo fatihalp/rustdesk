@@ -32,4 +32,18 @@ class ClientBuild extends Model
     {
         return $this->belongsTo(ClientApp::class);
     }
+
+    public function isDownloadable(): bool
+    {
+        return $this->status === self::READY && $this->artifact_path !== null;
+    }
+
+    public function markFailed(string $error): void
+    {
+        $this->update([
+            'status' => self::FAILED,
+            'error' => mb_substr($error, 0, 2000),
+            'finished_at' => now(),
+        ]);
+    }
 }

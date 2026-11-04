@@ -24,9 +24,9 @@ class ClientAppResource extends Resource
 
     protected static ?string $recordTitleAttribute = 'app_name';
 
-    protected static ?string $modelLabel = 'İstemci';
+    protected static ?string $modelLabel = 'Client App';
 
-    protected static ?string $pluralModelLabel = 'İstemciler';
+    protected static ?string $pluralModelLabel = 'Client Apps';
 
     protected static ?int $navigationSort = 2;
 

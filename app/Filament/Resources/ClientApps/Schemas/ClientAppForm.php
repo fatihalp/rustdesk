@@ -16,17 +16,17 @@ class ClientAppForm
         return $schema
             ->components([
                 Select::make('customer_id')
-                    ->label('Müşteri')
+                    ->label('Customer')
                     ->relationship('customer', 'name')
                     ->searchable()
                     ->preload()
                     ->required()
                     ->createOptionForm([
-                        TextInput::make('name')->label('Ad')->required(),
+                        TextInput::make('name')->label('Name')->required(),
                         TextInput::make('email')->email(),
                     ]),
                 TextInput::make('app_name')
-                    ->label('Uygulama adı')
+                    ->label('Application Name')
                     ->required()
                     ->maxLength(60),
                 FileUpload::make('logo_path')
@@ -37,16 +37,16 @@ class ClientAppForm
                     ->directory('client-logos')
                     ->visibility('public')
                     ->maxSize(4096)
-                    ->helperText('PNG, en az 512×512 piksel önerilir.'),
+                    ->helperText('PNG, at least 512x512 pixels recommended.'),
                 Toggle::make('unattended')
-                    ->label('Şifresiz (gözetimsiz) bağlantı')
-                    ->helperText('Açıkken müşteri onay vermeden, şifre sorulmadan bağlanabilirsiniz.')
+                    ->label('Unattended Access')
+                    ->helperText('When enabled, support agents can connect without a customer prompt or password.')
                     ->default(true),
                 Toggle::make('is_active')
-                    ->label('Aktif')
+                    ->label('Active')
                     ->default(true),
                 Textarea::make('notes')
-                    ->label('Not')
+                    ->label('Notes')
                     ->columnSpanFull(),
             ]);
     }
