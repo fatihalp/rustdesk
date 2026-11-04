@@ -13,6 +13,7 @@ class SessionList: Reactor.Component {
         var sessions = this.sessions;
         if (sessions.length == 0) {
             return <div .empty-sessions>
+                <svg .empty-icon viewBox="0 0 24 24" fill="none" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><rect x="2.5" y="4" width="19" height="13" rx="2.5"/><path d="M8.5 21h7M12 17v4"/></svg>
                 <div .empty-title>{translate("Empty")}</div>
             </div>;
         }

@@ -676,7 +676,7 @@ class App: Reactor.Component
                             {outgoing_only ? <span .link #open-settings style="position:absolute; right:0; bottom:0; transform:scale(0.6); transform-origin:right bottom; opacity:0.85">{svg_menu}</span> : ""}
                         </div>
                         {outgoing_only ? <div style="position:absolute; left:-10000px; top:-10000px; width:0; height:0; overflow:hidden"><MyIdMenu /></div> : ""}
-                        {!outgoing_only && <div .your-desktop>
+                        {!outgoing_only && <div .your-desktop .id-card>
                             <MyIdMenu />
                             {key_confirmed ? <input type="text" readonly value={formatId(get_id())}/> : translate("Generating ...")}
                         </div>}
@@ -696,12 +696,16 @@ class App: Reactor.Component
                 {!incoming_only && <div .right-pane>
                     <div .right-content>
                         <div .card-connect>
-                            <ID @{this.remote_id} />
-                            <div .right-buttons>
+                            <div .section-title>{translate('Control Remote Desktop')}</div>
+                            <div .connect-row>
+                                <ID @{this.remote_id} />
                                 <button .button #connect>{translate('Connect')}</button>
                             </div>
                         </div>
-                        <MultipleSessions @{this.multipleSessions} />
+                        <div .sessions-section>
+                            <div .section-header>{translate('Recent sessions')}</div>
+                            <MultipleSessions @{this.multipleSessions} />
+                        </div>
                     </div>
                     {!outgoing_only ? <ConnectStatus @{this.connect_status} /> : ""}
                 </div>}

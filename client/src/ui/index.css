@@ -14,8 +14,8 @@ body {
 }
 
 .title {
-    font-size: 1.5em;
-    font-weight: bold;
+    font-size: 1.35em;
+    font-weight: 700;
 }
 
 .app {
@@ -43,9 +43,13 @@ body {
 }
 
 .left-pane > div:nth-child(1) {
-    border-spacing: 16px;
-    padding: 28px 24px;
+    border-spacing: 12px;
+    padding: 26px 20px;
     padding-bottom: 60px;
+}
+
+.left-pane > div:nth-child(1) > .title {
+    margin-bottom: 6px;
 }
 
 .left-pane > div.connect-status {
@@ -59,26 +63,86 @@ body {
     word-wrap: break-word;
 }
 
+/* Inset-grouped cards on the sidebar, like System Settings. */
 .your-desktop {
-    border-spacing: 6px;
-    padding: 14px 16px;
-    background: color(bg);
-    border: color(separator) solid 1px;
+    border-spacing: 4px;
+    padding: 12px 14px;
+    background: color(elevated);
+    border: color(card-border) solid 1px;
     border-radius: 12px;
+    box-shadow: 0 1px 2px color(card-shadow);
 }
 
 .your-desktop > div {
     color: color(light-text);
-    font-size: 0.9em;
+    font-size: 0.85em;
+    font-weight: 500;
 }
 
 .your-desktop input[type=text] {
     padding: 0;
     border: none;
-    height: 1.6em;
-    font-size: 1.6em;
+    /* ID and password share one face so they read the same. */
+    height: 1.4em;
+    font-size: 1.5em;
+    font-family: system-ui, "SF Pro Display", "Helvetica Neue", "Segoe UI", sans-serif;
+    font-weight: bold;
+    letter-spacing: 1px;
     background: transparent;
     color: color(text);
+}
+
+/* Authorized-support card: label + switch row, caption below. */
+.your-desktop.access-card {
+    border-spacing: 6px;
+}
+
+div.access-row {
+    flow: horizontal;
+    cursor: pointer;
+}
+
+div.access-row > div.access-title {
+    width: *;
+    margin: * 10px * 0;
+    color: color(text);
+    font-size: 1.1em;
+    font-weight: bold;
+    line-height: 1.3em;
+}
+
+.your-desktop > div.access-tip {
+    color: color(lighter-text);
+    font-size: 0.8em;
+    font-weight: normal;
+    line-height: 1.35em;
+}
+
+div.switch {
+    width: 36px;
+    height: 20px;
+    margin: * 0;
+    border-radius: 10px;
+    background: color(switch-off);
+    position: relative;
+}
+
+div.switch.on {
+    background: color(accent);
+}
+
+div.switch > div.knob {
+    position: absolute;
+    top: 2px;
+    left: 2px;
+    size: 16px;
+    border-radius: 8px;
+    background: white;
+    box-shadow: 0 1px 2px rgba(0, 0, 0, 0.3);
+}
+
+div.switch.on > div.knob {
+    left: 18px;
 }
 
 .right-pane {
@@ -88,43 +152,63 @@ body {
 
 .right-content {
     overflow: scroll-indicator;
-    padding: 36px 40px 24px 40px;
+    padding: 32px 36px 20px 36px;
     border-spacing: 28px;
     size: *;
     flow: vertical;
 }
 
 .card-connect {
-    border-spacing: 14px;
+    border-spacing: 12px;
     width: *;
 }
 
-.card-connect .title {
-    font-size: 2em;
+.section-title {
+    font-size: 1.35em;
+    font-weight: 700;
+    color: color(text);
+}
+
+.section-header {
+    font-size: 0.85em;
+    font-weight: 600;
+    color: color(light-text);
+    padding-left: 2px;
+}
+
+div.connect-row {
+    flow: horizontal;
+    width: *;
 }
 
 .card-connect input[type=text] {
-    height: 46px;
-    font-size: 1.4em;
-    padding: 0 16px;
+    width: *;
+    height: 44px;
+    font-size: 1.25em;
+    padding: 0 14px;
     background: color(card);
     border: color(card) solid 1px;
-    border-radius: 12px;
+    border-radius: 10px;
     color: color(text);
 }
 
 .card-connect input[type=text]:focus {
+    background: color(bg);
     border-color: color(accent);
-    outline: color(accent-ring) solid 4px;
+    outline: color(accent-ring) solid 3px;
 }
 
-.right-buttons {
-    flow: horizontal;
-    text-align: left;
+.app div.connect-row > button.button {
+    height: 44px;
+    margin-left: 10px;
+    padding: 0 22px;
+    border-radius: 10px;
+    font-weight: 600;
 }
 
-.right-buttons > button {
-    margin-right: 12px;
+.sessions-section {
+    size: *;
+    flow: vertical;
 }
 
 .app button.button {
@@ -136,6 +220,7 @@ body {
     border-color: color(accent);
     color: white;
     font-size: 1em;
+    font-weight: 500;
 }
 
 .app button.button:hover {
@@ -155,7 +240,7 @@ body {
 
 div.recent-sessions-content {
     flow: vertical;
-    margin-top: 14px;
+    margin-top: 8px;
     background: color(card);
     border-radius: 12px;
     overflow: hidden;
@@ -177,13 +262,13 @@ div.remote-session:hover {
 }
 
 div.remote-session .platform {
-    size: 38px;
-    border-radius: 10px;
+    size: 36px;
+    border-radius: 9px;
     background: color(accent);
 }
 
 div.remote-session .platform svg {
-    size: 22px;
+    size: 20px;
     margin: 8px;
     background: none;
 }
@@ -200,8 +285,8 @@ div.remote-session .name > div {
 }
 
 div.remote-session .name #alias {
-    font-size: 1.1em;
-    font-weight: bold;
+    font-size: 1.05em;
+    font-weight: 600;
 }
 
 div.remote-session .name .username {
@@ -220,13 +305,20 @@ span.fav-mark {
 }
 
 div.empty-sessions {
-    margin-top: 14px;
-    padding: 48px 0;
+    margin-top: 8px;
+    padding: 36px 0;
+    border-spacing: 10px;
     background: color(card);
     border-radius: 12px;
     text-align: center;
     color: color(lighter-text);
-    font-size: 1.2em;
+    font-size: 1em;
+}
+
+div.empty-sessions > svg.empty-icon {
+    size: 32px;
+    margin: 0 *;
+    stroke: color(placeholder);
 }
 
 svg#menu {
@@ -263,19 +355,21 @@ div#myid svg#menu {
 
 div.connect-status {
     width: 100%;
-    padding: 14px 40px;
+    padding: 12px 36px;
+    border-top: color(separator) solid 1px;
     color: color(lighter-text);
     font-size: 0.9em;
 }
 
 .left-pane > div.connect-status {
-    padding: 14px 24px;
+    padding: 12px 20px;
 }
 
 div.connect-status > span.connect-status-icon {
     border-radius: 4px;
     width: 8px;
     height: 8px;
+    vertical-align: middle;
     display: inline-block;
     margin-right: 8px;
 }
@@ -355,10 +449,20 @@ div.install-me .link {
 svg#refresh-password {
     display: inline-block;
     stroke: color(lighter-text);
+    cursor: pointer;
 }
 
 svg#refresh-password:hover {
-    stroke: color(text);
+    stroke: color(accent);
+}
+
+.your-desktop div.password svg#edit {
+    color: color(lighter-text);
+    cursor: pointer;
+}
+
+.your-desktop div.password svg#edit:hover {
+    color: color(accent);
 }
 
 li:disabled, li:disabled:hover {

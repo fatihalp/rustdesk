@@ -25,6 +25,10 @@ html {
     var(dark-green): #5CB85C;
     var(blood-red): #F82600;
     var(gray-bg-osx): rgba(246, 246, 248, 0.72);
+    var(elevated): white;
+    var(card-border): rgba(0, 0, 0, 0.06);
+    var(card-shadow): rgba(0, 0, 0, 0.05);
+    var(switch-off): #e9e9ea;
 }
 
 html.darktheme {
@@ -42,6 +46,10 @@ html.darktheme {
     var(lighter-text): #8e8e93;
     var(placeholder): #636366;
     var(gray-bg-osx): rgba(28, 28, 30, 0.72);
+    var(elevated): #2c2c2e;
+    var(card-border): rgba(255, 255, 255, 0.06);
+    var(card-shadow): rgba(0, 0, 0, 0.3);
+    var(switch-off): #48484a;
 }
 
 body {
