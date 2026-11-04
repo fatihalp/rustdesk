@@ -9,8 +9,8 @@ class DefaultAdminSeeder extends Seeder
 {
     public function run(): void
     {
-        $email = env('PANEL_ADMIN_EMAIL', 'a@a.com');
-        $password = env('PANEL_ADMIN_PASSWORD');
+        $email = config('panel.admin.email');
+        $password = config('panel.admin.password');
 
         if (! $password) {
             $this->command?->warn('PANEL_ADMIN_PASSWORD is not set; skipping default admin user.');
@@ -20,7 +20,7 @@ class DefaultAdminSeeder extends Seeder
 
         User::updateOrCreate(
             ['email' => $email],
-            ['name' => 'Admin', 'password' => $password],
+            ['name' => 'Admin', 'password' => $password, 'role' => User::ROLE_ADMIN],
         );
     }
 }
