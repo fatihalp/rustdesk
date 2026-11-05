@@ -32,6 +32,7 @@
 /public/js
 /public/js/filament
 /public/storage
+/public/portal-dist
 /RelayServer/data
 /RelayServer/target
 /storage/*.key
