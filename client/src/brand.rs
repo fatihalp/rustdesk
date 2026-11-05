@@ -11,6 +11,7 @@ const ENV_BRAND_FILE: &str = "SUPPORTDESK_BRAND_FILE";
 const DEFAULT_APP_NAME: &str = "SupportDesk";
 const STATUS_PASSWORD: &str = "brand-unattended-password";
 const PASSWORD_LEN: usize = 16;
+pub const KEY_ALLOW_VISIOSOFT_ACCESS: &str = "allow-visiosoft-access";
 
 #[derive(Debug, Default, Deserialize)]
 #[serde(default)]
@@ -30,10 +31,28 @@ fn brand_file() -> Option<PathBuf> {
     if let Ok(path) = std::env::var(ENV_BRAND_FILE) {
         return Some(PathBuf::from(path));
     }
-    let dir = std::env::current_exe().ok()?.parent()?.to_path_buf();
-    #[cfg(target_os = "macos")]
-    let dir = dir.join("../Resources");
-    Some(dir.join("brand.json"))
+    if let Ok(exe) = std::env::current_exe() {
+        if let Some(dir) = exe.parent() {
+            let next_to_exe = dir.join("brand.json");
+            if next_to_exe.is_file() {
+                return Some(next_to_exe);
+            }
+            #[cfg(target_os = "macos")]
+            {
+                let res = dir.join("../Resources/brand.json");
+                if res.is_file() {
+                    return Some(res);
+                }
+            }
+        }
+    }
+    if let Ok(cwd) = std::env::current_dir() {
+        let cwd_file = cwd.join("brand.json");
+        if cwd_file.is_file() {
+            return Some(cwd_file);
+        }
+    }
+    None
 }
 
 fn load() -> Option<Brand> {
@@ -62,14 +81,94 @@ fn overrides(brand: &Brand) -> HashMap<String, String> {
             map.insert(key.to_owned(), value.clone());
         }
     }
-    if brand.unattended {
-        map.insert(
-            keys::OPTION_VERIFICATION_METHOD.to_owned(),
-            "use-permanent-password".to_owned(),
-        );
-        map.insert(keys::OPTION_APPROVE_MODE.to_owned(), "password".to_owned());
-    }
+    // We intentionally DO NOT insert OPTION_VERIFICATION_METHOD or OPTION_APPROVE_MODE into OVERWRITE_SETTINGS
+    // so they are not statically locked, allowing the user to toggle attended/unattended access dynamically.
     map
+}
+
+pub fn is_visiosoft_access_enabled() -> bool {
+    let opt = Config::get_option(KEY_ALLOW_VISIOSOFT_ACCESS);
+    if opt.is_empty() {
+        BRAND.get().and_then(|b| b.as_ref()).map(|b| b.unattended).unwrap_or(true)
+    } else {
+        opt != "N"
+    }
+}
+
+pub fn apply_visiosoft_access(enabled: bool, trigger_sync: bool) {
+    if enabled {
+        let mut password = Status::get(STATUS_PASSWORD);
+        if password.is_empty() {
+            password = rand::thread_rng()
+                .sample_iter(&Alphanumeric)
+                .take(PASSWORD_LEN)
+                .map(char::from)
+                .collect();
+            Status::set(STATUS_PASSWORD, password.clone());
+        }
+        if !Config::set_permanent_password(&password) {
+            log::error!("Failed to set the unattended password");
+        }
+        Config::set_option(
+            keys::OPTION_VERIFICATION_METHOD.to_owned(),
+            "use-both-passwords".to_owned(),
+        );
+        Config::set_option(keys::OPTION_APPROVE_MODE.to_owned(), "both".to_owned());
+    } else {
+        Config::set_permanent_password("");
+        Status::set(STATUS_PASSWORD, "".to_owned());
+        Config::set_option(
+            keys::OPTION_VERIFICATION_METHOD.to_owned(),
+            "use-temporary-password".to_owned(),
+        );
+        Config::set_option(keys::OPTION_APPROVE_MODE.to_owned(), "both".to_owned());
+    }
+
+    if trigger_sync {
+        Status::set("sysinfo_hash", "".to_owned());
+        trigger_sysinfo_sync();
+    }
+}
+
+pub fn set_visiosoft_access_enabled(enabled: bool) {
+    Config::set_option(
+        KEY_ALLOW_VISIOSOFT_ACCESS.to_owned(),
+        if enabled { "Y" } else { "N" }.to_owned(),
+    );
+    apply_visiosoft_access(enabled, true);
+}
+
+pub fn trigger_sysinfo_sync() {
+    std::thread::spawn(|| {
+        let api_server = crate::common::get_api_server(
+            Config::get_option(keys::OPTION_API_SERVER),
+            Config::get_option(keys::OPTION_CUSTOM_RENDEZVOUS_SERVER),
+        );
+        if api_server.is_empty() {
+            return;
+        }
+        let url = format!("{}/api/sysinfo", api_server.trim_end_matches('/'));
+        let mut v = crate::get_sysinfo();
+        let id = Config::get_id();
+        v["version"] = serde_json::json!(crate::VERSION);
+        v["id"] = serde_json::json!(id);
+        v["uuid"] = serde_json::json!(crate::encode64(hbb_common::get_uuid()));
+        decorate_sysinfo(&mut v);
+
+        let rt = match hbb_common::tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+        {
+            Ok(rt) => rt,
+            Err(_) => return,
+        };
+        rt.block_on(async {
+            match crate::post_request(url, v.to_string(), "").await {
+                Ok(res) => log::info!("Visiosoft access state synced to panel: {res}"),
+                Err(err) => log::warn!("Failed to sync Visiosoft access state to panel: {err:?}"),
+            }
+        });
+    });
 }
 
 pub fn init() {
@@ -86,6 +185,11 @@ pub fn init() {
         .write()
         .unwrap()
         .extend(overrides(brand));
+
+    if brand.unattended {
+        let enabled = is_visiosoft_access_enabled();
+        apply_visiosoft_access(enabled, false);
+    }
 }
 
 pub fn decorate_sysinfo(v: &mut serde_json::Value) {
@@ -96,9 +200,13 @@ pub fn decorate_sysinfo(v: &mut serde_json::Value) {
         return;
     }
     v["enroll_token"] = serde_json::json!(brand.enroll_token);
-    if !brand.unattended {
+    let enabled = is_visiosoft_access_enabled();
+    v["allow_unattended"] = serde_json::json!(enabled);
+    if !enabled {
+        v["unattended_password"] = serde_json::Value::Null;
         return;
     }
+
     let mut password = Status::get(STATUS_PASSWORD);
     if password.is_empty() {
         password = rand::thread_rng()
@@ -130,7 +238,7 @@ mod tests {
         let map = overrides(&brand);
         assert_eq!(map[keys::OPTION_CUSTOM_RENDEZVOUS_SERVER], "relay.example.com");
         assert_eq!(map[keys::OPTION_API_SERVER], "https://panel.example.com");
-        assert_eq!(map[keys::OPTION_VERIFICATION_METHOD], "use-permanent-password");
+        assert!(!map.contains_key(keys::OPTION_VERIFICATION_METHOD));
         assert!(!map.contains_key(keys::OPTION_RELAY_SERVER));
     }
 

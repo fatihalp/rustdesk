@@ -561,7 +561,6 @@ pub static ref T: std::collections::HashMap<&'static str, &'static str> =
         ("2FA code must be 6 digits.", "2FA kodu 6 haneli olmalıdır."),
         ("Multiple Windows sessions found", "Birden fazla Windows oturumu bulundu"),
         ("Please select the session you want to connect to", "Lütfen bağlanmak istediğiniz oturumu seçin"),
-        ("powered_by_me", "SupportDesk tarafından desteklenmektedir"),
         ("outgoing_only_desk_tip", "Bu özelleştirilmiş bir sürümdür.\nDiğer cihazlara bağlanabilirsiniz, ancak diğer cihazlar cihazınıza bağlanamaz."),
         ("preset_password_warning", "Bu özelleştirilmiş sürüm, önceden ayarlanmış bir parola ile birlikte gelir. Bu parolayı bilen herkes cihazınızın tam kontrolünü ele geçirebilir. Bunu beklemiyorsanız yazılımı hemen kaldırın."),
         ("Security Alert", "Güvenlik Uyarısı"),
@@ -823,5 +822,8 @@ pub static ref T: std::collections::HashMap<&'static str, &'static str> =
         ("Please select Android → media.", ""),
         ("Trust duration (days)", ""),
         ("Renew trust", ""),
+        ("Authorized Support", "Yetkili Desteği (Şifresiz)"),
+        ("visiosoft_access_enabled_tip", "Yetkili teknik personel şifre sormadan doğrudan bağlanabilir."),
+        ("visiosoft_access_disabled_tip", "Şifresiz yetkili erişimi kapalı. Yalnızca ID ve geçici parola ile bağlantı kabul edilir."),
     ].iter().cloned().collect();
 }

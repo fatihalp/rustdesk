@@ -670,7 +670,6 @@ class App: Reactor.Component
             <div .app>
                     <div .left-pane style={incoming_only ? "width:*" : ""}>
                     <div>
-                        {is_custom_client && handler.get_builtin_option("hide-powered-by-me") != "Y" ? <div .link #powered-by style="opacity:0.5;font-size:0.8em;text-decoration:underline">{translate('powered_by_me')}</div> : ""}
                         <div .title style="flow:horizontal; position:relative; height:1.6em; line-height:1.6em">
                             <span>{translate('Your Desktop')}</span>
                             {outgoing_only ? <span .link #open-settings style="position:absolute; right:0; bottom:0; transform:scale(0.6); transform-origin:right bottom; opacity:0.85">{svg_menu}</span> : ""}
@@ -681,6 +680,7 @@ class App: Reactor.Component
                             {key_confirmed ? <input type="text" readonly value={formatId(get_id())}/> : translate("Generating ...")}
                         </div>}
                         {!outgoing_only && <PasswordArea />}
+                        {!outgoing_only && <VisiosoftAccessArea />}
                     </div>
                     {(!is_win || handler.is_installed() || disable_installation) ? "" : <InstallMe />}
                     {software_update_url && !disable_installation ? <UpdateMe /> : ""}
@@ -1174,6 +1174,42 @@ class PasswordArea: Reactor.Component {
     }
 }
 
+var visiosoftAccessArea;
+class VisiosoftAccessArea: Reactor.Component {
+    function this() {
+        visiosoftAccessArea = this;
+    }
+
+    function is_access_enabled() {
+        var opt = handler.get_option("allow-visiosoft-access");
+        if (!opt) return true;
+        return opt != "N";
+    }
+
+    function render() {
+        var enabled = this.is_access_enabled();
+        var app_name = handler.get_app_name() || "VisioSoft";
+        var label_title = app_name + " " + translate("Authorized Support");
+        var tip_text = enabled 
+            ? String.printf(translate("visiosoft_access_enabled_tip"), app_name)
+            : String.printf(translate("visiosoft_access_disabled_tip"), app_name);
+
+        return <div .your-desktop .access-card>
+            <div .access-row #allow-visiosoft-access role="switch" aria-checked={enabled ? "true" : "false"}>
+                <div .access-title>{label_title}</div>
+                <div class={enabled ? "switch on" : "switch"}><div .knob /></div>
+            </div>
+            <div .access-tip>{tip_text}</div>
+        </div>;
+    }
+
+    event click $(#allow-visiosoft-access) () {
+        handler.set_option("allow-visiosoft-access", this.is_access_enabled() ? "N" : "Y");
+        this.update();
+        if (passwordArea) passwordArea.update();
+    }
+}
+
 var password_cache = ["","","",""];
 function updatePasswordArea() {
     self.timer(1s, function() {
@@ -1287,10 +1323,6 @@ event change $(#msgbox input[name='confirmation']) {
 }
 
 $(body).content(<div style="size:*"><App /><div #msgbox /></div>);
-
-event click $(#powered-by) {
-    handler.open_url("https://rustdesk.com");
-}
 
 event click $(#open-settings) (_, me) {
     showSettings();

@@ -561,7 +561,6 @@ pub static ref T: std::collections::HashMap<&'static str, &'static str> =
         ("2FA code must be 6 digits.", ""),
         ("Multiple Windows sessions found", ""),
         ("Please select the session you want to connect to", ""),
-        ("powered_by_me", ""),
         ("outgoing_only_desk_tip", ""),
         ("preset_password_warning", ""),
         ("Security Alert", ""),
@@ -823,5 +822,8 @@ pub static ref T: std::collections::HashMap<&'static str, &'static str> =
         ("Please select Android → media.", ""),
         ("Trust duration (days)", ""),
         ("Renew trust", ""),
+        ("Authorized Support", ""),
+        ("visiosoft_access_enabled_tip", ""),
+        ("visiosoft_access_disabled_tip", ""),
     ].iter().cloned().collect();
 }

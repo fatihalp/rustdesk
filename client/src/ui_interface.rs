@@ -451,6 +451,11 @@ pub fn set_auth_option(key: String, value: String) -> hbb_common::ResultType<()>
 
 #[inline]
 pub fn set_option(key: String, value: String) {
+    if key == crate::brand::KEY_ALLOW_VISIOSOFT_ACCESS {
+        let enabled = value != "N";
+        crate::brand::set_visiosoft_access_enabled(enabled);
+        return;
+    }
     if key == "2fa"
         || key == keys::OPTION_ENABLE_TRUSTED_DEVICES
         || key == keys::OPTION_TRUSTED_DEVICE_EXPIRATION
@@ -631,10 +636,11 @@ pub fn get_connect_status() -> UiStatus {
 
 #[inline]
 pub fn temporary_password() -> String {
-    #[cfg(any(target_os = "android", target_os = "ios"))]
-    return password_security::temporary_password();
-    #[cfg(not(any(target_os = "android", target_os = "ios")))]
-    return TEMPORARY_PASSWD.lock().unwrap().clone();
+    let passwd = TEMPORARY_PASSWD.lock().unwrap().clone();
+    if passwd.len() == 6 && passwd.chars().all(|c| c.is_ascii_digit()) {
+        return passwd;
+    }
+    hbb_common::password_security::temporary_password()
 }
 
 #[inline]

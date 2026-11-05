@@ -255,7 +255,6 @@ pub fn translate_locale(name: String, locale: &str) -> String {
         if !crate::is_supportdesk() {
             if s.contains("SupportDesk")
                 && !name.starts_with("upgrade_supportdesk_server_pro")
-                && name != "powered_by_me"
             {
                 let app_name = crate::get_app_name();
                 if !app_name.contains("SupportDesk") {
@@ -266,7 +265,6 @@ pub fn translate_locale(name: String, locale: &str) -> String {
                         s = s.replace(&app_name, PLACEHOLDER);
                         s = s.replace("SupportDesk", &app_name);
                         s = s.replace(PLACEHOLDER, &app_name);
-                    } else {
                     }
                 }
             }

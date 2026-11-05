@@ -3516,30 +3516,6 @@ Color? disabledTextColor(BuildContext context, bool enabled) {
       : Theme.of(context).textTheme.titleLarge?.color?.withOpacity(0.6);
 }
 
-Widget loadPowered(BuildContext context) {
-  if (bind.mainGetBuildinOption(key: "hide-powered-by-me") == 'Y') {
-    return SizedBox.shrink();
-  }
-  return MouseRegion(
-    cursor: SystemMouseCursors.click,
-    child: GestureDetector(
-      onTap: () {
-        launchUrl(Uri.parse('https://rustdesk.com'));
-      },
-      child: Opacity(
-          opacity: 0.5,
-          child: Text(
-            translate("powered_by_me"),
-            overflow: TextOverflow.clip,
-            style: Theme.of(context)
-                .textTheme
-                .bodySmall
-                ?.copyWith(fontSize: 9, decoration: TextDecoration.underline),
-          )),
-    ),
-  ).marginOnly(top: 6);
-}
-
 const _kDefaultLogoAsset = 'assets/logo.png';
 const _kLightLogoAsset = 'assets/logo_light.png';
 const _kDarkLogoAsset = 'assets/logo_dark.png';
@@ -4003,38 +3979,3 @@ String mouseButtonsToPeer(int buttons) {
   }
 }
 
-Widget? buildAvatarWidget({
-  required String avatar,
-  required double size,
-  double? borderRadius,
-  Widget? fallback,
-}) {
-  final trimmed = avatar.trim();
-  if (trimmed.isEmpty) return fallback;
-
-  ImageProvider? imageProvider;
-  if (trimmed.startsWith('data:image/')) {
-    final comma = trimmed.indexOf(',');
-    if (comma > 0) {
-      try {
-        imageProvider = MemoryImage(base64Decode(trimmed.substring(comma + 1)));
-      } catch (_) {}
-    }
-  } else if (trimmed.startsWith('http://') || trimmed.startsWith('https://')) {
-    imageProvider = NetworkImage(trimmed);
-  }
-
-  if (imageProvider == null) return fallback;
-
-  final radius = borderRadius ?? size / 2;
-  return ClipRRect(
-    borderRadius: BorderRadius.circular(radius),
-    child: Image(
-      image: imageProvider,
-      width: size,
-      height: size,
-      fit: BoxFit.cover,
-      errorBuilder: (_, __, ___) => fallback ?? SizedBox.shrink(),
-    ),
-  );
-}

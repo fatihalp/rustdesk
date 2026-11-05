@@ -293,11 +293,6 @@ class _SettingsState extends State<SettingsPage> with WidgetsBindingObserver {
     final customClientSection = CustomSettingsSection(
         child: Column(
       children: [
-        if (bind.isCustomClient())
-          Align(
-            alignment: Alignment.center,
-            child: loadPowered(context),
-          ),
         Align(
           alignment: Alignment.center,
           child: loadLogo(),
@@ -740,17 +735,7 @@ class _SettingsState extends State<SettingsPage> with WidgetsBindingObserver {
                 title: Obx(() => Text(gFFI.userModel.userName.value.isEmpty
                     ? translate('Login')
                     : '${translate('Logout')} (${gFFI.userModel.accountLabelWithHandle})')),
-                leading: Obx(() {
-                  final avatar = bind.mainResolveAvatarUrl(
-                      avatar: gFFI.userModel.avatar.value);
-                  return buildAvatarWidget(
-                        avatar: avatar,
-                        size: 28,
-                        borderRadius: null,
-                        fallback: Icon(Icons.person),
-                      ) ??
-                      Icon(Icons.person);
-                }),
+                leading: const Icon(Icons.person),
                 onPressed: (context) {
                   if (gFFI.userModel.userName.value.isEmpty) {
                     loginDialog();

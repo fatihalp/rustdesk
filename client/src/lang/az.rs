@@ -561,7 +561,6 @@ pub static ref T: std::collections::HashMap<&'static str, &'static str> =
         ("2FA code must be 6 digits.", "2FA kodu 6 rəqəm olmalıdır."),
         ("Multiple Windows sessions found", "Bir neçə Windows sessiyası tapıldı"),
         ("Please select the session you want to connect to", "Qoşulmaq istədiyiniz sessiyanı seçin"),
-        ("powered_by_me", "SupportDesk ilə işləyir"),
         ("outgoing_only_desk_tip", "Bu, fərdiləşdirilmiş buraxılışdır.\nSiz digər cihazlara qoşula bilərsiniz, lakin digər cihazlar sizin cihazınıza qoşula bilməz."),
         ("preset_password_warning", "Bu fərdiləşdirilmiş buraxılış öncədən təyin edilmiş parolla gəlir. Bu parolu bilən hər kəs cihazınıza tam nəzarət edə bilər. Bunu gözləmirdinizsə, proqramı dərhal silin."),
         ("Security Alert", "Təhlükəsizlik xəbərdarlığı"),

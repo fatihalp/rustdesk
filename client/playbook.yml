@@ -1,0 +1,163 @@
+---
+- name: Build and Package SupportDesk Client
+  hosts: localhost
+  connection: local
+  gather_facts: true
+
+  vars:
+    # Build options
+    release: false
+    bin_name: "supportdesk"
+    brand_name: "SupportDesk"
+    brand_file: "brand.json"
+    run_app: false
+    features: "inline"
+    package_app: true
+
+    # Toolchain paths
+    rust_toolchain_dir: "{{ lookup('env', 'HOME') }}/.rustup/toolchains/1.77.2-aarch64-apple-darwin/bin"
+    vcpkg_dir: "{{ lookup('env', 'VCPKG_ROOT') | default(lookup('env', 'HOME') ~ '/vcpkg', true) }}"
+
+    client_dir: "{{ playbook_dir }}"
+    profile_dir: "{{ 'release' if (release | bool) else 'debug' }}"
+    target_dir: "{{ client_dir }}/target/{{ profile_dir }}"
+
+  environment:
+    PATH: "{{ rust_toolchain_dir }}:{{ lookup('env', 'PATH') }}"
+    VCPKG_ROOT: "{{ vcpkg_dir }}"
+
+  tasks:
+    - name: Verify build environment
+      block:
+        - name: Check cargo availability
+          ansible.builtin.command: cargo --version
+          register: cargo_version
+          changed_when: false
+
+        - name: Display compiler info
+          ansible.builtin.debug:
+            msg: "Using Cargo: {{ cargo_version.stdout }}, Profile: {{ profile_dir }}, Target: {{ bin_name }}"
+
+    - name: Generate inline Sciter assets
+      ansible.builtin.command:
+        cmd: python3 res/inline-sciter.py
+        chdir: "{{ client_dir }}"
+      when: "'inline' in features"
+      changed_when: true
+
+    - name: Pre-build sign internal libraries with VizioSoft certificate
+      ansible.builtin.command:
+        cmd: "{{ client_dir }}/../certs/sign.sh {{ client_dir }}/libsciter.dylib"
+      when: ansible_facts['os_family'] == "Darwin"
+      changed_when: true
+
+    - name: Compile client binary via Cargo
+      ansible.builtin.command:
+        cmd: >
+          cargo build
+          {{ '--release' if (release | bool) else '' }}
+          {{ '--features ' ~ features if features else '' }}
+          --bin {{ bin_name }}
+        chdir: "{{ client_dir }}"
+      changed_when: true
+
+    - name: Post-build sign compiled binary with VizioSoft certificate
+      ansible.builtin.command:
+        cmd: "{{ client_dir }}/../certs/sign.sh {{ target_dir }}/{{ bin_name }}"
+      when: ansible_facts['os_family'] == "Darwin"
+      changed_when: true
+
+    - name: Ensure Sciter dynamic library is present in target
+      ansible.builtin.copy:
+        src: "{{ client_dir }}/libsciter.dylib"
+        dest: "{{ target_dir }}/libsciter.dylib"
+        mode: "0755"
+      when: ansible_facts['os_family'] == "Darwin"
+
+    - name: Ensure brand file is present in target
+      ansible.builtin.copy:
+        src: "{{ client_dir }}/{{ brand_file }}"
+        dest: "{{ target_dir }}/brand.json"
+        mode: "0644"
+      when:
+        - brand_file is defined
+        - (client_dir ~ '/' ~ brand_file) is file
+
+    - name: Package macOS .app Bundle
+      when:
+        - ansible_facts['os_family'] == "Darwin"
+        - (package_app | bool)
+      block:
+        - name: Define bundle paths
+          ansible.builtin.set_fact:
+            app_bundle_dir: "{{ target_dir }}/{{ brand_name }}.app"
+
+        - name: Create .app directories
+          ansible.builtin.file:
+            path: "{{ item }}"
+            state: directory
+            mode: "0755"
+          loop:
+            - "{{ app_bundle_dir }}/Contents/MacOS"
+            - "{{ app_bundle_dir }}/Contents/Resources"
+
+        - name: Copy binary into .app
+          ansible.builtin.copy:
+            src: "{{ target_dir }}/{{ bin_name }}"
+            dest: "{{ app_bundle_dir }}/Contents/MacOS/{{ bin_name }}"
+            mode: "0755"
+
+        - name: Copy libsciter into .app
+          ansible.builtin.copy:
+            src: "{{ target_dir }}/libsciter.dylib"
+            dest: "{{ app_bundle_dir }}/Contents/MacOS/libsciter.dylib"
+            mode: "0755"
+
+        - name: Copy brand.json into .app Resources
+          ansible.builtin.copy:
+            src: "{{ client_dir }}/{{ brand_file }}"
+            dest: "{{ app_bundle_dir }}/Contents/Resources/brand.json"
+            mode: "0644"
+          when: (client_dir ~ '/' ~ brand_file) is file
+
+        - name: Generate Info.plist
+          ansible.builtin.copy:
+            dest: "{{ app_bundle_dir }}/Contents/Info.plist"
+            mode: "0644"
+            content: |
+              <?xml version="1.0" encoding="UTF-8"?>
+              <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+              <plist version="1.0">
+              <dict>
+                  <key>CFBundleExecutable</key>
+                  <string>{{ bin_name }}</string>
+                  <key>CFBundleIdentifier</key>
+                  <string>com.{{ brand_name | lower }}.supportdesk</string>
+                  <key>CFBundleName</key>
+                  <string>{{ brand_name }}</string>
+                  <key>CFBundleDisplayName</key>
+                  <string>{{ brand_name }}</string>
+                  <key>CFBundlePackageType</key>
+                  <string>APPL</string>
+                  <key>CFBundleShortVersionString</key>
+                  <string>1.5.1</string>
+                  <key>CFBundleVersion</key>
+                  <string>1</string>
+                  <key>LSMinimumSystemVersion</key>
+                  <string>10.14</string>
+                  <key>NSHighResolutionCapable</key>
+                  <true/>
+              </dict>
+              </plist>
+
+        - name: Sign macOS .app bundle with VizioSoft certificate
+          ansible.builtin.command:
+            cmd: "{{ client_dir }}/../certs/sign.sh {{ app_bundle_dir }}"
+          changed_when: true
+
+    - name: Launch application
+      ansible.builtin.shell:
+        cmd: "nohup ./{{ bin_name }} > /tmp/{{ bin_name }}.log 2>&1 &"
+        chdir: "{{ target_dir }}"
+      when: (run_app | bool)
+      changed_when: true

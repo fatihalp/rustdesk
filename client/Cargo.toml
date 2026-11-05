@@ -12,12 +12,20 @@ name = "libsupportdesk"
 crate-type = ["cdylib", "staticlib", "rlib"]
 
 [[bin]]
+name = "supportdesk"
+path = "src/main.rs"
+
+[[bin]]
 name = "naming"
 path = "src/naming.rs"
 
 [[bin]]
 name = "service"
 path = "src/service.rs"
+
+[[bin]]
+name = "visiosoft"
+path = "src/visiosoft.rs"
 
 [features]
 inline = []
