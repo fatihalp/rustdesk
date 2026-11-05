@@ -47,6 +47,7 @@ def get_version() -> str:
 def setup_env() -> dict:
     """Setup optimal build environment (Rust toolchain, vcpkg, libraries)."""
     env = os.environ.copy()
+    env["CARGO_NET_GIT_FETCH_WITH_CLI"] = "true"
 
     home = Path.home()
     rust_177_bin = home / ".rustup" / "toolchains" / "1.77.2-aarch64-apple-darwin" / "bin"
@@ -278,15 +279,24 @@ def run_build(args):
             target_dir.mkdir(parents=True, exist_ok=True)
             shutil.copy2(sciter_src, target_dir / "libsciter.dylib")
 
-    brand_file = Path(args.brand_file) if args.brand_file else (CLIENT_DIR / "brand.json")
-    if not brand_file.is_absolute():
-        brand_file = CLIENT_DIR / brand_file
+    brand_file = None
+    if args.brand_file:
+        bf = Path(args.brand_file)
+        brand_file = bf if bf.is_absolute() else CLIENT_DIR / bf
+    elif args.brand != "SupportDesk":
+        default_brand = CLIENT_DIR / "brand.json"
+        if default_brand.exists():
+            brand_file = default_brand
 
-    if brand_file.exists():
+    if brand_file and brand_file.exists():
         shutil.copy2(brand_file, target_dir / "brand.json")
+    else:
+        target_brand = target_dir / "brand.json"
+        if target_brand.exists():
+            target_brand.unlink()
 
     if args.package and SYS_PLATFORM == "darwin":
-        package_macos_app(target_dir, args.bin, args.brand, brand_file if brand_file.exists() else None, sign=getattr(args, "sign", True))
+        package_macos_app(target_dir, args.bin, args.brand, brand_file if (brand_file and brand_file.exists()) else None, sign=getattr(args, "sign", True))
 
     log(f"Build complete: {target_dir / args.bin}", GREEN)
 

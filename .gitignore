@@ -34,6 +34,7 @@
 /public/storage
 /public/portal-dist
 /RelayServer/data
+/data
 /RelayServer/target
 /storage/*.key
 /storage/pail

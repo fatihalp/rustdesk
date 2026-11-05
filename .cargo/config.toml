@@ -1,0 +1,7 @@
+[net]
+git-fetch-with-cli = true
+
+[target.'cfg(target_os="macos")']
+rustflags = [
+    "-C", "link-args=-sectcreate __CGPreLoginApp __cgpreloginapp /dev/null",
+]

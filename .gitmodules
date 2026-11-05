@@ -1,3 +1,4 @@
 [submodule "libs/hbb_common"]
 	path = client/libs/hbb_common
 	url = https://github.com/rustdesk/hbb_common
+	ignore = dirty
