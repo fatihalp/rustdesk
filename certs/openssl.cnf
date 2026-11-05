@@ -1,0 +1,24 @@
+[ req ]
+default_bits        = 4096
+default_md          = sha256
+prompt              = no
+utf8                = yes
+string_mask         = utf8only
+distinguished_name  = req_distinguished_name
+x509_extensions     = v3_codesign
+
+[ req_distinguished_name ]
+CN                  = VISIOSOFT TEKNOLOJI ANONIM SIRKETI
+O                   = VİSİOSOFT TEKNOLOJİ ANONİM ŞİRKETİ
+OU                  = 9251021443
+L                   = Başakşehir
+ST                  = İstanbul
+C                   = TR
+emailAddress        = alp@visiosoft.com.tr
+
+[ v3_codesign ]
+basicConstraints    = critical, CA:FALSE
+keyUsage            = critical, digitalSignature
+extendedKeyUsage    = critical, codeSigning
+subjectKeyIdentifier= hash
+subjectAltName      = email:alp@visiosoft.com.tr

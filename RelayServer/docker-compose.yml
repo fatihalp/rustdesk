@@ -1,0 +1,21 @@
+services:
+  relay:
+    build: .
+    container_name: relay-server
+    restart: unless-stopped
+    environment:
+      RELAY_HOST: ${RELAY_HOST:-}
+      ENCRYPTED_ONLY: ${ENCRYPTED_ONLY:-N}
+      ALWAYS_USE_RELAY: ${ALWAYS_USE_RELAY:-N}
+    ports:
+      - "21115:21115"
+      - "21116:21116"
+      - "21116:21116/udp"
+      - "21117:21117"
+      - "21118:21118"
+      - "21119:21119"
+    volumes:
+      - relay-data:/data
+
+volumes:
+  relay-data:

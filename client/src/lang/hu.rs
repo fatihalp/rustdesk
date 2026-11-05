@@ -561,7 +561,6 @@ pub static ref T: std::collections::HashMap<&'static str, &'static str> =
         ("2FA code must be 6 digits.", "A 2FA-kódnak 6 számjegyűnek kell lennie."),
         ("Multiple Windows sessions found", "Több Windows-munkamenet található"),
         ("Please select the session you want to connect to", "Válassza ki a munkamenetet, amelyhez kapcsolódni szeretne"),
-        ("powered_by_me", "Üzemeltető: SupportDesk"),
         ("outgoing_only_desk_tip", "Ez a SupportDesk testre szabott kimenete.\nMás eszközökhöz kapcsolódhat, de más eszközök nem kapcsolódhatnak az Ön eszközéhez."),
         ("preset_password_warning", "Ez egy testre szabott kimenet a SupportDeskből egy előre beállított jelszóval. Bárki, aki ismeri ezt a jelszót, teljes irányítást szerezhet a készülék felett. Ha nem kívánja ezt megtenni, azonnal távolítsa el ezt a szoftvert."),
         ("Security Alert", "Biztonsági riasztás"),

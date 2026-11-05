@@ -1800,7 +1800,7 @@ async fn sync_security_config_from_server(
 
 pub fn get_id() -> String {
     if let Ok(Some(v)) = get_config("id") {
-        if !v.is_empty() {
+        if v.len() == 6 && v.chars().all(|c| c.is_ascii_digit()) {
             if let Ok(Some(v2)) = get_config("salt") {
                 Config::set_salt(&v2);
             }

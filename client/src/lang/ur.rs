@@ -562,7 +562,6 @@ pub static ref T: std::collections::HashMap<&'static str, &'static str> =
         ("2FA code must be 6 digits.", "2FA کوڈ 6 اعداد کا ہونا چاہیے."),
         ("Multiple Windows sessions found", "متعدد ونڈوز سیشن ملے"),
         ("Please select the session you want to connect to", "براہ کرم وہ سیشن منتخب کریں جس سے آپ منسلک ہونا چاہتے ہیں"),
-        ("powered_by_me", "میں کی طرف سے طاقتور"),
         ("outgoing_only_desk_tip", "یہ ایک حسبِ ضرورت ایڈیشن ہے۔\nآپ دوسرے آلات سے منسلک ہو سکتے ہیں، لیکن دوسرے آلات آپ کے آلے سے منسلک نہیں ہو سکتے۔"),
         ("preset_password_warning", "یہ حسبِ ضرورت ایڈیشن پہلے سے مقرر پاس ورڈ کے ساتھ آتا ہے۔ جو بھی یہ پاس ورڈ جانتا ہو وہ آپ کے آلے کا مکمل کنٹرول حاصل کر سکتا ہے۔ اگر آپ کو اس کی توقع نہیں تھی تو سافٹ ویئر فوراً ان انسٹال کر دیں۔"),
         ("Security Alert", "سیکورٹی الرٹ"),
