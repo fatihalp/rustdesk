@@ -16,14 +16,12 @@ use crate::proto::id_pk::IdPk;
 const PRIVATE_KEY_FILE: &str = "id_ed25519";
 const PUBLIC_KEY_FILE: &str = "id_ed25519.pub";
 
-/// The server's Ed25519 identity, used to vouch for the public keys of registered peers.
 pub struct ServerKeys {
     signing: SigningKey,
     public_key: String,
 }
 
 impl ServerKeys {
-    /// Loads the key pair from `dir`, creating it on first start.
     pub fn load_or_create(dir: &Path) -> Result<Self> {
         let private_path = dir.join(PRIVATE_KEY_FILE);
         let signing = if private_path.exists() {
@@ -38,12 +36,10 @@ impl ServerKeys {
         Ok(Self { signing, public_key })
     }
 
-    /// Base64 public key that clients must be configured with.
     pub fn public_key(&self) -> &str {
         &self.public_key
     }
 
-    /// Returns `signature || IdPk{id, pk}` so a client can verify the pairing of an id and its key.
     pub fn sign_id_pk(&self, id: &str, pk: &[u8]) -> Bytes {
         let payload = IdPk {
             id: id.to_owned(),
@@ -58,7 +54,6 @@ impl ServerKeys {
     }
 }
 
-/// Public keys containing `/` are awkward in client configuration strings, so retry until none does.
 fn generate() -> Result<SigningKey> {
     for _ in 0..300 {
         let signing = SigningKey::from_bytes(&rand::random());

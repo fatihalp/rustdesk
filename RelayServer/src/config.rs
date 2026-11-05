@@ -2,27 +2,16 @@ use std::{env, net::IpAddr, path::PathBuf, str::FromStr};
 
 use anyhow::{Context, Result};
 
-/// Runtime settings, read once from environment variables.
 pub struct Config {
-    /// Address to bind to; all interfaces when unset.
     pub bind: Option<IpAddr>,
-    /// Rendezvous port (TCP and UDP). The NAT-test port is `port - 1`, the WebSocket port `port + 2`.
     pub port: u16,
-    /// Relay port (TCP). The relay WebSocket port is `relay_port + 2`.
     pub relay_port: u16,
-    /// Control & real-time WebSocket port for the Laravel management panel (`relay_port + 3` by default).
     pub control_port: u16,
-    /// Optional shared secret required on control mutations (`X-Relay-Secret` header).
     pub control_secret: String,
-    /// Relay address advertised to clients; empty lets clients use their own setting.
     pub relay_host: String,
-    /// Only accept clients that present this server's public key.
     pub encrypted_only: bool,
-    /// Skip NAT punching and force every session through the relay.
     pub always_use_relay: bool,
-    /// Trust `X-Real-IP` / `X-Forwarded-For` on WebSocket ports (only behind a reverse proxy).
     pub trust_proxy_headers: bool,
-    /// Directory holding the signing key pair and the peer database.
     pub data_dir: PathBuf,
 }
 

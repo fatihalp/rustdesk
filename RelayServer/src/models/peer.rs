@@ -18,10 +18,8 @@ const ONLINE_TIMEOUT: Duration = Duration::from_secs(30);
 const KEY_REGISTRATION_WINDOW: Duration = Duration::from_secs(6);
 const MAX_KEY_REGISTRATIONS_PER_WINDOW: u32 = 2;
 
-/// A registered remote-desktop endpoint.
 #[derive(Clone)]
 pub struct Peer {
-    /// Last UDP address the peer registered from (port 0 until it registers after a restart).
     pub addr: SocketAddr,
     pub pk: Bytes,
     uuid: Bytes,
@@ -62,7 +60,6 @@ pub enum PkRegistration {
     ServerError,
 }
 
-/// All known peers: live state in memory, identity persisted in SQLite, plus real-time event bus.
 pub struct PeerStore {
     peers: RwLock<HashMap<String, Peer>>,
     blocked: RwLock<HashSet<String>>,
@@ -118,7 +115,6 @@ impl PeerStore {
         }));
     }
 
-    /// Marks a peer offline immediately and notifies subscribers.
     pub fn force_offline(&self, id: &str) -> bool {
         let mut peers = self.write();
         let Some(peer) = peers.get_mut(id) else {
@@ -136,7 +132,6 @@ impl PeerStore {
         true
     }
 
-    /// Sweeps peers whose keep-alive expired and broadcasts `peer.offline` events.
     pub fn sweep_expired(&self) {
         let mut newly_offline = Vec::new();
         {
@@ -157,7 +152,6 @@ impl PeerStore {
         }
     }
 
-    /// Snapshot of all in-memory peers and blocked IDs for the management API.
     pub fn snapshot(&self) -> Vec<Value> {
         let blocked = self.blocked.read().unwrap_or_else(|e| e.into_inner());
         let peers = self.read();
@@ -190,7 +184,6 @@ impl PeerStore {
         result
     }
 
-    /// Records a keep-alive. Returns whether the peer must (re)send its public key.
     pub fn heartbeat(&self, id: &str, addr: SocketAddr) -> bool {
         if self.is_blocked(id) {
             return false;
@@ -230,7 +223,6 @@ impl PeerStore {
         request_pk
     }
 
-    /// Registers or refreshes a peer's public key, rejecting identity theft and floods.
     pub fn register_pk(&self, id: &str, addr: SocketAddr, uuid: Bytes, pk: Bytes) -> PkRegistration {
         if self.is_blocked(id) {
             return PkRegistration::UuidMismatch;
@@ -294,7 +286,6 @@ impl PeerStore {
         PkRegistration::Registered
     }
 
-    /// Looks a peer up in memory first, then loads from SQLite without holding the memory lock.
     pub fn find(&self, id: &str) -> Option<Peer> {
         if self.is_blocked(id) {
             return None;

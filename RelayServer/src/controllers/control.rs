@@ -14,14 +14,6 @@ use super::{RelayController, RendezvousController};
 
 const HTTP_READ_TIMEOUT: Duration = Duration::from_secs(5);
 
-/// Serves the control & real-time WebSocket port (`CONTROL_PORT`) used by Laravel and the web dashboard.
-///
-/// Supported routes:
-/// - `GET /ws` (WebSocket upgrade): streams real-time JSON events (`snapshot`, `peer.online`, `peer.offline`, `session.started`, `session.ended`, `peer.blocked`, `peer.unblocked`) and accepts JSON commands (`{"action":"block"|"unblock"|"disconnect","id":"..."}`).
-/// - `GET /status` or `GET /peers`: JSON snapshot of online/known peers, active relay sessions, and server public key.
-/// - `POST /peers/{id}/block`: blocks a peer and disconnects any active relay sessions.
-/// - `POST /peers/{id}/unblock`: unblocks a peer.
-/// - `POST /peers/{id}/disconnect`: terminates active relay sessions and marks the peer offline.
 pub struct ControlController {
     secret: String,
 }

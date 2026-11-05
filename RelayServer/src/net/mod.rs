@@ -22,7 +22,6 @@ pub fn bind_udp(bind: Option<IpAddr>, port: u16) -> io::Result<UdpSocket> {
     UdpSocket::from_std(bind_socket(bind, port, Type::DGRAM)?.into())
 }
 
-/// Binds dual-stack on `[::]` when no address is configured, falling back to `0.0.0.0`.
 fn bind_socket(bind: Option<IpAddr>, port: u16, kind: Type) -> io::Result<Socket> {
     let candidates = match bind {
         Some(ip) => vec![ip],

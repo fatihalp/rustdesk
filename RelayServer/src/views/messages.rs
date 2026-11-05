@@ -1,4 +1,3 @@
-//! Builders for every message the server sends; controllers decide *what* to say, this decides *how*.
 
 use bytes::Bytes;
 use protobuf::{EnumOrUnknown, Message};
@@ -74,7 +73,6 @@ pub fn test_nat_response(port: u16) -> RendezvousMessage {
     }))
 }
 
-/// `states` holds one bit per requested peer, most significant bit first.
 pub fn online_response(states: Vec<u8>) -> RendezvousMessage {
     wrap(Union::OnlineResponse(OnlineResponse {
         states: states.into(),

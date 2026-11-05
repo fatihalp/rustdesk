@@ -20,12 +20,10 @@ import sys
 from pathlib import Path
 from typing import Optional, List
 
-# Directories
 CLIENT_DIR = Path(__file__).resolve().parent
 REPO_ROOT = CLIENT_DIR.parent
 SYS_PLATFORM = platform.system().lower()  # darwin, windows, linux
 
-# Color helpers
 GREEN = "\033[92m"
 YELLOW = "\033[93m"
 CYAN = "\033[96m"
@@ -50,7 +48,6 @@ def setup_env() -> dict:
     """Setup optimal build environment (Rust toolchain, vcpkg, libraries)."""
     env = os.environ.copy()
 
-    # Prefer Rust 1.77.2 toolchain on macOS to avoid ABI/transmute issues
     home = Path.home()
     rust_177_bin = home / ".rustup" / "toolchains" / "1.77.2-aarch64-apple-darwin" / "bin"
     cargo_bin = home / ".cargo" / "bin"
@@ -64,7 +61,6 @@ def setup_env() -> dict:
     if paths_to_add:
         env["PATH"] = os.pathsep.join(paths_to_add) + os.pathsep + env.get("PATH", "")
 
-    # Auto-detect vcpkg
     if "VCPKG_ROOT" not in env:
         for candidate in [home / "vcpkg", Path("/opt/vcpkg"), Path("/usr/local/vcpkg")]:
             if candidate.exists():
@@ -117,24 +113,20 @@ def package_macos_app(target_dir: Path, bin_name: str, brand_name: str, brand_fi
 
     log(f"Packaging macOS bundle: {app_dir.name}", GREEN)
 
-    # Copy binary
     bin_src = target_dir / bin_name
     if bin_src.exists():
         shutil.copy2(bin_src, macos_dir / bin_name)
         os.chmod(macos_dir / bin_name, 0o755)
 
-    # Copy libsciter.dylib
     sciter_dylib = CLIENT_DIR / "libsciter.dylib"
     if sciter_dylib.exists():
         shutil.copy2(sciter_dylib, macos_dir / "libsciter.dylib")
         shutil.copy2(sciter_dylib, target_dir / "libsciter.dylib")
 
-    # Copy brand.json
     if brand_file and brand_file.exists():
         shutil.copy2(brand_file, res_dir / "brand.json")
         shutil.copy2(brand_file, target_dir / "brand.json")
 
-    # Write Info.plist
     plist_content = f"""<?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0">
@@ -165,7 +157,6 @@ def package_macos_app(target_dir: Path, bin_name: str, brand_name: str, brand_fi
     if sign and SYS_PLATFORM == "darwin":
         sign_artifact(app_dir)
 
-    # Package directly as a signed .dmg disk image
     if SYS_PLATFORM == "darwin":
         dmg_path = target_dir / f"{brand_name}.dmg"
         staging_dir = target_dir / "dmg_staging"
@@ -257,7 +248,6 @@ def run_build(args):
 
     generate_inline_sciter()
 
-    # Pre-build: Sign internal dynamic libraries before compiling
     if getattr(args, "sign", True) and SYS_PLATFORM == "darwin":
         ensure_signing_environment()
         pre_sciter = CLIENT_DIR / "libsciter.dylib"
@@ -276,7 +266,6 @@ def run_build(args):
     log(f"Building {args.bin} ({profile})...", CYAN)
     subprocess.run(cargo_cmd, cwd=CLIENT_DIR, env=env, check=True)
 
-    # Post-build: Sign compiled binary
     if getattr(args, "sign", True) and SYS_PLATFORM == "darwin":
         compiled_bin = target_dir / args.bin
         if compiled_bin.exists():
