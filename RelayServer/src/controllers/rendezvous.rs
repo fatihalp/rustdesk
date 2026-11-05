@@ -18,13 +18,9 @@ use crate::{
 const MIN_REGISTRATION_ID_LEN: usize = 6;
 const MAX_ID_LEN: usize = 253;
 
-/// Where a reply must be delivered.
 pub enum Target {
-    /// Back over the connection the request arrived on.
     Caller,
-    /// A registered peer, reached by UDP.
     Udp(SocketAddr),
-    /// A client with an open TCP/WebSocket connection, identified by its public address.
     Waiting(SocketAddr),
 }
 
@@ -35,7 +31,6 @@ pub struct Reply {
 
 pub struct Outcome {
     pub reply: Option<Reply>,
-    /// Keep the connection open to receive a later answer from the remote peer.
     pub keep_open: bool,
 }
 
@@ -49,7 +44,6 @@ impl Outcome {
     }
 }
 
-/// Turns incoming rendezvous messages into replies: peer registration and connection brokering.
 pub struct RendezvousController {
     config: Arc<Config>,
     access_key: String,
@@ -77,7 +71,6 @@ impl RendezvousController {
         self.keys.public_key()
     }
 
-    /// Handles a UDP datagram; peers only register over UDP.
     pub fn handle_udp(&self, bytes: &[u8], addr: SocketAddr) -> Option<RendezvousMessage> {
         match RendezvousMessage::parse_from_bytes(bytes).ok()?.union? {
             Union::RegisterPeer(request) if is_valid_id(&request.id) => Some(
@@ -88,7 +81,6 @@ impl RendezvousController {
         }
     }
 
-    /// Handles one message from a TCP or WebSocket client.
     pub fn handle_tcp(&self, bytes: &[u8], addr: SocketAddr, websocket: bool) -> Outcome {
         let Some(union) = RendezvousMessage::parse_from_bytes(bytes)
             .ok()
@@ -134,7 +126,6 @@ impl RendezvousController {
         Some(views::register_pk_response(code))
     }
 
-    /// Client A wants to reach peer B: ask B to punch a hole, or to expose its local address.
     fn punch_hole_request(&self, addr: SocketAddr, request: PunchHoleRequest, websocket: bool) -> Reply {
         if !self.access_key.is_empty() && request.licence_key != self.access_key {
             log::warn!("Rejected {addr}: invalid key for peer {}", request.id);
@@ -154,7 +145,6 @@ impl RendezvousController {
         };
         let socket_addr = encode_addr(addr);
         let relay_server = self.config.relay_host.clone();
-        // Behind the same router a hole cannot be punched, so B reports its local address instead.
         let message = if !websocket && same_host(peer.addr, addr) {
             views::fetch_local_addr(socket_addr, relay_server)
         } else {
@@ -175,7 +165,6 @@ impl RendezvousController {
         })
     }
 
-    /// Peer B accepted a relay request; forward its answer to the requester.
     fn relay_response(&self, mut response: RelayResponse) -> Option<Reply> {
         let requester = decode_addr(&response.socket_addr)?;
         response.socket_addr = Bytes::new();
@@ -189,7 +178,6 @@ impl RendezvousController {
         })
     }
 
-    /// Peer B punched its hole; tell requester A where to connect.
     fn punch_hole_sent(&self, addr: SocketAddr, sent: PunchHoleSent) -> Option<Reply> {
         let requester = decode_addr(&sent.socket_addr)?;
         let mut response = PunchHoleResponse {
@@ -207,7 +195,6 @@ impl RendezvousController {
         })
     }
 
-    /// Peer B shared its LAN address; tell requester A to connect directly.
     fn local_addr(&self, local: LocalAddr) -> Option<Reply> {
         let requester = decode_addr(&local.socket_addr)?;
         let mut response = PunchHoleResponse {
@@ -233,7 +220,6 @@ impl RendezvousController {
         views::online_response(states)
     }
 
-    /// Server-signed `(id, pk)` proof for clients that announce a version; empty for legacy clients.
     fn signed_pk(&self, client_version: &str, id: &str) -> Bytes {
         if client_version.is_empty() {
             return Bytes::new();

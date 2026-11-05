@@ -30,13 +30,11 @@ const MAX_DATAGRAM: usize = 64 * 1024;
 
 type Outbox = mpsc::UnboundedSender<Bytes>;
 
-/// Owns the sockets and routes traffic to the controllers.
 struct Hub {
     rendezvous: RendezvousController,
     relay: RelayController,
     control: ControlController,
     udp: UdpSocket,
-    /// Open client connections that may still receive an answer, keyed by public address.
     waiting: Mutex<HashMap<SocketAddr, Outbox>>,
     trust_proxy_headers: bool,
 }
@@ -100,7 +98,6 @@ pub async fn run(config: Config) -> Result<()> {
     }
 }
 
-/// Binds `port` and spawns an accept loop that runs `handler` for every connection.
 fn listen<F, Fut>(config: &Config, port: u16, name: &str, websocket: bool, handler: F) -> Result<()>
 where
     F: Fn(TcpStream, SocketAddr) -> Fut + Send + 'static,
@@ -169,7 +166,6 @@ impl Hub {
         result
     }
 
-    /// Serves one client: handles its requests and forwards answers produced by other connections.
     async fn pump(
         &self,
         conn: &mut Conn,

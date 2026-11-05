@@ -37,7 +37,6 @@ struct ActiveSession {
     cancel: watch::Sender<bool>,
 }
 
-/// Pairs the two sides of a session by uuid, forwards bytes, and tracks active sessions.
 pub struct RelayController {
     access_key: String,
     peers: Arc<PeerStore>,
@@ -55,7 +54,6 @@ impl RelayController {
         }
     }
 
-    /// Snapshot of currently active relay sessions.
     pub fn active_sessions(&self) -> Vec<Value> {
         self.active
             .lock()
@@ -73,7 +71,6 @@ impl RelayController {
             .collect()
     }
 
-    /// Terminates all active relay sessions for `peer_id` (or by session `uuid`).
     pub fn disconnect(&self, target: &str) -> usize {
         let mut active = self.active.lock().unwrap_or_else(|e| e.into_inner());
         let mut count = 0;
@@ -87,7 +84,6 @@ impl RelayController {
         count
     }
 
-    /// The first side to arrive waits for its partner; the second hands its connection over.
     pub async fn serve(&self, mut conn: Conn, addr: SocketAddr) {
         let Ok(Some(Ok(first))) = timeout(PAIRING_TIMEOUT, conn.recv()).await else {
             return;
@@ -179,7 +175,6 @@ impl RelayController {
     }
 }
 
-/// Plain TCP pairs are piped byte-for-byte; anything involving a WebSocket is forwarded message by message.
 async fn forward(
     a: Conn,
     b: Conn,
@@ -222,7 +217,6 @@ async fn forward_raw(
     }
 }
 
-/// Copies until the source closes; either direction ending tears the whole session down.
 async fn copy(mut from: OwnedReadHalf, mut to: OwnedWriteHalf, activity: &Activity) -> io::Result<()> {
     let mut buffer = vec![0u8; COPY_BUFFER];
     loop {
@@ -263,7 +257,6 @@ async fn forward_messages(mut a: Conn, mut b: Conn, bytes: Arc<AtomicU64>) -> io
     }
 }
 
-/// Shared "last data seen" clock and byte counter for both directions of a raw session.
 struct Activity {
     started: Instant,
     last_millis: AtomicU64,

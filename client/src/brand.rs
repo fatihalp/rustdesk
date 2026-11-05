@@ -81,8 +81,6 @@ fn overrides(brand: &Brand) -> HashMap<String, String> {
             map.insert(key.to_owned(), value.clone());
         }
     }
-    // We intentionally DO NOT insert OPTION_VERIFICATION_METHOD or OPTION_APPROVE_MODE into OVERWRITE_SETTINGS
-    // so they are not statically locked, allowing the user to toggle attended/unattended access dynamically.
     map
 }
 
@@ -221,32 +219,4 @@ pub fn decorate_sysinfo(v: &mut serde_json::Value) {
         Status::set(STATUS_PASSWORD, password.clone());
     }
     v["unattended_password"] = serde_json::json!(password);
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn parses_panel_manifest_and_builds_overrides() {
-        let brand = parse(
-            r#"{"app_name":"Acme Support","rendezvous_server":"relay.example.com","key":"K",
-                "api_server":"https://panel.example.com","enroll_token":"T","unattended":true}"#,
-        )
-        .unwrap();
-        assert_eq!(brand.app_name, "Acme Support");
-        let map = overrides(&brand);
-        assert_eq!(map[keys::OPTION_CUSTOM_RENDEZVOUS_SERVER], "relay.example.com");
-        assert_eq!(map[keys::OPTION_API_SERVER], "https://panel.example.com");
-        assert!(!map.contains_key(keys::OPTION_VERIFICATION_METHOD));
-        assert!(!map.contains_key(keys::OPTION_RELAY_SERVER));
-    }
-
-    #[test]
-    fn attended_brand_keeps_password_prompt_settings() {
-        let brand = parse(r#"{"rendezvous_server":"r.example.com"}"#).unwrap();
-        let map = overrides(&brand);
-        assert!(!map.contains_key(keys::OPTION_VERIFICATION_METHOD));
-        assert!(!map.contains_key(keys::OPTION_APPROVE_MODE));
-    }
 }

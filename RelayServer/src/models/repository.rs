@@ -3,7 +3,6 @@ use std::{collections::HashSet, path::Path, sync::Mutex};
 use anyhow::Result;
 use rusqlite::{params, Connection, OptionalExtension};
 
-/// A peer as persisted: enough to recognise it again after a restart.
 pub struct StoredPeer {
     pub uuid: Vec<u8>,
     pub pk: Vec<u8>,
@@ -11,7 +10,6 @@ pub struct StoredPeer {
     pub blocked: bool,
 }
 
-/// SQLite persistence for registered peers.
 pub struct PeerRepository {
     conn: Mutex<Connection>,
 }

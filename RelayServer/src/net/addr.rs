@@ -3,7 +3,6 @@ use std::{
     time::{SystemTime, UNIX_EPOCH},
 };
 
-/// Converts IPv4-mapped IPv6 addresses to plain IPv4 so one host has one canonical form.
 pub fn normalize(addr: SocketAddr) -> SocketAddr {
     match addr {
         SocketAddr::V6(v6) if !addr.ip().is_loopback() => match v6.ip().to_ipv4() {
@@ -22,7 +21,6 @@ pub fn same_host(a: SocketAddr, b: SocketAddr) -> bool {
     normalize(a).ip() == normalize(b).ip()
 }
 
-/// Encodes an address in the obfuscated wire format that clients expect.
 pub fn encode_addr(addr: SocketAddr) -> Vec<u8> {
     match normalize(addr) {
         SocketAddr::V4(v4) => {
@@ -44,7 +42,6 @@ pub fn encode_addr(addr: SocketAddr) -> Vec<u8> {
     }
 }
 
-/// Inverse of [`encode_addr`]; `None` when the bytes are not a valid encoding.
 pub fn decode_addr(bytes: &[u8]) -> Option<SocketAddr> {
     if bytes.len() > 16 {
         if bytes.len() != 18 {

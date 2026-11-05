@@ -10,7 +10,6 @@ const ID_WINDOW: Duration = Duration::from_secs(24 * 3600);
 const MAX_IDS_PER_WINDOW: usize = 300;
 const PURGE_THRESHOLD: usize = 10_000;
 
-/// Rate-limits key registration per client IP: request bursts and the number of distinct ids.
 #[derive(Default)]
 pub struct IpGuard {
     records: Mutex<HashMap<String, Record>>,

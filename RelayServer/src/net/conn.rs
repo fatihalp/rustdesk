@@ -16,14 +16,12 @@ use tokio_util::codec::{Decoder, Encoder, Framed};
 const MAX_FRAME_LEN: usize = 64 * 1024 * 1024;
 const MAX_PREALLOCATION: usize = 256 * 1024;
 
-/// A client connection that exchanges whole messages over raw TCP or WebSocket.
 pub enum Conn {
     Tcp(Framed<TcpStream, FrameCodec>),
     WebSocket(WebSocketStream<TcpStream>),
 }
 
 impl Conn {
-    /// Wraps an accepted socket and returns the address to attribute the client to.
     pub async fn accept(
         stream: TcpStream,
         addr: SocketAddr,
@@ -53,7 +51,6 @@ impl Conn {
         Ok((Self::WebSocket(socket), client))
     }
 
-    /// Receives the next message payload; `None` once the peer is gone.
     pub async fn recv(&mut self) -> Option<io::Result<Bytes>> {
         match self {
             Self::Tcp(framed) => Some(framed.next().await?.map(BytesMut::freeze)),
@@ -79,7 +76,6 @@ impl Conn {
     }
 }
 
-/// Length-prefixed framing: a 1-4 byte little-endian header holds `length << 2 | (header_len - 1)`.
 #[derive(Default)]
 pub struct FrameCodec {
     pending: Option<usize>,
