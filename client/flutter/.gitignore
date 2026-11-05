@@ -23,6 +23,7 @@
 .pub-cache/
 .pub/
 /build/
+pubspec.lock
 
 
 app.*.symbols
