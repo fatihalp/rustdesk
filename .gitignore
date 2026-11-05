@@ -47,3 +47,4 @@ certs/*.key
 client/brand.json
 composer.lock
 package-lock.json
+pubspec.lock
