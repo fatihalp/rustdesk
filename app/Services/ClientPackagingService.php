@@ -45,7 +45,14 @@ class ClientPackagingService
         }
 
         $name = $this->bundleName($app);
-        $binary = $this->requireFile(config('panel.client.binary_dir').'/'.config('panel.client.binary_name'));
+        $binary = config('panel.client.binary_dir').'/'.config('panel.client.binary_name');
+        if (! is_file($binary)) {
+            $debugBinary = base_path('client/target/debug/'.config('panel.client.binary_name'));
+            if (is_file($debugBinary)) {
+                $binary = $debugBinary;
+            }
+        }
+        $binary = $this->requireFile($binary);
         $root = $workDir.'/dmg';
         $bundle = "{$root}/{$name}.app";
 
@@ -76,7 +83,14 @@ class ClientPackagingService
     private function packageWindows(ClientApp $app, string $brandJson, string $workDir): string
     {
         $name = $this->bundleName($app);
-        $binary = $this->requireFile(config('panel.client.binary_dir').'/'.config('panel.client.binary_name').'.exe');
+        $binary = config('panel.client.binary_dir').'/'.config('panel.client.binary_name').'.exe';
+        if (! is_file($binary)) {
+            $debugBinary = base_path('client/target/debug/'.config('panel.client.binary_name').'.exe');
+            if (is_file($debugBinary)) {
+                $binary = $debugBinary;
+            }
+        }
+        $binary = $this->requireFile($binary);
         $zipPath = "{$workDir}/{$name}-Windows.zip";
 
         $zip = new ZipArchive;

@@ -25,7 +25,7 @@ use crate::{
 };
 
 const PAIRING_TIMEOUT: Duration = Duration::from_secs(30);
-const IDLE_TIMEOUT: Duration = Duration::from_secs(30);
+const IDLE_TIMEOUT: Duration = Duration::from_secs(300);
 const MAX_PENDING: usize = 10_000;
 const COPY_BUFFER: usize = 32 * 1024;
 

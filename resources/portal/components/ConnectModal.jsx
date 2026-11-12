@@ -109,7 +109,7 @@ export default function ConnectModal({ device, onClose }) {
 
           <button
             onClick={launchApp}
-            className="w-full flex items-center justify-center gap-2.5 rounded-xl bg-gradient-to-r from-blue-600 to-indigo-600 hover:from-blue-500 hover:to-indigo-500 p-3.5 text-sm font-bold text-white shadow-lg shadow-blue-500/25 transition active:scale-[0.99]"
+            className="w-full flex items-center justify-center gap-2.5 rounded-xl bg-gradient-to-r from-blue-600 to-indigo-600 hover:from-blue-500 hover:to-indigo-500 p-3.5 text-sm font-bold text-black shadow-lg transition active:scale-[0.99]"
           >
             <ExternalLink className="h-4 w-4" />
             <span>Open in SupportDesk Client</span>

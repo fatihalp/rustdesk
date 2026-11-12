@@ -15,7 +15,7 @@ function Dashboard() {
   if (loading) {
     return (
       <div className="min-h-screen bg-slate-950 flex flex-col items-center justify-center">
-        <div className="h-14 w-14 rounded-2xl bg-gradient-to-tr from-blue-600 to-indigo-500 flex items-center justify-center text-white shadow-xl shadow-blue-500/20 mb-4 animate-pulse">
+        <div className="h-14 w-14 rounded-2xl bg-gradient-to-tr from-blue-600 to-indigo-500 flex items-center justify-center text-black shadow-xl mb-4 animate-pulse">
           <Monitor className="h-7 w-7" />
         </div>
         <p className="text-xs text-slate-400 font-medium">Loading...</p>

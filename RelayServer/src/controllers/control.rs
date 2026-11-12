@@ -37,7 +37,7 @@ impl ControlController {
             return self.serve_websocket(stream, rendezvous, relay).await;
         }
 
-        let mut buf = vec![0u8; 4096];
+        let mut buf = [0u8; 4096];
         let n = timeout(HTTP_READ_TIMEOUT, stream.read(&mut buf)).await??;
         let req = String::from_utf8_lossy(&buf[..n]);
         let mut lines = req.lines();
@@ -65,15 +65,17 @@ impl ControlController {
         rendezvous: &RendezvousController,
         relay: &RelayController,
     ) -> (u16, Value) {
-        let clean_path = path.split('?').next().unwrap_or(path);
+        let clean_path = path.split('?').next().unwrap_or(path).trim_end_matches('/');
         match (method, clean_path) {
-            ("GET", "/" | "/status" | "/peers") => (200, Self::snapshot(rendezvous, relay)),
+            ("GET", "" | "/" | "/status" | "/peers") => (200, Self::snapshot(rendezvous, relay)),
             ("POST", p) if p.starts_with("/peers/") => {
                 let segments: Vec<&str> = p.trim_matches('/').split('/').collect();
                 if segments.len() == 3 {
                     let id = segments[1];
                     let action = segments[2];
-                    return (200, Self::apply_action(action, id, rendezvous, relay));
+                    let res = Self::apply_action(action, id, rendezvous, relay);
+                    let status = if res.get("ok").and_then(Value::as_bool) == Some(true) { 200 } else { 400 };
+                    return (status, res);
                 }
                 (404, json!({ "error": "not_found" }))
             }

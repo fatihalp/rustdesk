@@ -35,6 +35,39 @@ class RelayBridgeService
         ];
     }
 
+    public function presenceMap(iterable $devices): array
+    {
+        $status = $this->status();
+        $map = [];
+        foreach ($devices as $device) {
+            $id = $device->supportdesk_id;
+            $live = $status['online_ids'][$id] ?? null;
+            $blocked = isset($status['blocked_ids'][$id]);
+            $map[$id] = [
+                'online' => ! $blocked && ($live !== null || $device->isOnline()),
+                'blocked' => $blocked,
+                'ip' => $live['ip'] ?? $device->ip_address,
+            ];
+        }
+
+        return $map;
+    }
+
+    public function disconnect(string $supportdeskId): bool
+    {
+        return $this->command($supportdeskId, 'disconnect');
+    }
+
+    public function block(string $supportdeskId): bool
+    {
+        return $this->command($supportdeskId, 'block');
+    }
+
+    public function unblock(string $supportdeskId): bool
+    {
+        return $this->command($supportdeskId, 'unblock');
+    }
+
     public function command(string $supportdeskId, string $action): bool
     {
         if (! in_array($action, self::ACTIONS, true)) {
