@@ -115,7 +115,7 @@ export default function BuildManager() {
               <button
                 onClick={() => handleTriggerBuild('macos')}
                 disabled={buildingPlatform !== null}
-                className="flex items-center gap-2 rounded-xl bg-blue-600 hover:bg-blue-500 px-4 py-2 text-xs font-bold text-white shadow-md shadow-blue-500/20 transition disabled:opacity-50"
+                className="flex items-center gap-2 rounded-xl bg-blue-600 hover:bg-blue-500 px-4 py-2 text-xs font-bold text-black shadow-md transition disabled:opacity-50"
               >
                 {buildingPlatform === 'macos' ? (
                   <>
@@ -158,7 +158,7 @@ export default function BuildManager() {
               <button
                 onClick={() => handleTriggerBuild('windows')}
                 disabled={buildingPlatform !== null}
-                className="flex items-center gap-2 rounded-xl bg-indigo-600 hover:bg-indigo-500 px-4 py-2 text-xs font-bold text-white shadow-md shadow-indigo-500/20 transition disabled:opacity-50"
+                className="flex items-center gap-2 rounded-xl bg-indigo-600 hover:bg-indigo-500 px-4 py-2 text-xs font-bold text-white shadow-md transition disabled:opacity-50"
               >
                 {buildingPlatform === 'windows' ? (
                   <>

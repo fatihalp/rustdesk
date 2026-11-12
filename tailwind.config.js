@@ -1,4 +1,13 @@
-/** @type {import('tailwindcss').Config} */
+const gray = {
+  50: '#fbfbfd', 100: '#f5f5f7', 200: '#e8e8ed', 300: '#d2d2d7', 400: '#a1a1a6',
+  500: '#86868b', 600: '#6e6e73', 700: '#3a3a3c', 800: '#2c2c2e', 850: '#242426',
+  900: '#1c1c1e', 950: '#000000',
+};
+const accent = {
+  50: '#fbfbfd', 100: '#f5f5f7', 200: '#e8e8ed', 300: '#d2d2d7', 400: '#d2d2d7',
+  500: '#f5f5f7', 600: '#f5f5f7', 700: '#d2d2d7', 800: '#a1a1a6', 900: '#6e6e73',
+};
+
 export default {
   content: [
     "./resources/views/**/*.blade.php",
@@ -6,20 +15,17 @@ export default {
   ],
   theme: {
     extend: {
+      fontFamily: {
+        sans: ['-apple-system', 'BlinkMacSystemFont', '"SF Pro Text"', 'Inter', 'system-ui', 'sans-serif'],
+      },
       colors: {
-        brand: {
-          50: '#f0f7ff',
-          100: '#e0effe',
-          200: '#bae0fd',
-          300: '#7cc5fb',
-          400: '#36a5f7',
-          500: '#0c87eb',
-          600: '#006bc9',
-          700: '#0155a3',
-          800: '#054885',
-          900: '#0a3c6e',
-        }
-      }
+        slate: gray,
+        blue: accent,
+        indigo: accent,
+        emerald: { 300: '#e8e8ed', 400: '#d2d2d7', 500: '#f5f5f7', 600: '#d2d2d7' },
+        amber: { 300: '#d2d2d7', 400: '#a1a1a6', 500: '#a1a1a6' },
+        brand: accent,
+      },
     },
   },
   plugins: [],

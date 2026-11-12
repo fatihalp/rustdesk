@@ -49,5 +49,4 @@ export const api = {
   delete: (endpoint) => request(endpoint, { method: 'DELETE' }),
   postForm: (endpoint, formData) => request(endpoint, { method: 'POST', body: formData }),
 };
-// Preserve api.post(endpoint, body) signature used across components
 api.post = (endpoint, body) => request(endpoint, { method: 'POST', body });

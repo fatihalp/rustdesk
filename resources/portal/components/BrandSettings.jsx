@@ -268,7 +268,7 @@ export default function BrandSettings() {
               <button
                 type="submit"
                 disabled={saving}
-                className="flex items-center gap-2 rounded-xl bg-blue-600 hover:bg-blue-500 px-5 py-2.5 text-xs font-bold text-white shadow-lg shadow-blue-500/25 transition disabled:opacity-50"
+                className="flex items-center gap-2 rounded-xl bg-blue-600 hover:bg-blue-500 px-5 py-2.5 text-xs font-bold text-black shadow-lg transition disabled:opacity-50"
               >
                 {saving ? 'Saving...' : 'Save Changes'}
               </button>

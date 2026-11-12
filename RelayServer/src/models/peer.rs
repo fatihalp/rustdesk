@@ -249,12 +249,13 @@ impl PeerStore {
         }
 
         if peer.key_window_start.elapsed() > KEY_REGISTRATION_WINDOW {
-            peer.key_registrations = 0;
-        } else if peer.key_registrations > MAX_KEY_REGISTRATIONS_PER_WINDOW {
+            peer.key_registrations = 1;
+            peer.key_window_start = Instant::now();
+        } else if peer.key_registrations >= MAX_KEY_REGISTRATIONS_PER_WINDOW {
             return PkRegistration::TooFrequent;
+        } else {
+            peer.key_registrations += 1;
         }
-        peer.key_registrations += 1;
-        peer.key_window_start = Instant::now();
 
         let became_online = !peer.is_online() || !peer.online_notified;
         peer.addr = addr;

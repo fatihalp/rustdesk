@@ -48,8 +48,8 @@ export default function AuthView() {
       <div className="absolute bottom-10 right-10 w-96 h-96 bg-indigo-600/10 rounded-full blur-3xl pointer-events-none" />
 
       <div className="sm:mx-auto sm:w-full sm:max-w-md text-center relative z-10">
-        <div className="inline-flex h-14 w-14 items-center justify-center rounded-2xl bg-gradient-to-tr from-blue-600 to-indigo-500 shadow-xl shadow-blue-500/25 mb-4">
-          <Monitor className="h-7 w-7 text-white" />
+        <div className="inline-flex h-14 w-14 items-center justify-center rounded-2xl bg-gradient-to-tr from-blue-600 to-indigo-500 shadow-xl mb-4">
+          <Monitor className="h-7 w-7 text-black" />
         </div>
         <h2 className="text-3xl font-extrabold tracking-tight text-white sm:text-4xl">
           SupportDesk Partner
@@ -104,7 +104,7 @@ export default function AuthView() {
               type="button"
               onClick={() => { setMode('login'); setError(null); }}
               className={`flex-1 py-1.5 text-xs font-semibold rounded-md transition ${
-                mode === 'login' ? 'bg-blue-600 text-white shadow' : 'text-slate-400 hover:text-white'
+                mode === 'login' ? 'bg-blue-600 text-black shadow' : 'text-slate-400 hover:text-black'
               }`}
             >
               Sign In
@@ -113,7 +113,7 @@ export default function AuthView() {
               type="button"
               onClick={() => { setMode('register'); setError(null); }}
               className={`flex-1 py-1.5 text-xs font-semibold rounded-md transition ${
-                mode === 'register' ? 'bg-blue-600 text-white shadow' : 'text-slate-400 hover:text-white'
+                mode === 'register' ? 'bg-blue-600 text-black shadow' : 'text-slate-400 hover:text-black'
               }`}
             >
               Create Partner Account
@@ -189,7 +189,7 @@ export default function AuthView() {
             <button
               type="submit"
               disabled={submitting}
-              className="w-full flex items-center justify-center gap-2 rounded-xl bg-blue-600 hover:bg-blue-500 px-4 py-3 text-sm font-semibold text-white shadow-lg shadow-blue-600/30 transition disabled:opacity-50"
+              className="w-full flex items-center justify-center gap-2 rounded-xl bg-blue-600 hover:bg-blue-500 px-4 py-3 text-sm font-semibold text-black shadow-lg transition disabled:opacity-50"
             >
               <span>{mode === 'login' ? 'Sign In' : 'Create Partner Account'}</span>
               <ArrowRight className="h-4 w-4" />

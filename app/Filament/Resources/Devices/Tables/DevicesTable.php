@@ -19,10 +19,6 @@ class DevicesTable
 {
     public static function configure(Table $table): Table
     {
-        $relayStatus = app(RelayBridgeService::class)->status();
-        $onlineIds = $relayStatus['online_ids'];
-        $blockedIds = $relayStatus['blocked_ids'];
-
         return $table
             ->modifyQueryUsing(fn ($query) => $query->with(['clientApp.customer']))
             ->defaultSort('last_seen_at', 'desc')
@@ -30,8 +26,7 @@ class DevicesTable
             ->columns([
                 IconColumn::make('online')
                     ->label('')
-                    ->state(fn (Device $r) => ! isset($blockedIds[$r->supportdesk_id])
-                        && (isset($onlineIds[$r->supportdesk_id]) || $r->isOnline()))
+                    ->state(fn (Device $r) => app(RelayBridgeService::class)->presence($r)['online'])
                     ->boolean()
                     ->trueIcon('heroicon-s-check-circle')
                     ->falseIcon('heroicon-o-minus-circle')

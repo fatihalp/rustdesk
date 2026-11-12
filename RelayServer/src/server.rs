@@ -12,7 +12,7 @@ use tokio::{
     net::{TcpListener, TcpStream, UdpSocket},
     signal::unix::{signal, SignalKind},
     sync::mpsc,
-    time::{interval, sleep, sleep_until, Instant},
+    time::{interval, sleep, Instant},
 };
 
 use crate::{
@@ -23,7 +23,7 @@ use crate::{
     views,
 };
 
-const SESSION_IDLE_TIMEOUT: Duration = Duration::from_secs(30);
+const SESSION_IDLE_TIMEOUT: Duration = Duration::from_secs(60);
 const EXPIRY_SWEEP_INTERVAL: Duration = Duration::from_secs(5);
 const DATABASE_FILE: &str = "db_v2.sqlite3";
 const MAX_DATAGRAM: usize = 64 * 1024;
@@ -189,7 +189,7 @@ impl Hub {
                     idle.as_mut().reset(Instant::now() + SESSION_IDLE_TIMEOUT);
                 }
                 Some(bytes) = inbox.recv() => conn.send(bytes).await?,
-                _ = sleep_until(idle.deadline()) => return Ok(()),
+                _ = &mut idle => return Ok(()),
             }
         }
     }

@@ -60,7 +60,6 @@ export default function DeviceList({ onGoToLinks }) {
     return () => clearInterval(interval);
   }, [wsConnected]);
 
-  // Real-time WebSocket stream directly from the Rust RelayServer control port
   useEffect(() => {
     let socket;
     let reconnectTimer;
@@ -80,9 +79,7 @@ export default function DeviceList({ onGoToLinks }) {
           try {
             const msg = JSON.parse(event.data);
             handleRealtimeEvent(msg);
-          } catch (_) {
-            // ignore malformed frame
-          }
+          } catch (_) {}
         };
 
         socket.onclose = () => {
@@ -253,7 +250,6 @@ export default function DeviceList({ onGoToLinks }) {
 
   return (
     <div className="space-y-6">
-      {/* Top Header Card */}
       <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4 rounded-2xl bg-slate-900 border border-slate-800 p-5">
         <div>
           <div className="flex items-center flex-wrap gap-3">
@@ -298,7 +294,6 @@ export default function DeviceList({ onGoToLinks }) {
         </div>
       </div>
 
-      {/* Search */}
       <div className="flex items-center justify-between gap-4">
         <div className="relative flex-1 max-w-md">
           <Search className="absolute left-3.5 top-1/2 -translate-y-1/2 h-4 w-4 text-slate-500" />
@@ -312,7 +307,6 @@ export default function DeviceList({ onGoToLinks }) {
         </div>
       </div>
 
-      {/* Devices List */}
       {loading && devices.length === 0 ? (
         <div className="rounded-2xl bg-slate-900 border border-slate-800 p-12 text-center text-slate-400">
           <RefreshCw className="h-6 w-6 animate-spin mx-auto mb-3 text-blue-500" />
@@ -332,7 +326,7 @@ export default function DeviceList({ onGoToLinks }) {
           {devices.length === 0 && onGoToLinks && (
             <button
               onClick={onGoToLinks}
-              className="mt-5 inline-flex items-center gap-2 rounded-xl bg-blue-600 hover:bg-blue-500 px-4 py-2.5 text-xs font-semibold text-white shadow-lg shadow-blue-600/25 transition"
+              className="mt-5 inline-flex items-center gap-2 rounded-xl bg-blue-600 hover:bg-blue-500 px-4 py-2.5 text-xs font-semibold text-black shadow-lg transition"
             >
               <span>Share Download Link</span>
             </button>
@@ -347,12 +341,11 @@ export default function DeviceList({ onGoToLinks }) {
                 device.is_blocked
                   ? 'border-red-500/30 opacity-75'
                   : device.is_online
-                  ? 'border-emerald-500/30 hover:border-emerald-500/60 shadow-lg shadow-emerald-950/10'
+                  ? 'border-emerald-500/30 hover:border-emerald-500/60 shadow-lg'
                   : 'border-slate-800/80 hover:border-slate-700 opacity-85'
               }`}
             >
               <div>
-                {/* Status Bar */}
                 <div className="flex items-center justify-between gap-2 mb-3">
                   <div className="flex items-center gap-2 flex-wrap">
                     {device.is_blocked ? (
@@ -389,7 +382,6 @@ export default function DeviceList({ onGoToLinks }) {
                   </span>
                 </div>
 
-                {/* Hostname & User */}
                 <div className="flex items-start justify-between gap-2">
                   <div className="min-w-0">
                     <h3 className="text-base font-bold text-white truncate" title={device.hostname}>
@@ -417,7 +409,6 @@ export default function DeviceList({ onGoToLinks }) {
                   </p>
                 )}
 
-                {/* Specs & ID */}
                 <div className="mt-4 space-y-1.5 border-t border-slate-800/80 pt-3 text-xs">
                   <div className="flex justify-between">
                     <span className="text-slate-500">Support ID:</span>
@@ -438,12 +429,11 @@ export default function DeviceList({ onGoToLinks }) {
                 </div>
               </div>
 
-              {/* Action Buttons */}
               <div className="mt-5 pt-3 border-t border-slate-800/80 flex items-center gap-1.5">
                 <button
                   onClick={() => setSelectedDevice(device)}
                   disabled={device.is_blocked}
-                  className="flex-1 flex items-center justify-center gap-2 rounded-xl bg-gradient-to-r from-blue-600 to-indigo-600 hover:from-blue-500 hover:to-indigo-500 disabled:opacity-40 py-2.5 px-3 text-xs font-bold text-white shadow-md shadow-blue-500/20 transition active:scale-[0.98]"
+                  className="flex-1 flex items-center justify-center gap-2 rounded-xl bg-gradient-to-r from-blue-600 to-indigo-600 hover:from-blue-500 hover:to-indigo-500 disabled:opacity-40 py-2.5 px-3 text-xs font-bold text-black shadow-md transition active:scale-[0.98]"
                 >
                   <ExternalLink className="h-3.5 w-3.5" />
                   <span>Connect</span>
@@ -481,7 +471,6 @@ export default function DeviceList({ onGoToLinks }) {
         </div>
       )}
 
-      {/* Edit Device Modal */}
       {editingDevice && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/80 backdrop-blur-sm p-4">
           <form
@@ -521,7 +510,7 @@ export default function DeviceList({ onGoToLinks }) {
               </button>
               <button
                 type="submit"
-                className="rounded-xl bg-blue-600 hover:bg-blue-500 px-4 py-2 text-xs font-semibold text-white"
+                className="rounded-xl bg-blue-600 hover:bg-blue-500 px-4 py-2 text-xs font-semibold text-black"
               >
                 Save Changes
               </button>
@@ -530,7 +519,6 @@ export default function DeviceList({ onGoToLinks }) {
         </div>
       )}
 
-      {/* Connect Modal */}
       {selectedDevice && (
         <ConnectModal
           device={selectedDevice}

@@ -104,7 +104,7 @@ export default function ShortLinks() {
             </div>
             <button
               onClick={() => copyUrl(primaryShortUrl, 'primary')}
-              className="flex items-center justify-center gap-2 rounded-xl bg-blue-600 hover:bg-blue-500 px-4 py-2.5 text-xs font-bold text-white shadow-lg shadow-blue-500/25 transition active:scale-[0.98] shrink-0"
+              className="flex items-center justify-center gap-2 rounded-xl bg-blue-600 hover:bg-blue-500 px-4 py-2.5 text-xs font-bold text-black shadow-lg transition active:scale-[0.98] shrink-0"
             >
               {copiedPrimary ? <Check className="h-4 w-4 text-emerald-300" /> : <Copy className="h-4 w-4" />}
               <span>{copiedPrimary ? 'Copied!' : 'Copy Link'}</span>
@@ -136,7 +136,7 @@ export default function ShortLinks() {
 
           <button
             onClick={() => setCreating(!creating)}
-            className="flex items-center gap-1.5 rounded-xl bg-blue-600 hover:bg-blue-500 px-3.5 py-2 text-xs font-bold text-white shadow-md shadow-blue-500/20 transition"
+            className="flex items-center gap-1.5 rounded-xl bg-blue-600 hover:bg-blue-500 px-3.5 py-2 text-xs font-bold text-black shadow-md transition"
           >
             <Plus className="h-3.5 w-3.5" />
             <span>New Custom Link</span>
@@ -191,7 +191,7 @@ export default function ShortLinks() {
               </button>
               <button
                 type="submit"
-                className="rounded-lg bg-blue-600 px-4 py-1.5 text-xs font-semibold text-white hover:bg-blue-500"
+                className="rounded-lg bg-blue-600 px-4 py-1.5 text-xs font-semibold text-black hover:bg-blue-500"
               >
                 Create
               </button>

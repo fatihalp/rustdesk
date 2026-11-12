@@ -24,13 +24,12 @@ export default function Navbar({ activeTab, setActiveTab }) {
   return (
     <header className="sticky top-0 z-40 border-b border-slate-800/80 bg-slate-900/95 backdrop-blur">
       <div className="mx-auto flex max-w-7xl items-center justify-between px-4 py-3 sm:px-6 lg:px-8">
-        {/* Brand & Workspace info */}
         <div className="flex items-center gap-4">
-          <div className="flex h-10 w-10 items-center justify-center rounded-xl bg-gradient-to-tr from-blue-600 to-indigo-500 shadow-lg shadow-blue-500/20">
+          <div className="flex h-10 w-10 items-center justify-center rounded-xl bg-gradient-to-tr from-blue-600 to-indigo-500 shadow-lg">
             {clientApp?.logo_url ? (
               <img src={clientApp.logo_url} alt="" className="h-full w-full rounded-xl object-cover" />
             ) : (
-              <Monitor className="h-5 w-5 text-white" />
+              <Monitor className="h-5 w-5 text-black" />
             )}
           </div>
           <div>
@@ -48,7 +47,6 @@ export default function Navbar({ activeTab, setActiveTab }) {
           </div>
         </div>
 
-        {/* Navigation Tabs */}
         <nav className="hidden md:flex items-center gap-1 rounded-xl bg-slate-950/60 p-1 border border-slate-800">
           {tabs.map((tab) => (
             <button
@@ -56,7 +54,7 @@ export default function Navbar({ activeTab, setActiveTab }) {
               onClick={() => setActiveTab(tab.id)}
               className={`rounded-lg px-3.5 py-1.5 text-xs font-semibold transition-all ${
                 activeTab === tab.id
-                  ? 'bg-blue-600 text-white shadow-sm shadow-blue-500/30'
+                  ? 'bg-blue-600 text-black shadow-sm'
                   : 'text-slate-400 hover:text-slate-200 hover:bg-slate-800/50'
               }`}
             >
@@ -65,9 +63,7 @@ export default function Navbar({ activeTab, setActiveTab }) {
           ))}
         </nav>
 
-        {/* Right side actions */}
         <div className="flex items-center gap-3">
-          {/* Quick Share Link button */}
           <button
             onClick={copyShortUrl}
             className="flex items-center gap-1.5 rounded-lg bg-slate-800/80 px-3 py-1.5 text-xs font-medium text-slate-300 hover:bg-slate-700/80 hover:text-white transition border border-slate-700/50"
@@ -86,7 +82,6 @@ export default function Navbar({ activeTab, setActiveTab }) {
             )}
           </button>
 
-          {/* User profile & Logout */}
           <div className="flex items-center gap-2 pl-2 border-l border-slate-800">
             <div className="h-8 w-8 rounded-full bg-slate-800 flex items-center justify-center overflow-hidden border border-slate-700">
               {user?.avatar_url ? (
@@ -110,14 +105,13 @@ export default function Navbar({ activeTab, setActiveTab }) {
         </div>
       </div>
 
-      {/* Mobile nav tabs */}
       <div className="flex md:hidden border-t border-slate-800/80 bg-slate-950/80 px-4 py-2 overflow-x-auto gap-2">
         {tabs.map((tab) => (
           <button
             key={tab.id}
             onClick={() => setActiveTab(tab.id)}
             className={`whitespace-nowrap rounded-lg px-3 py-1 text-xs font-semibold ${
-              activeTab === tab.id ? 'bg-blue-600 text-white' : 'text-slate-400'
+              activeTab === tab.id ? 'bg-blue-600 text-black' : 'text-slate-400'
             }`}
           >
             {tab.label}
