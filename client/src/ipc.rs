@@ -1,5 +1,8 @@
 #[path = "ipc/auth.rs"]
 mod ipc_auth;
+#[cfg(windows)]
+#[path = "ipc/windows.rs"]
+mod ipc_windows;
 #[cfg(any(target_os = "linux", target_os = "macos"))]
 #[path = "ipc/fs.rs"]
 mod ipc_fs;
@@ -53,8 +56,8 @@ use ipc_auth::{active_uid, authorize_service_scoped_ipc_connection};
 use ipc_auth::authorize_user_server_process;
 #[cfg(windows)]
 use ipc_auth::{
-    authorize_windows_main_ipc_connection, portable_service_listener_security_attributes,
-    should_allow_everyone_create_on_windows,
+    authorize_windows_main_ipc_connection, is_windows_main_or_service_ipc,
+    portable_service_listener_security_attributes,
 };
 #[cfg(target_os = "linux")]
 pub(crate) use ipc_auth::{
@@ -520,7 +523,12 @@ fn legacy_hot_measured() -> bool {
 
 #[tokio::main(flavor = "current_thread")]
 pub async fn start(postfix: &str) -> ResultType<()> {
-    let mut incoming = new_listener(postfix).await?;
+    let incoming = new_listener(postfix).await?;
+    start_with_listener(postfix, incoming).await;
+    Ok(())
+}
+
+pub(crate) async fn start_with_listener(postfix: &str, mut incoming: Incoming) {
     loop {
         if let Some(result) = incoming.next().await {
             match result {
@@ -603,8 +611,8 @@ pub async fn new_listener(postfix: &str) -> ResultType<Incoming> {
         {
             if postfix == "_portable_service" {
                 portable_service_listener_security_attributes()
-            } else if should_allow_everyone_create_on_windows(postfix) {
-                SecurityAttributes::allow_everyone_create()
+            } else if is_windows_main_or_service_ipc(postfix) {
+                ipc_windows::listener_security_attributes()
             } else {
                 Ok(SecurityAttributes::empty())
             }
@@ -619,7 +627,7 @@ pub async fn new_listener(postfix: &str) -> ResultType<Incoming> {
         Err(err) => {
             log::error!("Failed to set ipc{} security: {}", postfix, err);
             #[cfg(windows)]
-            if postfix == "_portable_service" {
+            if postfix == "_portable_service" || is_windows_main_or_service_ipc(postfix) {
                 return Err(err.into());
             }
         }
@@ -1389,6 +1397,16 @@ fn user_main_ipc_server_uid() -> ResultType<u32> {
 }
 
 pub async fn connect(ms_timeout: u64, postfix: &str) -> ResultType<ConnectionTmpl<ConnClient>> {
+    #[cfg(windows)]
+    if is_windows_main_or_service_ipc(postfix) {
+        return Ok(ConnectionTmpl::new(
+            timeout(
+                ms_timeout,
+                ipc_windows::connect(&Config::ipc_path(postfix), postfix),
+            )
+            .await??,
+        ));
+    }
     #[cfg(any(target_os = "linux", target_os = "macos"))]
     {
         let use_user_main_ipc = USE_USER_MAIN_IPC.with(|use_user_main| use_user_main.get());

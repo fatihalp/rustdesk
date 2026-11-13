@@ -411,7 +411,7 @@ mod tunnel {
             }
         }
 
-        pub fn set_muxed(&self, mut stream: Stream, interface: impl Interface) -> Arc<TunnelHandle> {
+        pub fn set_muxed(&self, mut stream: Stream, kcp: Option<crate::kcp_stream::KcpStream>, interface: impl Interface) -> Arc<TunnelHandle> {
             cap_packet_size(&mut stream);
             let (data_tx, data_rx) = mpsc::channel(DATA_QUEUE_FRAMES);
             let (control_tx, control_rx) = mpsc::unbounded_channel();
@@ -426,6 +426,7 @@ mod tunnel {
             self.state.send_replace(TunnelState::Muxed(handle.clone()));
             tokio::spawn(tunnel_loop(
                 stream,
+                kcp,
                 handle.clone(),
                 data_rx,
                 control_rx,
@@ -604,6 +605,7 @@ mod tunnel {
 
     async fn tunnel_loop(
         mut stream: Stream,
+        kcp: Option<crate::kcp_stream::KcpStream>,
         handle: Arc<TunnelHandle>,
         mut data_rx: mpsc::Receiver<Message>,
         mut control_rx: mpsc::UnboundedReceiver<Message>,
@@ -646,12 +648,32 @@ mod tunnel {
                         break format!("send failed: {}", e);
                     }
                 }
-                _ = lifetime.changed() => break "window closed".to_owned(),
+                _ = lifetime.changed() => {
+                    if kcp.is_some() {
+                        send_kcp_close_reason(&mut stream).await;
+                    }
+                    break "window closed".to_owned()
+                }
             }
         };
         log::info!("port forward tunnel ended: {}", err);
         handle.close_all();
         state.send_replace(TunnelState::Unset);
+    }
+
+    const KCP_CLOSE_REASON_FLUSH_DELAY: Duration = Duration::from_millis(30);
+
+    async fn send_kcp_close_reason(stream: &mut Stream) {
+        let mut misc = Misc::new();
+        misc.set_close_reason("kcp".to_owned());
+        let mut msg = Message::new();
+        msg.set_misc(misc);
+        match tokio::time::timeout(KCP_CLOSE_REASON_FLUSH_DELAY, stream.send(&msg)).await {
+            Ok(Ok(())) => {}
+            Ok(Err(e)) => log::debug!("port forward close reason not sent: {}", e),
+            Err(_) => log::debug!("port forward close reason not sent: send timed out"),
+        }
+        tokio::time::sleep(KCP_CLOSE_REASON_FLUSH_DELAY).await;
     }
 }
 
@@ -872,7 +894,7 @@ mod tests {
                 let addr = ours.peer_addr().unwrap();
                 let t = Tunnel::new();
                 t.claim();
-                let _h = t.set_muxed(Stream::Tcp(FramedStream::from(ours, addr)), NoUi::default());
+                let _h = t.set_muxed(Stream::Tcp(FramedStream::from(ours, addr)), None, NoUi::default());
                 assert!(matches!(t.claim(), Claim::Muxed(_)));
                 let head = ((MAX_PACKET as u32 + 1) << 2) | 0x2;
                 theirs.write_all(&head.to_le_bytes()[..3]).await.unwrap();
@@ -890,7 +912,7 @@ mod tests {
                 let (ours, mut peer) = stream_pair().await;
                 let t = Tunnel::new();
                 assert!(matches!(t.claim(), Claim::Claimed));
-                let h = t.set_muxed(ours, NoUi::default());
+                let h = t.set_muxed(ours, None, NoUi::default());
                 let (mut app, sock) = local_pair().await;
                 h.open("localhost", 80, sock, b"GET / HTTP/1.0\r\n\r\n".to_vec()).unwrap();
                 let open = recv_frame(&mut peer).await;
@@ -922,7 +944,7 @@ mod tests {
                 let (ours, mut peer) = stream_pair().await;
                 let t = Tunnel::new();
                 assert!(matches!(t.claim(), Claim::Claimed));
-                let h = t.set_muxed(ours, NoUi::default());
+                let h = t.set_muxed(ours, None, NoUi::default());
                 let (app, sock) = local_pair().await;
                 h.open("localhost", 80, sock, Vec::new()).unwrap();
                 let id = match recv_frame(&mut peer).await.union {
@@ -949,7 +971,7 @@ mod tests {
                 let t = Tunnel::new();
                 assert!(matches!(t.claim(), Claim::Claimed));
                 let ui = NoUi::default();
-                let h = t.set_muxed(ours, ui.clone());
+                let h = t.set_muxed(ours, None, ui.clone());
                 for reason in ["unreachable", "unreachable", "no permission"] {
                     let (mut app, sock) = local_pair().await;
                     h.open("localhost", 1, sock, vec![]).unwrap();
@@ -974,7 +996,7 @@ mod tests {
                 let (ours, mut peer) = stream_pair().await;
                 let t = Tunnel::new();
                 t.claim();
-                let h = t.set_muxed(ours, NoUi::default());
+                let h = t.set_muxed(ours, None, NoUi::default());
                 let (_app, sock) = local_pair().await;
                 h.open("localhost", 1, sock, vec![]).unwrap();
                 let id = match recv_frame(&mut peer).await.union {
@@ -1000,7 +1022,7 @@ mod tests {
                 let (ours, peer) = stream_pair().await;
                 let t = Tunnel::new();
                 t.claim();
-                let h = t.set_muxed(ours, NoUi::default());
+                let h = t.set_muxed(ours, None, NoUi::default());
                 let (mut app_a, sock_a) = local_pair().await;
                 let (mut app_b, sock_b) = local_pair().await;
                 h.open("localhost", 1, sock_a, vec![]).unwrap();
@@ -1013,12 +1035,51 @@ mod tests {
                 assert!(h.open("localhost", 1, local_pair().await.1, vec![]).is_err());
                 assert!(matches!(t.claim(), Claim::Claimed));
                 let (ours, mut peer) = stream_pair().await;
-                let h = t.set_muxed(ours, NoUi::default());
+                let h = t.set_muxed(ours, None, NoUi::default());
                 let (_app_c, sock_c) = local_pair().await;
                 h.open("localhost", 1, sock_c, vec![]).unwrap();
                 assert!(matches!(
                     recv_frame(&mut peer).await.union,
                     Some(port_forward_channel::Union::Open(_))
+                ));
+            });
+        }
+
+        #[test]
+        fn a_tunnel_over_kcp_carries_frames_and_reports_its_close() {
+            rt().block_on(async {
+                use crate::kcp_stream::KcpStream;
+                use hbb_common::tokio::net::UdpSocket;
+                use std::time::Duration;
+                let a = UdpSocket::bind("127.0.0.1:0").await.unwrap();
+                let b = UdpSocket::bind("127.0.0.1:0").await.unwrap();
+                a.connect(b.local_addr().unwrap()).await.unwrap();
+                b.connect(a.local_addr().unwrap()).await.unwrap();
+                let (theirs, ours) = tokio::join!(
+                    KcpStream::accept(Arc::new(b), Duration::from_secs(5), None),
+                    KcpStream::connect(Arc::new(a), Duration::from_secs(5))
+                );
+                let (_their_kcp, mut peer) = theirs.unwrap();
+                let (kcp, ours) = ours.unwrap();
+                let t = Tunnel::new();
+                t.claim();
+                let h = t.set_muxed(ours, Some(kcp), NoUi::default());
+                let (_app, sock) = local_pair().await;
+                h.open("localhost", 22, sock, vec![]).unwrap();
+                let frame = tokio::time::timeout(Duration::from_secs(5), recv_frame(&mut peer))
+                    .await
+                    .expect("the open never reached the peer");
+                assert!(matches!(frame.union, Some(port_forward_channel::Union::Open(_))));
+                drop(t);
+                let bytes = tokio::time::timeout(Duration::from_secs(5), peer.next())
+                    .await
+                    .expect("the close reason never reached the peer")
+                    .expect("the link ended without a close reason")
+                    .unwrap();
+                let msg = Message::parse_from_bytes(&bytes).unwrap();
+                assert!(matches!(
+                    msg.union,
+                    Some(message::Union::Misc(m)) if matches!(m.union, Some(misc::Union::CloseReason(_)))
                 ));
             });
         }
@@ -1116,7 +1177,7 @@ mod tests {
             fake_controlled(theirs, format!("127.0.0.1:{}", port));
             let t = Tunnel::new();
             t.claim();
-            let h = t.set_muxed(ours, NoUi::default());
+            let h = t.set_muxed(ours, None, NoUi::default());
             (t, h, port)
         }
 

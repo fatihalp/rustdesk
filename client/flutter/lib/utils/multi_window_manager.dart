@@ -218,6 +218,7 @@ class SupportDeskMultiWindowManager {
     String remoteId,
     List<int> windows, {
     String? password,
+    String loginMethod = '',
     bool? forceRelay,
     String? switchUuid,
     bool? isRDP,
@@ -242,6 +243,9 @@ class SupportDeskMultiWindowManager {
     if (connToken != null) {
       params['connToken'] = connToken;
     }
+    if (loginMethod.isNotEmpty) {
+      params['loginMethod'] = loginMethod;
+    }
     final msg = jsonEncode(params);
 
     bool openInTabs = type != WindowType.RemoteDesktop ||
@@ -262,6 +266,7 @@ class SupportDeskMultiWindowManager {
   Future<MultiWindowCallResult> newRemoteDesktop(
     String remoteId, {
     String? password,
+    String loginMethod = '',
     bool? isSharedPassword,
     String? switchUuid,
     bool? forceRelay,
@@ -272,6 +277,7 @@ class SupportDeskMultiWindowManager {
       remoteId,
       _remoteDesktopWindows,
       password: password,
+      loginMethod: loginMethod,
       forceRelay: forceRelay,
       switchUuid: switchUuid,
       isSharedPassword: isSharedPassword,
@@ -281,6 +287,7 @@ class SupportDeskMultiWindowManager {
   Future<MultiWindowCallResult> newFileTransfer(
     String remoteId, {
     String? password,
+    String loginMethod = '',
     bool? isSharedPassword,
     bool? forceRelay,
     String? connToken,
@@ -291,6 +298,7 @@ class SupportDeskMultiWindowManager {
       remoteId,
       _fileTransferWindows,
       password: password,
+      loginMethod: loginMethod,
       forceRelay: forceRelay,
       isSharedPassword: isSharedPassword,
       connToken: connToken,
@@ -300,6 +308,7 @@ class SupportDeskMultiWindowManager {
   Future<MultiWindowCallResult> newViewCamera(
     String remoteId, {
     String? password,
+    String loginMethod = '',
     bool? isSharedPassword,
     String? switchUuid,
     bool? forceRelay,
@@ -311,6 +320,7 @@ class SupportDeskMultiWindowManager {
       remoteId,
       _viewCameraWindows,
       password: password,
+      loginMethod: loginMethod,
       forceRelay: forceRelay,
       switchUuid: switchUuid,
       isSharedPassword: isSharedPassword,
@@ -322,6 +332,7 @@ class SupportDeskMultiWindowManager {
     String remoteId,
     bool isRDP, {
     String? password,
+    String loginMethod = '',
     bool? isSharedPassword,
     bool? forceRelay,
     String? connToken,
@@ -332,6 +343,7 @@ class SupportDeskMultiWindowManager {
       remoteId,
       _portForwardWindows,
       password: password,
+      loginMethod: loginMethod,
       forceRelay: forceRelay,
       isRDP: isRDP,
       isSharedPassword: isSharedPassword,
@@ -342,6 +354,7 @@ class SupportDeskMultiWindowManager {
   Future<MultiWindowCallResult> newTerminal(
     String remoteId, {
     String? password,
+    String loginMethod = '',
     bool? isSharedPassword,
     bool? forceRelay,
     String? connToken,
@@ -361,6 +374,9 @@ class SupportDeskMultiWindowManager {
       "isSharedPassword": isSharedPassword,
       "connToken": connToken,
     };
+    if (loginMethod.isNotEmpty) {
+      params['loginMethod'] = loginMethod;
+    }
     final msg = jsonEncode(params);
 
     final windowId = await newSessionWindow(

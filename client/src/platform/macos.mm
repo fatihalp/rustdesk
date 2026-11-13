@@ -802,6 +802,19 @@ static bool TurnOffPrivacyModeInternal() {
 }
 
 extern "C" bool MacSetPrivacyMode(bool on) {
+    if (!on && ![NSThread isMainThread]) {
+        {
+            std::lock_guard<std::mutex> lock(g_privacyModeMutex);
+            if (!g_privacyModeActive) {
+                return true;
+            }
+        }
+        __block bool result = true;
+        dispatch_sync(dispatch_get_main_queue(), ^{
+            result = MacSetPrivacyMode(false);
+        });
+        return result;
+    }
     std::lock_guard<std::mutex> lock(g_privacyModeMutex);
     if (on) {
         // Already in privacy mode

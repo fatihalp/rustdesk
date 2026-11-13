@@ -1993,6 +1993,9 @@ pub async fn io_loop<T: InvokeUiSession>(handler: Session<T>, round: u32) {
                         }
                     }
                     Some(Data::Close) => {
+                        for s in queues.values() {
+                            s.send(Data::Close).ok();
+                        }
                         break;
                     }
                     Some(d) => {
@@ -2024,6 +2027,7 @@ pub async fn io_loop<T: InvokeUiSession>(handler: Session<T>, round: u32) {
             )
             .await;
         }
+        crate::port_forward::wait_for_tunnel_close_reasons().await;
         return;
     }
     let mut remote = Remote::new(handler, receiver, sender);

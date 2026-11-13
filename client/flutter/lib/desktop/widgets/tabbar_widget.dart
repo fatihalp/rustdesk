@@ -379,7 +379,9 @@ class _DesktopTabState extends State<DesktopTab>
   @override
   void onWindowMinimize() {
     stateGlobal.setMinimized(true);
-    stateGlobal.setMaximized(false);
+    if (!isLinux) {
+      stateGlobal.setMaximized(false);
+    }
     super.onWindowMinimize();
   }
 

@@ -1,6 +1,6 @@
 [package]
 name = "supportdesk-portable-packer"
-version = "1.5.1"
+version = "1.5.3"
 edition = "2021"
 description = "SupportDesk Remote Desktop"
 

@@ -482,7 +482,7 @@ class _AddressBookState extends State<AddressBook> {
           if (gFFI.abModel.idContainByCurrent(id)) {
             setState(() {
               isInProgress = false;
-              errorMsg = translate('ID already exists');
+              errorMsg = translate('Already exists');
             });
             return;
           }

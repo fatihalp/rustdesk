@@ -18,6 +18,7 @@ const DISPLAY_LIST_TIMEOUT_MS: u64 = HANDSHAKE_TIMEOUT_MS + 4000;
 const HANDSHAKE_WAIT_MS: u64 = DRM_CONNECT_TIMEOUT_MS + DISPLAY_LIST_TIMEOUT_MS * 2 + 500;
 const BODY_READ_TIMEOUT: Duration = Duration::from_secs(5);
 const REPEAT_EVERY: Duration = Duration::from_secs(1);
+const MAX_REPEATS: u8 = 3;
 const STILL_AFTER: Duration = Duration::from_millis(100);
 const STILL_FPS: u8 = 30;
 
@@ -136,6 +137,7 @@ pub struct IpcDrmCapturer {
     got_frame: bool,
     spare: Vec<u8>,
     returned_at: Instant,
+    repeats: u8,
 }
 
 fn connector_key(d: &DrmDisplayInfo) -> String {
@@ -421,6 +423,7 @@ impl IpcDrmCapturer {
                 got_frame: false,
                 spare: Vec::new(),
                 returned_at: Instant::now(),
+                repeats: 0,
             },
             displays,
             wire_idx,
@@ -567,9 +570,10 @@ impl TraitCapturer for IpcDrmCapturer {
                 return Err(io::Error::new(io::ErrorKind::Other, err));
             }
         };
-        if repeat && self.returned_at.elapsed() < REPEAT_EVERY {
+        if repeat && (self.returned_at.elapsed() < REPEAT_EVERY || self.repeats >= MAX_REPEATS) {
             return Err(io::ErrorKind::WouldBlock.into());
         }
+        self.repeats = if repeat { self.repeats + 1 } else { 0 };
         self.returned_at = Instant::now();
         Ok(Frame::PixelBuffer(PixelBuffer::new(
             &self.cur,
@@ -2129,6 +2133,7 @@ mod drm_capturer_tests {
             got_frame: false,
             spare: Vec::new(),
             returned_at: Instant::now(),
+            repeats: 0,
         }
     }
 
@@ -2342,7 +2347,7 @@ mod drm_capturer_tests {
     }
 
     #[test]
-    fn a_frame_equal_to_the_last_one_goes_out_once_a_second() {
+    fn a_frame_equal_to_the_last_one_goes_out_once_a_second_three_times() {
         let (still, w, h) = px_frame(&[&[1, 2, 3], &[4, 5, 6]], 0);
         let (moved, _, _) = px_frame(&[&[1, 2, 3], &[4, 5, 7]], 0);
         let mut c = capturer_with(Some((w, h)));
@@ -2353,14 +2358,25 @@ mod drm_capturer_tests {
             c.frame(Duration::from_millis(50)),
             Err(e) if e.kind() == io::ErrorKind::WouldBlock
         ));
+        for _ in 0..MAX_REPEATS {
+            std::thread::sleep(REPEAT_EVERY);
+            put_frame_with(&c, w, h, None, &still);
+            assert!(c.frame(Duration::from_millis(50)).is_ok());
+            put_frame_with(&c, w, h, None, &still);
+            assert!(matches!(
+                c.frame(Duration::from_millis(50)),
+                Err(e) if e.kind() == io::ErrorKind::WouldBlock
+            ));
+        }
         std::thread::sleep(REPEAT_EVERY);
-        put_frame_with(&c, w, h, None, &still);
-        assert!(c.frame(Duration::from_millis(50)).is_ok());
         put_frame_with(&c, w, h, None, &still);
         assert!(matches!(
             c.frame(Duration::from_millis(50)),
             Err(e) if e.kind() == io::ErrorKind::WouldBlock
         ));
+        put_frame_with(&c, w, h, None, &moved);
+        assert!(c.frame(Duration::from_millis(50)).is_ok());
+        std::thread::sleep(REPEAT_EVERY);
         put_frame_with(&c, w, h, None, &moved);
         assert!(c.frame(Duration::from_millis(50)).is_ok());
     }

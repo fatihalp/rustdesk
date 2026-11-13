@@ -2609,6 +2609,9 @@ static FILEDESCRIPTORW *wf_cliprdr_get_file_descriptor(WCHAR *file_name, size_t 
 	fd->dwFileAttributes = GetFileAttributesW(file_name);
 	if (fd->dwFileAttributes == INVALID_FILE_ATTRIBUTES)
 	{
+		CloseHandle(hFile);
+		free(fd);
+		return NULL;
 	}
 
 	if (!GetFileTime(hFile, NULL, NULL, &fd->ftLastWriteTime))
@@ -2616,7 +2619,22 @@ static FILEDESCRIPTORW *wf_cliprdr_get_file_descriptor(WCHAR *file_name, size_t 
 		fd->dwFlags &= ~FD_WRITESTIME;
 	}
 
-	fd->nFileSizeLow = GetFileSize(hFile, &fd->nFileSizeHigh);
+	if ((fd->dwFileAttributes & FILE_ATTRIBUTE_DIRECTORY) == 0)
+	{
+		LARGE_INTEGER file_size = {0};
+
+		if (!GetFileSizeEx(hFile, &file_size) || file_size.QuadPart < 0)
+		{
+			CloseHandle(hFile);
+			free(fd);
+			return NULL;
+		}
+
+		fd->nFileSizeLow = file_size.LowPart;
+		fd->nFileSizeHigh = (DWORD)file_size.HighPart;
+		fd->dwFlags |= FD_FILESIZE;
+	}
+
 	if ((wcslen(file_name + pathLen) + 1) > sizeof(fd->cFileName) / sizeof(fd->cFileName[0]))
 	{
 		CloseHandle(hFile);
@@ -2689,7 +2707,10 @@ static BOOL wf_cliprdr_add_to_file_arrays(wfClipboard *clipboard, WCHAR *full_fi
 	}
 
 	if ((clipboard->fileDescriptor[clipboard->nFiles]->dwFileAttributes &
-		 FILE_ATTRIBUTE_DIRECTORY) == 0) {
+		 FILE_ATTRIBUTE_DIRECTORY) == 0 &&
+		(clipboard->fileDescriptor[clipboard->nFiles]->nFileSizeLow |
+		 clipboard->fileDescriptor[clipboard->nFiles]->nFileSizeHigh) != 0 &&
+		clipboard->first_file_index == (size_t)-1) {
 		clipboard->first_file_index = clipboard->nFiles;
 	}
 

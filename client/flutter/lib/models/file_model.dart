@@ -2039,7 +2039,9 @@ List<Entry> _sortList(List<Entry> list, SortBy sortType, bool ascending) {
         .compareTo(pathStat.indexWhere((element) => element.path == b.name)));
     return ascending ? list : list.reversed.toList();
   } else if (sortType == SortBy.type) {
-    final dirs = list.where((element) => element.isDirectory).toList();
+    final dirs = list
+        .where((element) => element.isDirectory || element.isDrive)
+        .toList();
 
     dirs.sort((a, b) => a.name.toLowerCase().compareTo(b.name.toLowerCase()));
 
@@ -2059,7 +2061,9 @@ List<Entry> _sortList(List<Entry> list, SortBy sortType, bool ascending) {
       sizeMap[e.name] = e.size;
     }
 
-    final dirs = list.where((element) => element.isDirectory).toList();
+    final dirs = list
+        .where((element) => element.isDirectory || element.isDrive)
+        .toList();
     dirs.sort((a, b) => a.name.toLowerCase().compareTo(b.name.toLowerCase()));
 
     final files = list.where((element) => element.isFile).toList();

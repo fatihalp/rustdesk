@@ -18,7 +18,7 @@ prepare_flutter() {
 	git checkout "${VERSION}"
 
 
-	if dpkg --compare-versions "${VERSION}" ge "3.24.4"; then
+	if dpkg --compare-versions "${VERSION}" ge "3.24.4" && dpkg --compare-versions "${VERSION}" lt "3.44.0"; then
 		git apply "${ROOTDIR}/.github/patches/flutter_3.24.4_dropdown_menu_enableFilter.diff"
 	fi
 
@@ -268,8 +268,7 @@ prebuild)
 	BRIDGE_LLVM_PATH="$(dirname "${BRIDGE_LLVM_PATH}")"
 
 
-
-	prepare_flutter "$FLUTTER_BRIDGE_VERSION" "${HOME}/flutter"
+	prepare_flutter "${FLUTTER_BRIDGE_VERSION}" "${HOME}/flutter"
 
 
 	git add .
@@ -284,7 +283,7 @@ prebuild)
 	pushd flutter
 
 	flutter clean
-	flutter packages pub get --enforce-lockfile
+	flutter packages pub get
 
 	popd
 

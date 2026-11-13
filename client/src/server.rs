@@ -630,17 +630,35 @@ pub async fn start_server(is_server: bool, no_server: bool) {
     });
 
     if is_server {
-        crate::common::set_server_running(true);
-        std::thread::spawn(move || {
-            if let Err(err) = crate::ipc::start("") {
-                log::error!("Failed to start ipc: {}", err);
-                if crate::is_server() {
-                    log::error!("ipc is occupied by another process, try kill it");
-                    std::thread::spawn(stop_main_window_process).join().ok();
-                }
-                std::process::exit(-1);
+        #[cfg(windows)]
+        if !crate::is_server() {
+            if let Err(err) = start_gui_ipc().await {
+                log::error!("Local hosting unavailable: failed to start GUI IPC listener: {err:#}");
+                return;
             }
-        });
+        }
+        crate::common::set_server_running(true);
+        if !cfg!(windows) || crate::is_server() {
+            std::thread::spawn(move || {
+                if let Err(err) = crate::ipc::start("") {
+                    log::error!("Failed to start ipc: {}", err);
+                    if crate::is_server() {
+                        #[cfg(windows)]
+                        {
+                            const MAIN_IPC_STARTUP_GRACE: Duration = Duration::from_secs(1);
+                            std::thread::sleep(MAIN_IPC_STARTUP_GRACE);
+                            match crate::ipc::start("") {
+                                Ok(()) => return,
+                                Err(err) => log::error!("Failed to retry ipc startup: {err}"),
+                            }
+                        }
+                        log::error!("ipc is occupied by another process, try kill it");
+                        std::thread::spawn(stop_main_window_process).join().ok();
+                    }
+                    std::process::exit(-1);
+                }
+            });
+        }
         #[cfg(all(target_os = "linux", feature = "drm"))]
         if let Err(err) = std::thread::Builder::new()
             .name("drm-warm".into())
@@ -706,6 +724,13 @@ pub async fn start_server(is_server: bool, no_server: bool) {
             }
         }
     }
+}
+
+#[cfg(windows)]
+async fn start_gui_ipc() -> ResultType<()> {
+    let incoming = crate::ipc::new_listener("").await?;
+    tokio::spawn(crate::ipc::start_with_listener("", incoming));
+    Ok(())
 }
 
 #[cfg(target_os = "macos")]

@@ -93,6 +93,8 @@ use crate::ui_session_interface::SessionPermissionConfig;
 
 pub use super::lang::*;
 
+mod login_method;
+
 #[cfg(not(target_os = "linux"))]
 mod audio_playback;
 #[cfg(target_os = "windows")]
@@ -1603,6 +1605,7 @@ impl Client {
         conn_type: ConnType,
         ipv4: bool,
     ) -> ResultType<Stream> {
+        crate::common::check_relay_uuid(&uuid)?;
         let relay_server = check_port(relay_server, RELAY_PORT);
         let use_ws_proxy = Config::is_proxy() && is_ws_endpoint(&check_ws(&relay_server));
         let mut conn = connect_tcp(
@@ -2540,6 +2543,7 @@ pub struct LoginConfigHandler {
     hash: Hash,
     password: Vec<u8>,
     pub remember: bool,
+    login_method: login_method::LoginMethod,
     config: PeerConfig,
     pub port_forward: (String, i32),
     pub(crate) port_forward_multiplex: bool,
@@ -2596,6 +2600,7 @@ impl LoginConfigHandler {
         adapter_luid: Option<i64>,
         shared_password: Option<String>,
         conn_token: Option<String>,
+        login_method: &str,
     ) {
         let mut id = id;
         if id.contains("@") {
@@ -2635,6 +2640,10 @@ impl LoginConfigHandler {
 
         self.id = id;
         self.conn_type = conn_type;
+        self.login_method = Default::default();
+        if !login_method.is_empty() && !self.set_login_method(login_method) {
+            log::warn!("Failed to initialize login method: {}", login_method);
+        }
         let config = self.load_config();
         self.remember = !config.password.is_empty();
         self.config = config;
@@ -3222,7 +3231,7 @@ impl LoginConfigHandler {
         let password0 = config.password.clone();
         let remember = self.remember;
         let hash = self.hash.clone();
-        if remember {
+        if remember && !self.skips_saved_password() {
             if !password.is_empty()
                 && password != password0
                 && !self.password_source.is_shared_ab(&password, &hash)
@@ -3230,7 +3239,7 @@ impl LoginConfigHandler {
                 config.password = password.clone();
                 log::debug!("remember password of {}", self.id);
             }
-        } else {
+        } else if !self.skips_saved_password() {
             if self.password_source.is_personal_ab(&password) {
                 config.password = password.clone();
                 log::debug!("save ab password of {} to recent", self.id);
@@ -3253,7 +3262,8 @@ impl LoginConfigHandler {
         }
         #[cfg(feature = "flutter")]
         {
-            if !config.password.is_empty()
+            if !self.skips_saved_password()
+                && !config.password.is_empty()
                 && !self.password_source.is_shared_ab(&password, &hash)
                 && !self.password_source.is_personal_ab(&password)
             {
@@ -3403,6 +3413,9 @@ impl LoginConfigHandler {
             avatar,
             ..Default::default()
         };
+        if self.skips_saved_password() {
+            lr.password.clear();
+        }
         match self.conn_type {
             ConnType::FILE_TRANSFER => lr.set_file_transfer(FileTransfer {
                 dir: self.get_remote_dir(),
@@ -4163,10 +4176,14 @@ pub async fn handle_hash(
 
     lc.write().unwrap().password = password.clone();
 
+    let request_approval = lc.read().unwrap().skips_saved_password();
+
     let is_terminal_admin = lc.read().unwrap().is_terminal_admin;
     let is_terminal = lc.read().unwrap().conn_type.eq(&ConnType::TERMINAL);
     if is_terminal && is_terminal_admin {
-        if password.is_empty() {
+        if request_approval {
+            interface.msgbox("terminal-admin-login-request-approval", "", "", "");
+        } else if password.is_empty() {
             interface.msgbox("terminal-admin-login-password", "", "", "");
         } else {
             interface.msgbox("terminal-admin-login", "", "", "");
@@ -4176,7 +4193,9 @@ pub async fn handle_hash(
     }
 
     let password = if password.is_empty() {
-        interface.msgbox("input-password", "Password Required", "", "");
+        if !request_approval {
+            interface.msgbox("input-password", "Password Required", "", "");
+        }
         Vec::new()
     } else {
         let mut hasher = Sha256::new();
@@ -4184,6 +4203,15 @@ pub async fn handle_hash(
         hasher.update(&hash.challenge);
         hasher.finalize()[..].into()
     };
+
+    if request_approval {
+        interface.msgbox(
+            "wait-remote-accept-nook",
+            "Prompt",
+            "Please wait for the remote side to accept your session request...",
+            "",
+        );
+    }
 
     if let Err(error) = send_login(
         lc.clone(),
