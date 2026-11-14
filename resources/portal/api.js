@@ -1,52 +1,39 @@
-function getCsrfToken() {
-  const meta = document.querySelector('meta[name="csrf-token"]');
-  return meta ? meta.getAttribute('content') : window.__CSRF_TOKEN__ || '';
+function csrfToken() {
+  return document.querySelector('meta[name="csrf-token"]')?.getAttribute('content') || '';
 }
 
-export async function request(endpoint, options = {}) {
-  const url = endpoint;
+async function request(endpoint, method, body) {
   const headers = {
-    'Accept': 'application/json',
-    'X-CSRF-TOKEN': getCsrfToken(),
+    Accept: 'application/json',
+    'X-CSRF-TOKEN': csrfToken(),
     'X-Requested-With': 'XMLHttpRequest',
-    ...options.headers,
   };
 
-  if (!(options.body instanceof FormData) && options.body && typeof options.body === 'object') {
+  const isForm = body instanceof FormData;
+  if (body && !isForm) {
     headers['Content-Type'] = 'application/json';
-    options.body = JSON.stringify(options.body);
   }
 
-  const response = await fetch(url, {
-    credentials: 'same-origin',
-    ...options,
+  const response = await fetch(endpoint, {
+    method,
     headers,
+    credentials: 'same-origin',
+    body: body && !isForm ? JSON.stringify(body) : body,
   });
 
-  const contentType = response.headers.get('content-type') || '';
-  let data = null;
-  if (contentType.includes('application/json')) {
-    data = await response.json();
-  } else {
-    data = await response.text();
-  }
+  const isJson = (response.headers.get('content-type') || '').includes('application/json');
+  const data = isJson ? await response.json() : null;
 
   if (!response.ok) {
-    const error = new Error(data?.message || data?.error || 'An error occurred.');
-    error.status = response.status;
-    error.data = data;
-    throw error;
+    throw new Error(data?.message || 'Something went wrong. Please try again.');
   }
 
   return data;
 }
 
 export const api = {
-  get: (endpoint) => request(endpoint, { method: 'GET' }),
-  post: (endpoint) => request(endpoint, { method: 'POST' }),
-  postJson: (endpoint, body) => request(endpoint, { method: 'POST', body }),
-  put: (endpoint, body) => request(endpoint, { method: 'PUT', body }),
-  delete: (endpoint) => request(endpoint, { method: 'DELETE' }),
-  postForm: (endpoint, formData) => request(endpoint, { method: 'POST', body: formData }),
+  get: (endpoint) => request(endpoint, 'GET'),
+  post: (endpoint, body) => request(endpoint, 'POST', body),
+  put: (endpoint, body) => request(endpoint, 'PUT', body),
+  delete: (endpoint) => request(endpoint, 'DELETE'),
 };
-api.post = (endpoint, body) => request(endpoint, { method: 'POST', body });

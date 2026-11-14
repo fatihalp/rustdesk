@@ -21,7 +21,7 @@ const ERROR_SUCCESS: u32 = 0;
 const CHANNEL_RC_NO_MEMORY: u32 = 12;
 const ERROR_INTERNAL_ERROR: u32 = 0x54F;
 
-pub type size_t = ::std::os::raw::c_ulonglong;
+pub type size_t = usize;
 pub type __vcrt_bool = bool;
 pub type wchar_t = ::std::os::raw::c_ushort;
 

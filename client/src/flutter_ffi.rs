@@ -153,6 +153,7 @@ pub fn session_add_sync(
     password: String,
     is_shared_password: bool,
     conn_token: Option<String>,
+    login_method: String,
 ) -> SyncReturn<String> {
     let add_res = session_add(
         &session_id,
@@ -167,6 +168,7 @@ pub fn session_add_sync(
         password,
         is_shared_password,
         conn_token,
+        &login_method,
     );
     if is_terminal {
         std::env::remove_var("IS_TERMINAL_ADMIN");
@@ -2917,6 +2919,8 @@ pub fn session_get_common(
     if let Some(s) = sessions::get_session_by_session_id(&session_id) {
         let v = if key == "is_screenshot_supported" {
             s.is_screenshot_supported().to_string()
+        } else if key == "login_method" {
+            s.lc.read().unwrap().get_login_method().to_owned()
         } else {
             "".to_owned()
         };

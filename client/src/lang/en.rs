@@ -56,7 +56,7 @@ pub static ref T: std::collections::HashMap<&'static str, &'static str> =
         ("Add Tag", "Add tag"),
         ("Wrong credentials", "Wrong username or password"),
         ("Edit Tag", "Edit tag"),
-        ("Forget Password", "Forget password"),
+        ("Forget Password", "Clear saved password"),
         ("Add to Favorites", "Add to favorites"),
         ("Remove from Favorites", "Remove from favorites"),
         ("Socks5 Proxy", "Socks5 proxy"),
@@ -292,5 +292,6 @@ pub static ref T: std::collections::HashMap<&'static str, &'static str> =
         ("android-logs-folder-tip", "Choose Android → media to store log files."),
         ("visiosoft_access_enabled_tip", "Authorized support staff can connect without asking for a password."),
         ("visiosoft_access_disabled_tip", "Passwordless support access is off. Connections need your ID and one-time password."),
+        ("install-directory-not-empty-tip", "The selected folder is not empty. Installation may delete existing data. Consider choosing a different folder."),
     ].iter().cloned().collect();
 }

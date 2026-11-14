@@ -19,17 +19,12 @@ class DeviceResource extends JsonResource
             'username' => $this->username ?: '-',
             'os' => $this->os ?: '-',
             'platform' => $this->platform ?: 'other',
-            'cpu' => $this->cpu,
-            'memory' => $this->memory,
-            'client_version' => $this->client_version,
-            'ip_address' => $presence['ip'],
             'is_online' => $presence['online'],
             'is_blocked' => $presence['blocked'],
             'active_connections' => $this->active_connections,
             'notes' => $this->notes,
             'has_unattended_password' => $this->hasUnattendedPassword(),
             'last_seen_at' => $this->last_seen_at?->toIso8601String(),
-            'first_seen_at' => $this->first_seen_at?->toIso8601String(),
         ];
     }
 }

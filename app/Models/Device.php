@@ -43,6 +43,11 @@ class Device extends Model
         return $query->where('last_seen_at', '>', now()->subSeconds(config('panel.online_seconds')));
     }
 
+    public function scopeActiveWithinDays(Builder $query, int $days): Builder
+    {
+        return $query->where('last_seen_at', '>=', now()->subDays($days));
+    }
+
     public static function platformFromOs(?string $os): ?string
     {
         $os = strtolower((string) $os);

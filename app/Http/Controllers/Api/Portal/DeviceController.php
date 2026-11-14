@@ -18,15 +18,8 @@ class DeviceController extends Controller
     public function index(Request $request): JsonResponse
     {
         $devices = $request->user()->customer->devices()->latest('last_seen_at')->get();
-        $status = $this->relay->status();
 
-        return response()->json([
-            'relay' => [
-                'reachable' => $status['reachable'],
-                'active_sessions' => count($status['sessions']),
-            ],
-            'devices' => DeviceResource::collection($devices),
-        ]);
+        return response()->json(['devices' => DeviceResource::collection($devices)]);
     }
 
     public function connectInfo(Request $request, Device $device): DeviceConnectionResource

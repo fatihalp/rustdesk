@@ -1,68 +1,32 @@
-import React, { createContext, useContext, useState, useEffect } from 'react';
+import React, { createContext, useContext, useEffect, useState } from 'react';
 import { api } from '../api';
 
 const AuthContext = createContext(null);
 
-export function AuthProvider({ children }) {
-  const [user, setUser] = useState(null);
-  const [customer, setCustomer] = useState(null);
-  const [clientApp, setClientApp] = useState(null);
-  const [loading, setLoading] = useState(true);
-  const [error, setError] = useState(null);
+const SIGNED_OUT = { user: null, customer: null, clientApp: null };
 
-  const fetchMe = async () => {
-    try {
-      setLoading(true);
-      setError(null);
-      const res = await api.get('/api/portal/auth/me');
-      if (res.authenticated) {
-        setUser(res.user);
-        setCustomer(res.customer);
-        setClientApp(res.client_app);
-      } else {
-        setUser(null);
-        setCustomer(null);
-        setClientApp(null);
-      }
-    } catch (err) {
-      setUser(null);
-      setCustomer(null);
-      setClientApp(null);
-    } finally {
-      setLoading(false);
-    }
-  };
+function sessionFrom(response) {
+  return { user: response.user, customer: response.customer, clientApp: response.client_app };
+}
+
+export function AuthProvider({ children }) {
+  const [session, setSession] = useState(SIGNED_OUT);
+  const [loading, setLoading] = useState(true);
 
   useEffect(() => {
-    fetchMe();
+    api
+      .get('/api/portal/auth/me')
+      .then((response) => setSession(sessionFrom(response)))
+      .catch(() => setSession(SIGNED_OUT))
+      .finally(() => setLoading(false));
   }, []);
 
   const login = async (email, password) => {
-    setError(null);
-    try {
-      const res = await api.post('/api/portal/auth/login', { email, password });
-      setUser(res.user);
-      setCustomer(res.customer);
-      setClientApp(res.client_app);
-      return res;
-    } catch (err) {
-      setError(err.message);
-      throw err;
-    }
+    setSession(sessionFrom(await api.post('/api/portal/auth/login', { email, password })));
   };
 
-  const register = async (data) => {
-    setError(null);
-    try {
-      const res = await api.post('/api/portal/auth/register', data);
-      setUser(res.user);
-      setCustomer(res.customer);
-      setClientApp(res.client_app);
-      return res;
-    } catch (err) {
-      setError(err.message);
-      throw err;
-    }
+  const register = async (account) => {
+    setSession(sessionFrom(await api.post('/api/portal/auth/register', account)));
   };
 
   const oauth = (provider) => {
@@ -73,41 +37,21 @@ export function AuthProvider({ children }) {
     try {
       await api.post('/api/portal/auth/logout');
     } finally {
-      setUser(null);
-      setCustomer(null);
-      setClientApp(null);
+      setSession(SIGNED_OUT);
     }
   };
 
-  const updateClientApp = (newApp) => {
-    setClientApp((prev) => ({ ...prev, ...newApp }));
+  const updateClientApp = (changes) => {
+    setSession((current) => ({ ...current, clientApp: { ...current.clientApp, ...changes } }));
   };
 
   return (
-    <AuthContext.Provider
-      value={{
-        user,
-        customer,
-        clientApp,
-        loading,
-        error,
-        login,
-        register,
-        oauth,
-        logout,
-        refreshUser: fetchMe,
-        updateClientApp,
-      }}
-    >
+    <AuthContext.Provider value={{ ...session, loading, login, register, oauth, logout, updateClientApp }}>
       {children}
     </AuthContext.Provider>
   );
 }
 
 export function useAuth() {
-  const ctx = useContext(AuthContext);
-  if (!ctx) {
-    throw new Error('useAuth must be used within an AuthProvider');
-  }
-  return ctx;
+  return useContext(AuthContext);
 }

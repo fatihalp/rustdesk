@@ -12,7 +12,7 @@ use std::io;
 use crate::{
     client::{
         SCRAP_OTHER_VERSION_OR_X11_REQUIRED, SCRAP_UBUNTU_HIGHER_REQUIRED,
-        SCRAP_X11_REQUIRED, SCRAP_XDP_PORTAL_UNAVAILABLE,
+        SCRAP_XDP_PORTAL_UNAVAILABLE,
     },
     platform::linux::is_x11,
 };
@@ -75,7 +75,7 @@ fn map_err_scrap(err: String) -> io::Error {
         } else if err_lower.contains("pipewire") {
             io::Error::new(io::ErrorKind::Other, SCRAP_OTHER_VERSION_OR_X11_REQUIRED)
         } else {
-            io::Error::new(io::ErrorKind::Other, SCRAP_X11_REQUIRED)
+            io::Error::new(io::ErrorKind::Other, err)
         }
     }
 }
