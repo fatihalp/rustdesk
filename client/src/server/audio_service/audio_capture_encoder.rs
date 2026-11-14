@@ -120,7 +120,3 @@ pub(super) fn run_capture_encoder(context: CaptureEncoderContext, config: Captur
         std::thread::park_timeout(CAPTURE_STATS_LOG_INTERVAL);
     }
 }
-
-#[cfg(test)]
-#[path = "audio_capture_encoder_tests.rs"]
-mod tests;

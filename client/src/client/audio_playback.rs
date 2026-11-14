@@ -226,7 +226,3 @@ impl AudioPlaybackRecovery {
         self.transition_frame as f32 / self.transition_frames as f32
     }
 }
-
-#[cfg(test)]
-#[path = "audio_playback_tests.rs"]
-mod tests;

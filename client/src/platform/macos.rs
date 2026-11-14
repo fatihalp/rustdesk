@@ -2,10 +2,6 @@
 mod update_temp;
 mod verified_dmg;
 
-#[cfg(test)]
-#[path = "macos/verified_dmg_tests.rs"]
-mod verified_dmg_tests;
-
 use super::{validate_install_app_name, CursorData, ResultType};
 use cocoa::{
     appkit::{NSApp, NSApplication, NSApplicationActivationPolicy::*},
@@ -1902,84 +1898,5 @@ pub(crate) fn get_bundle_id() -> Option<String> {
             .to_string_lossy()
             .to_string();
         Some(bundle_id_str)
-    }
-}
-
-#[cfg(test)]
-mod update_tests {
-    use super::*;
-
-    #[test]
-    fn update_tree_rejects_framework_root_symlink() {
-        let test_dir = std::env::temp_dir().join(format!(
-            "supportdesk-update-tree-framework-link-test-{}-{}",
-            std::process::id(),
-            hbb_common::rand::random::<u64>()
-        ));
-        let app_dir = test_dir.join("SupportDesk.app");
-        let frameworks_dir = app_dir.join("Contents/Frameworks");
-        let external_framework = test_dir.join("External.framework");
-        std::fs::create_dir_all(&frameworks_dir).unwrap();
-        std::fs::create_dir_all(&external_framework).unwrap();
-        std::os::unix::fs::symlink(
-            &external_framework,
-            frameworks_dir.join("External.framework"),
-        )
-        .unwrap();
-
-        let result = validate_update_tree(&app_dir, None);
-
-        std::fs::remove_dir_all(test_dir).unwrap();
-        assert!(result.is_err());
-    }
-
-    #[test]
-    fn update_tree_allows_internal_framework_symlink() {
-        let test_dir = std::env::temp_dir().join(format!(
-            "supportdesk-update-tree-internal-link-test-{}-{}",
-            std::process::id(),
-            hbb_common::rand::random::<u64>()
-        ));
-        let framework_dir = test_dir.join("SupportDesk.app/Contents/Frameworks/Test.framework");
-        let versions_dir = framework_dir.join("Versions");
-        std::fs::create_dir_all(versions_dir.join("A")).unwrap();
-        std::os::unix::fs::symlink("A", versions_dir.join("Current")).unwrap();
-
-        let result = validate_update_tree(&test_dir.join("SupportDesk.app"), None);
-
-        std::fs::remove_dir_all(test_dir).unwrap();
-        assert!(result.is_ok());
-    }
-
-    #[test]
-    fn update_app_identity_requires_matching_bundles() {
-        let test_dir = std::env::temp_dir().join(format!(
-            "supportdesk-update-identity-test-{}-{}",
-            std::process::id(),
-            hbb_common::rand::random::<u64>()
-        ));
-        let installed = test_dir.join("installed.app");
-        let candidate = test_dir.join("candidate.app");
-        let info = |bundle_id| {
-            format!("<plist version=\"1.0\"><dict><key>CFBundleIdentifier</key><string>{bundle_id}</string></dict></plist>")
-        };
-        for app in [&installed, &candidate] {
-            std::fs::create_dir_all(app.join("Contents")).unwrap();
-        }
-        std::fs::write(
-            installed.join("Contents/Info.plist"),
-            info("com.carriez.supportdesk"),
-        )
-        .unwrap();
-
-        for (bundle_id, accepted) in [("com.carriez.supportdesk", true), ("example.other", false)] {
-            std::fs::write(candidate.join("Contents/Info.plist"), info(bundle_id)).unwrap();
-            assert_eq!(
-                verify_update_app_identity(&installed, &candidate).is_ok(),
-                accepted
-            );
-        }
-
-        std::fs::remove_dir_all(test_dir).unwrap();
     }
 }

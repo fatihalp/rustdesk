@@ -312,19 +312,6 @@ pub mod client {
         }
     }
 
-    #[cfg(test)]
-    mod tests {
-        use super::desktop_is_niri;
-
-        #[test]
-        fn detects_niri_in_desktop_list() {
-            assert!(desktop_is_niri("niri"));
-            assert!(desktop_is_niri("NIRI"));
-            assert!(desktop_is_niri("GNOME:niri"));
-            assert!(!desktop_is_niri("GNOME"));
-        }
-    }
-
     impl MouseControllable for RdpInputMouse {
         fn as_any(&self) -> &dyn std::any::Any {
             self

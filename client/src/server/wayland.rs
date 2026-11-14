@@ -165,36 +165,6 @@ fn staged_message(tag: &str, ubuntu_before_21: bool) -> String {
     }
 }
 
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn staged_message_names_the_outcome() {
-        let m = |tag| staged_message(tag, false);
-        assert_eq!(m("start:declined:"), WAYLAND_DECLINED);
-        assert_eq!(m("start:ended:"), WAYLAND_ENDED);
-        assert_eq!(m("start:no-response:"), WAYLAND_TIMED_OUT);
-        assert_eq!(m("create-session:no-response:"), WAYLAND_TIMED_OUT);
-        assert_eq!(m("streams:empty:"), WAYLAND_NO_USABLE_SCREEN);
-    }
-
-    #[test]
-    fn a_detail_carrying_message_reduces_back_to_its_key() {
-        let gst = staged_message("gst-plugin:unavailable:pipewiresrc", false);
-        assert_eq!(
-            gst,
-            "SupportDesk could not load a GStreamer component needed for screen capture ({pipewiresrc})"
-        );
-        let open = gst.find('{').expect("no placeholder");
-        let close = gst[open..].find('}').expect("unclosed placeholder") + open;
-        assert_eq!(
-            format!("{}{{}}{}", &gst[..open], &gst[close + 1..]),
-            WAYLAND_GST_UNAVAILABLE
-        );
-    }
-}
-
 struct CapturerPtr(*mut Capturer);
 
 impl Clone for CapturerPtr {

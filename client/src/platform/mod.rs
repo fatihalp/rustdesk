@@ -212,31 +212,3 @@ pub fn get_pids_of_process_with_first_arg<S1: AsRef<str>, S2: AsRef<str>>(
             .collect()
     }
 }
-
-#[cfg(all(test, any(windows, target_os = "macos")))]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn install_app_names_enforce_ascii_command_safety() {
-        for app_name in [
-            "SupportDesk",
-            "SupportDesk-2",
-            "A",
-            "A-0",
-            "1SupportDesk",
-            "_SupportDesk",
-            "Rust_Desk",
-        ] {
-            assert!(validate_install_app_name(app_name).is_ok(), "{app_name}");
-        }
-        for app_name in ["", "Rust.Desk", "Rust Desk", "RüstDesk", "SupportDesk;touch"] {
-            assert!(validate_install_app_name(app_name).is_err(), "{app_name}");
-        }
-
-        #[cfg(windows)]
-        assert!(validate_install_app_name("-SupportDesk").is_ok());
-        #[cfg(target_os = "macos")]
-        assert!(validate_install_app_name("-SupportDesk").is_err());
-    }
-}

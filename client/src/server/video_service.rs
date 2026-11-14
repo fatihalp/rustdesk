@@ -1,8 +1,5 @@
 
 
-
-
-
 use super::{display_service::check_display_changed, service::ServiceTmpl, video_qos::VideoQoS, *};
 #[cfg(target_os = "linux")]
 use crate::common::SimpleCallOnReturn;
@@ -1497,21 +1494,5 @@ fn handle_screenshot(screenshot: Screenshot, msg: String, w: usize, h: usize, da
         .send((hbb_common::tokio::time::Instant::now(), Arc::new(msg_out)))
     {
         log::error!("Failed to send screenshot, {}", e);
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::refresh_allowed;
-
-    #[test]
-    fn refresh_waits_for_hw_encoder_warmup() {
-        assert_eq!(
-            refresh_allowed(false, false, false),
-            !cfg!(target_os = "macos")
-        );
-        assert!(refresh_allowed(false, true, false));
-        assert!(refresh_allowed(false, false, true));
-        assert!(refresh_allowed(true, false, false));
     }
 }

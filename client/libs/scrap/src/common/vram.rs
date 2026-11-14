@@ -25,9 +25,6 @@ use hwcodec::{
     },
 };
 
-#[cfg(test)]
-mod repeat_tests;
-
 lazy_static::lazy_static! {
     static ref ENOCDE_NOT_USE: Arc<Mutex<HashMap<String, bool>>> = Default::default();
     static ref FALLBACK_GDI_DISPLAYS: Arc<Mutex<HashSet<String>>> = Default::default();

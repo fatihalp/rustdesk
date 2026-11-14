@@ -43,7 +43,7 @@ pub async fn update_auth<T: Send + 'static>(
     .await
 }
 
-#[cfg(any(target_os = "windows", target_os = "linux", target_os = "macos", test))]
+#[cfg(any(target_os = "windows", target_os = "linux", target_os = "macos"))]
 pub fn sync_config(value: Config, options: Config2) -> ResultType<()> {
     let _storage = super::storage()?;
     Config::set(value);

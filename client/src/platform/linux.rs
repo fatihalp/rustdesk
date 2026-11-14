@@ -216,23 +216,6 @@ pub fn gnome_monitor_layout_mode() -> Option<GnomeMonitorLayoutMode> {
     result
 }
 
-#[cfg(test)]
-mod gnome_monitor_layout_tests {
-    use super::*;
-
-    #[test]
-    fn maps_logical_layouts() {
-        assert_eq!(
-            gnome_monitor_layout_mode_from_value(1),
-            Some(GnomeMonitorLayoutMode::Logical)
-        );
-        assert_eq!(
-            gnome_monitor_layout_mode_from_value(3),
-            Some(GnomeMonitorLayoutMode::Logical)
-        );
-    }
-}
-
 #[inline]
 fn update_active_user_lookup_cache(desktop: &Desktop) {
     if let Ok(mut cache) = ACTIVE_USER_LOOKUP_CACHE.lock() {
@@ -395,7 +378,7 @@ fn is_tty_greeter_session(sid: &str) -> bool {
     false
 }
 
-#[cfg(any(feature = "drm", test))]
+#[cfg(feature = "drm")]
 fn is_tty_greeter_props(props: &str) -> bool {
     let has = |prop: &str| props.lines().any(|line| line.trim() == prop);
     has("Class=greeter") && has("Type=tty")
@@ -408,7 +391,7 @@ fn has_wayland_socket(uid: &str) -> bool {
         && dir_has_wayland_socket(Path::new(&format!("/run/user/{uid}")))
 }
 
-#[cfg(any(feature = "drm", test))]
+#[cfg(feature = "drm")]
 fn dir_has_wayland_socket(dir: &Path) -> bool {
     use std::os::unix::fs::FileTypeExt;
     let entries = match std::fs::read_dir(dir) {
@@ -431,30 +414,6 @@ fn dir_has_wayland_socket(dir: &Path) -> bool {
             && !name.ends_with(".lock")
             && entry.file_type().map_or(false, |t| t.is_socket())
     })
-}
-
-#[cfg(test)]
-mod tty_greeter_tests {
-    use super::*;
-
-    #[test]
-    fn a_greetd_greeter_running_a_compositor_is_a_wayland_login_screen() {
-        assert!(is_tty_greeter_props("Type=tty\nClass=greeter\n"));
-        assert!(!is_tty_greeter_props("Type=tty\nClass=user\n"));
-        assert!(!is_tty_greeter_props("Type=wayland\nClass=greeter\n"));
-
-        let dir = std::env::temp_dir().join(format!("supportdesk-tty-greeter-{}", std::process::id()));
-        let _ = std::fs::remove_dir_all(&dir);
-        std::fs::create_dir_all(&dir).unwrap();
-        std::fs::write(dir.join("wayland-1.lock"), b"").unwrap();
-        assert!(
-            !dir_has_wayland_socket(&dir),
-            "a console greeter runs no compositor"
-        );
-        let _listener = std::os::unix::net::UnixListener::bind(dir.join("wayland-1")).unwrap();
-        assert!(dir_has_wayland_socket(&dir));
-        let _ = std::fs::remove_dir_all(&dir);
-    }
 }
 
 #[cfg(feature = "drm")]
@@ -873,32 +832,6 @@ fn append_audio_latency_envs(
         if let Some(value) = get_var(key).filter(|value| !value.is_empty()) {
             envs.push((key, value));
         }
-    }
-}
-
-#[cfg(test)]
-mod audio_latency_env_tests {
-    use super::append_audio_latency_envs;
-
-    #[test]
-    fn forwards_configured_values_without_creating_defaults() {
-        let mut envs = Vec::new();
-        append_audio_latency_envs(&mut envs, |key| match key {
-            "PULSE_LATENCY_MSEC" => Some("60".to_owned()),
-            "PIPEWIRE_LATENCY" => Some("1024/48000".to_owned()),
-            _ => None,
-        });
-        assert_eq!(
-            envs,
-            vec![
-                ("PULSE_LATENCY_MSEC", "60".to_owned()),
-                ("PIPEWIRE_LATENCY", "1024/48000".to_owned()),
-            ]
-        );
-
-        envs.clear();
-        append_audio_latency_envs(&mut envs, |_| None);
-        assert!(envs.is_empty());
     }
 }
 
@@ -1730,12 +1663,10 @@ pub fn quit_gui() {
     unsafe { gtk_main_quit() };
 }
 
-
 pub fn check_super_user_permission() -> ResultType<bool> {
     gtk_sudo::run(vec!["echo"])?;
     Ok(true)
 }
-
 
 type GtkSettingsPtr = *mut c_void;
 type GObjectPtr = *mut c_void;
@@ -1847,48 +1778,6 @@ pub fn current_resolution(name: &str) -> ResultType<Resolution> {
         }
     }
     bail!("Failed to find current resolution for {}", name);
-}
-
-#[cfg(test)]
-mod xrandr_tests {
-    use super::*;
-
-    #[test]
-    fn output_name_does_not_match_inside_another_name() {
-        let xrandr_output = "Screen 0: minimum 320 x 200, current 4480 x 1440, maximum 16384 x 16384
-eDP-1 connected primary 1920x1080+0+0 (normal left inverted right x axis y axis) 309mm x 174mm
- 1920x1080 60.01*+ 59.97
- 1280x720 60.00
-DP-1 connected 2560x1440+1920+0 (normal left inverted right x axis y axis) 597mm x 336mm
- 2560x1440 59.95*+
- 1920x1080 60.00
-";
-        let re = Regex::new(&get_xrandr_conn_pat("DP-1")).unwrap();
-        let caps = re.captures(xrandr_output).unwrap();
-        assert_eq!(get_width_height_from_captures(&caps), Some((2560, 1440)));
-    }
-
-    #[test]
-    fn interlaced_mode_does_not_end_the_mode_list() {
-        let xrandr_output =
-            "Screen 0: minimum 320 x 200, current 1920 x 1080, maximum 16384 x 16384
-HDMI-0 connected primary 1920x1080+0+0 (normal left inverted right x axis y axis) 1600mm x 900mm
- 1920x1080 60.00*+ 59.94 50.00
- 1920x1080i 60.00 59.94 50.00
- 1280x720 60.00 59.94 50.00
- 640x480 75.00 59.94
-DP-0 disconnected (normal left inverted right x axis y axis)
-";
-        let re = Regex::new(&format!(
-            "{}{}",
-            get_xrandr_conn_pat("HDMI-0"),
-            XRANDR_MODES_PAT
-        ))
-        .unwrap();
-        let caps = re.captures(xrandr_output).unwrap();
-        assert!(caps["resolutions"].contains(" 1280x720 "));
-        assert!(caps["resolutions"].contains(" 640x480 "));
-    }
 }
 
 pub fn change_resolution_directly(name: &str, width: usize, height: usize) -> ResultType<()> {

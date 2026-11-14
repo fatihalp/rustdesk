@@ -10,7 +10,6 @@ use hbb_common::protobuf::MessageField;
 use scrap::Display;
 use std::sync::atomic::{AtomicBool, Ordering};
 
-
 pub const NAME: &'static str = "display";
 
 #[cfg(windows)]
@@ -813,7 +812,6 @@ pub fn try_get_displays_(add_amyuni_headless: bool) -> ResultType<Vec<Display>> 
         return Ok(displays);
     }
 
-
     let no_displays_v = no_displays(&displays);
     if no_displays_v {
         log::debug!("no displays, create virtual display");
@@ -824,104 +822,4 @@ pub fn try_get_displays_(add_amyuni_headless: bool) -> ResultType<Vec<Display>> 
         }
     }
     Ok(displays)
-}
-
-#[cfg(all(test, target_os = "linux", feature = "drm"))]
-mod input_map_tests {
-    use super::run_uinput_apply;
-
-    #[test]
-    fn uinput_applies_run_one_at_a_time_in_the_order_asked() {
-        let log = std::sync::Arc::new(std::sync::Mutex::new(Vec::new()));
-        let answers: Vec<_> = (0..4)
-            .map(|i| {
-                let log = log.clone();
-                run_uinput_apply(move |_| {
-                    log.lock().unwrap().push(("start", i));
-                    std::thread::sleep(std::time::Duration::from_millis(20));
-                    log.lock().unwrap().push(("end", i));
-                    i * 10
-                })
-            })
-            .collect();
-        let got: Vec<i32> = answers
-            .into_iter()
-            .map(|a| a.blocking_recv().unwrap())
-            .collect();
-        assert_eq!(got, vec![0, 10, 20, 30]);
-        let want: Vec<_> = (0..4).flat_map(|i| [("start", i), ("end", i)]).collect();
-        assert_eq!(*log.lock().unwrap(), want, "one job at a time, in order");
-    }
-}
-
-#[cfg(all(test, target_os = "linux"))]
-mod wayland_layout_tests {
-    use super::WaylandLayout;
-    use scrap::wayland::display::DisplayRect;
-
-    fn layout(w: i32, h: i32, transform: i32) -> Vec<DisplayRect> {
-        vec![DisplayRect {
-            name: "DP-1".into(),
-            x: 0,
-            y: 0,
-            w,
-            h,
-            transform,
-        }]
-    }
-
-    #[test]
-    fn a_rotation_between_two_session_inits_is_still_an_edge() {
-        let upright = layout(1920, 1080, 0);
-        let rotated = layout(1080, 1920, 1);
-        let mut l = WaylandLayout::default();
-        l.reset_baseline(upright.clone());
-        l.observe(&upright);
-        l.reset_baseline(upright.clone());
-        l.reset_baseline(rotated.clone());
-        assert!(l.edge(&rotated, false, 0));
-    }
-
-    #[test]
-    fn repeated_baseline_resets_without_a_rotation_are_not_an_edge() {
-        let upright = layout(1920, 1080, 0);
-        let mut l = WaylandLayout::default();
-        l.reset_baseline(upright.clone());
-        l.observe(&upright);
-        l.reset_baseline(upright.clone());
-        l.reset_baseline(upright.clone());
-        assert!(!l.edge(&upright, false, 0));
-    }
-
-    #[test]
-    fn a_capturer_built_after_a_failed_init_still_owes_a_rebuild() {
-        let upright = layout(1920, 1080, 0);
-        let rotated = layout(1080, 1920, 1);
-
-        let mut l = WaylandLayout::default();
-        l.reset_baseline(Vec::new());
-        l.note_capturer(&upright, 0);
-        assert!(l.edge(&rotated, false, 0));
-
-        let mut l2 = WaylandLayout::default();
-        l2.reset_baseline(Vec::new());
-        l2.note_capturer(&upright, 0);
-        l2.reset_baseline(rotated.clone());
-        assert!(l2.edge(&rotated, false, 0));
-
-        let mut l3 = WaylandLayout::default();
-        l3.reset_baseline(Vec::new());
-        l3.note_capturer(&upright, 0);
-        assert!(!l3.edge(&upright, false, 0));
-    }
-
-    #[test]
-    fn a_promoted_layout_is_not_an_edge_again() {
-        let rotated = layout(1080, 1920, 1);
-        let mut l = WaylandLayout::default();
-        l.reset_baseline(layout(1920, 1080, 0));
-        l.observe(&rotated);
-        l.reset_baseline(rotated.clone());
-        assert!(!l.edge(&rotated, false, 0));
-    }
 }

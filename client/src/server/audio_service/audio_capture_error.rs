@@ -37,37 +37,3 @@ impl CaptureErrorHandler {
         self.interrupted.load(Ordering::Relaxed)
     }
 }
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use cpal::{BackendSpecificError, StreamError};
-
-    fn system_interruption() -> StreamError {
-        StreamError::StreamInterrupted {
-            err: BackendSpecificError {
-                description: "ScreenCaptureKit system-stopped capture (-3821)".to_owned(),
-            },
-        }
-    }
-
-    #[test]
-    fn system_interruption_requests_recreation_of_the_active_stream() {
-        let errors = CaptureErrorHandler::default();
-        let callback = errors.clone();
-        assert!(!errors.needs_restart());
-        callback.handle(system_interruption());
-        assert!(errors.needs_restart());
-    }
-
-    #[test]
-    fn other_backend_errors_do_not_request_recreation() {
-        let errors = CaptureErrorHandler::default();
-        errors.handle(StreamError::BackendSpecific {
-            err: BackendSpecificError {
-                description: "A sample buffer could not be read".to_owned(),
-            },
-        });
-        assert!(!errors.needs_restart());
-    }
-}

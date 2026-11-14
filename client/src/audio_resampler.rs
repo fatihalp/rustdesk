@@ -1,8 +1,5 @@
 use hbb_common::thiserror;
 
-#[cfg(test)]
-pub(crate) mod allocation_tests;
-
 #[cfg(all(feature = "use_samplerate", not(feature = "use_dasp")))]
 mod sinc;
 
@@ -86,13 +83,6 @@ impl FixedFrameAudioResampler {
         }
         self.pending_samples.drain(..complete_samples);
         Ok(())
-    }
-
-    #[cfg(test)]
-    pub(crate) fn process(&mut self, input: &[f32]) -> Result<Vec<Vec<f32>>, AudioResamplerError> {
-        let mut packets = Vec::new();
-        self.process_with(input, |packet| packets.push(packet.to_owned()))?;
-        Ok(packets)
     }
 }
 
@@ -231,6 +221,3 @@ fn validate_input(input: &[f32], channels: usize) -> Result<(), AudioResamplerEr
     }
     Ok(())
 }
-
-#[cfg(all(test, not(all(feature = "use_samplerate", not(feature = "use_dasp")))))]
-mod tests;

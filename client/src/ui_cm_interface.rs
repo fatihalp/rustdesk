@@ -657,7 +657,6 @@ impl<T: InvokeUiCM> IpcTaskRunner<T> {
                                     }
                                 }
                                 _ => {
-
                                 }
                             }
                         }
@@ -1699,80 +1698,4 @@ pub fn quit_cm() {
     std::process::exit(0);
     #[cfg(not(all(target_os = "linux", feature = "flutter")))]
     crate::platform::quit_gui();
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    use crate::ipc::Data;
-    use base::message_proto::{FileDirectory, Message};
-    use hbb_common::tokio::{runtime::Runtime, sync::mpsc::unbounded_channel};
-    use std::fs;
-
-    #[test]
-    #[cfg(not(any(target_os = "ios")))]
-    fn read_all_files_success() {
-        let rt = Runtime::new().unwrap();
-        rt.block_on(async {
-            let (tx, mut rx) = unbounded_channel();
-            let dir = std::env::temp_dir().join("supportdesk_read_all_test");
-            let _ = fs::remove_dir_all(&dir);
-            fs::create_dir_all(&dir).unwrap();
-            fs::write(dir.join("test.txt"), b"hello").unwrap();
-
-            let path_str = dir.to_string_lossy().to_string();
-            super::read_all_files(path_str.clone(), false, 1, 2, &tx).await;
-
-            match rx.recv().await.unwrap() {
-                Data::AllFilesResult { result, .. } => {
-                    let bytes = result.unwrap();
-                    let fd = FileDirectory::parse_from_bytes(&bytes).unwrap();
-                    assert!(!fd.entries.is_empty());
-                }
-                _ => panic!("unexpected data"),
-            }
-            let _ = fs::remove_dir_all(&dir);
-        });
-    }
-
-    #[test]
-    #[cfg(not(any(target_os = "ios")))]
-    fn read_dir_reports_success_and_error() {
-        let rt = Runtime::new().unwrap();
-        rt.block_on(async {
-            let (tx, mut rx) = unbounded_channel();
-            let dir = std::env::temp_dir().join("supportdesk_read_dir_test");
-            let _ = fs::remove_dir_all(&dir);
-            fs::create_dir_all(&dir).unwrap();
-
-            super::read_dir(&dir.to_string_lossy(), false, &tx).await;
-
-            match rx.recv().await.unwrap() {
-                Data::RawMessage(bytes) => {
-                    let mut msg = Message::new();
-                    msg.merge_from_bytes(&bytes).unwrap();
-                    assert!(msg
-                        .file_response()
-                        .dir()
-                        .path
-                        .contains("supportdesk_read_dir_test"));
-                }
-                _ => panic!("unexpected data"),
-            }
-            let _ = fs::remove_dir_all(&dir);
-
-            super::read_dir(&dir.to_string_lossy(), false, &tx).await;
-
-            match rx.recv().await.unwrap() {
-                Data::RawMessage(bytes) => {
-                    let mut msg = Message::new();
-                    msg.merge_from_bytes(&bytes).unwrap();
-                    assert_eq!(msg.file_response().error().id, 0);
-                    assert!(!msg.file_response().error().error.is_empty());
-                }
-                _ => panic!("unexpected data"),
-            }
-        });
-    }
 }

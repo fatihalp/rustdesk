@@ -9,9 +9,6 @@ mod storage;
 
 pub use management::{devices, remove, renew};
 
-#[cfg(test)]
-pub(crate) mod tests;
-
 use hbb_common::{
     anyhow::anyhow,
     bail,

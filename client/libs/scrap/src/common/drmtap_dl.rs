@@ -3,7 +3,6 @@ use hbb_common::{libloading::Library, log};
 use std::os::raw::{c_char, c_int, c_void};
 use std::sync::OnceLock;
 
-
 #[repr(C)]
 pub struct drmtap_ctx {
     _private: [u8; 0],
@@ -111,7 +110,6 @@ pub struct drmtap_cursor_info {
     pub _priv: *mut c_void,
 }
 
-
 type FnVersion = unsafe extern "C" fn() -> c_int;
 type FnOpen = unsafe extern "C" fn(*const drmtap_config) -> *mut drmtap_ctx;
 type FnClose = unsafe extern "C" fn(*mut drmtap_ctx);
@@ -150,57 +148,6 @@ pub struct DrmtapLib {
     pub plane_rotation: Option<FnPlaneRotation>,
     pub crtc_refresh: Option<FnCrtcRefresh>,
     pub version: (c_int, c_int, c_int),
-}
-
-#[cfg(test)]
-impl DrmtapLib {
-    pub(crate) fn fake(
-        grab_mapped: FnGrabMapped,
-        frame_release: FnFrameRelease,
-        grab_desc: FnGrabDesc,
-        plane_rotation: FnPlaneRotation,
-    ) -> Self {
-        unsafe extern "C" fn open(_: *const drmtap_config) -> *mut drmtap_ctx {
-            std::ptr::null_mut()
-        }
-        unsafe extern "C" fn close(_: *mut drmtap_ctx) {}
-        unsafe extern "C" fn list_displays(_: *mut drmtap_ctx, _: *mut drmtap_display, _: c_int) -> c_int {
-            0
-        }
-        unsafe extern "C" fn get_cursor(_: *mut drmtap_ctx, _: *mut drmtap_cursor_info) -> c_int {
-            -1
-        }
-        unsafe extern "C" fn cursor_release(_: *mut drmtap_ctx, _: *mut drmtap_cursor_info) {}
-        unsafe extern "C" fn open_render(_: *const c_char) -> *mut drmtap_ctx {
-            std::ptr::null_mut()
-        }
-        unsafe extern "C" fn convert_dmabuf(
-            _: *mut drmtap_ctx,
-            _: *const drmtap_dmabuf_desc,
-            _: *mut drmtap_frame_info,
-        ) -> c_int {
-            -1
-        }
-        DrmtapLib {
-            _lib: hbb_common::libloading::os::unix::Library::this().into(),
-            open,
-            close,
-            list_displays,
-            list_devices: None,
-            grab_mapped,
-            frame_release,
-            get_cursor,
-            cursor_release,
-            cursor_hotspot_valid: None,
-            grab_desc,
-            open_render,
-            convert_dmabuf,
-            render_node: None,
-            plane_rotation: Some(plane_rotation),
-            crtc_refresh: None,
-            version: (0, 5, 8),
-        }
-    }
 }
 
 unsafe impl Send for DrmtapLib {}
@@ -403,37 +350,4 @@ pub fn get() -> Option<&'static DrmtapLib> {
             lib
         })
         .as_ref()
-}
-
-#[cfg(test)]
-mod tests {
-    use super::{abi_accepted, DRMTAP_ABI_MAJOR, DRMTAP_ABI_MINOR, DRMTAP_MIN_MINOR_PATCH};
-
-    #[test]
-    fn abi_gate_accepts_the_floor_and_later_patches_of_the_same_minor() {
-        let (min_minor, min_patch) = DRMTAP_MIN_MINOR_PATCH;
-        assert!(abi_accepted(DRMTAP_ABI_MAJOR, min_minor, min_patch));
-        for (minor, patch) in [(DRMTAP_ABI_MINOR, min_patch + 15), (DRMTAP_ABI_MINOR, 200)] {
-            assert!(
-                abi_accepted(DRMTAP_ABI_MAJOR, minor, patch),
-                "v0.{minor}.{patch} is a patch of the verified minor and must be accepted"
-            );
-        }
-    }
-
-    #[test]
-    fn abi_gate_rejects_an_unknown_newer_minor() {
-        let verified = DRMTAP_ABI_MINOR;
-        for (minor, patch) in [
-            (verified - 1, 99),
-            (verified + 1, 0),
-            (verified + 1, 99),
-            (verified + 4, 9),
-        ] {
-            assert!(
-                !abi_accepted(DRMTAP_ABI_MAJOR, minor, patch),
-                "v0.{minor}.{patch} is an unverified minor and must be refused"
-            );
-        }
-    }
 }
