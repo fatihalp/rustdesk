@@ -40,7 +40,7 @@ struct ActiveSession {
 pub struct RelayController {
     access_key: String,
     peers: Arc<PeerStore>,
-    pending: Mutex<HashMap<String, (String, oneshot::Sender<Conn>)>>,
+    pending: Mutex<HashMap<String, (String, oneshot::Sender<(Conn, String)>)>>,
     active: Mutex<HashMap<String, ActiveSession>>,
 }
 
@@ -106,13 +106,16 @@ impl RelayController {
             if !peer_id.is_empty() && self.peers.is_blocked(&peer_id) {
                 return;
             }
-            let _ = partner.send(conn);
+            let _ = partner.send((conn, request.id));
             return;
         }
-        let peer_id = request.id.clone();
-        let Some(paired) = self.wait_for_partner(&request.uuid, &peer_id).await else {
+        let Some((paired, partner_id)) = self.wait_for_partner(&request.uuid, &request.id).await else {
             return;
         };
+        let peer_id = if request.id.is_empty() { partner_id } else { request.id.clone() };
+        if !peer_id.is_empty() && self.peers.is_blocked(&peer_id) {
+            return;
+        }
 
         let (cancel_tx, cancel_rx) = watch::channel(false);
         let bytes = Arc::new(AtomicU64::new(0));
@@ -148,7 +151,7 @@ impl RelayController {
         }));
     }
 
-    async fn wait_for_partner(&self, uuid: &str, peer_id: &str) -> Option<Conn> {
+    async fn wait_for_partner(&self, uuid: &str, peer_id: &str) -> Option<(Conn, String)> {
         let (sender, receiver) = oneshot::channel();
         {
             let mut pending = self.pending();
@@ -166,11 +169,11 @@ impl RelayController {
         }
     }
 
-    fn take_pending(&self, uuid: &str) -> Option<(String, oneshot::Sender<Conn>)> {
+    fn take_pending(&self, uuid: &str) -> Option<(String, oneshot::Sender<(Conn, String)>)> {
         self.pending().remove(uuid)
     }
 
-    fn pending(&self) -> std::sync::MutexGuard<'_, HashMap<String, (String, oneshot::Sender<Conn>)>> {
+    fn pending(&self) -> std::sync::MutexGuard<'_, HashMap<String, (String, oneshot::Sender<(Conn, String)>)>> {
         self.pending.lock().unwrap_or_else(|e| e.into_inner())
     }
 }
