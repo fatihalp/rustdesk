@@ -1,4 +1,4 @@
-#[cfg(any(test, not(target_os = "linux")))]
+#[cfg(not(target_os = "linux"))]
 mod audio_resampler;
 mod keyboard;
 pub mod platform;

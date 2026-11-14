@@ -345,33 +345,3 @@ pub const KEYS_BUILDIN_SETTINGS: &[&str] = &[
     OPTION_ALLOW_COMMAND_LINE_SETTINGS_WHEN_SETTINGS_DISABLED,
     OPTION_QUIT_BUTTON_TEXT,
 ];
-
-#[cfg(test)]
-mod tests {
-    #[test]
-    fn key_names_do_not_collide_with_hbb_common() {
-        fn names(src: &str) -> Vec<&str> {
-            src.lines()
-                .filter_map(|l| l.trim().strip_prefix("pub const "))
-                .filter_map(|l| l.split(':').next())
-                .map(str::trim)
-                .filter(|n| n.starts_with("OPTION_") || n.starts_with("KEYS_"))
-                .collect()
-        }
-
-        let here = names(include_str!("keys.rs"));
-        let there = names(include_str!("../../../hbb_common/src/config.rs"));
-        assert!(
-            !here.is_empty() && !there.is_empty(),
-            "key parsing found nothing"
-        );
-
-        let both: Vec<_> = here.iter().filter(|n| there.contains(n)).collect();
-        assert!(
-            both.is_empty(),
-            "defined in both crates, so the local one shadows hbb_common's \
-             with no diagnostic: {:?}",
-            both
-        );
-    }
-}

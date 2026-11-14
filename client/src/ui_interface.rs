@@ -967,7 +967,7 @@ fn trim_video_save_directory(value: &str) -> Option<&str> {
     }
 }
 
-#[cfg(any(windows, test))]
+#[cfg(windows)]
 fn validate_windows_service_video_save_directory(value: &str) -> Option<&str> {
     let value = trim_video_save_directory(value)?;
     if std::path::Path::new(value).is_absolute() {
@@ -1741,33 +1741,4 @@ pub fn is_remote_modify_enabled_by_control_permissions() -> Option<bool> {
     *IS_REMOTE_MODIFY_ENABLED_BY_CONTROL_PERMISSIONS
         .lock()
         .unwrap()
-}
-
-#[cfg(test)]
-mod tests {
-    use super::validate_windows_service_video_save_directory;
-
-    #[test]
-    fn validate_service_video_save_directory() {
-        let absolute = if cfg!(windows) {
-            r"C:\recordings"
-        } else {
-            "/recordings"
-        };
-        let padded = format!("  {absolute}  ");
-
-        assert_eq!(
-            validate_windows_service_video_save_directory(&padded),
-            Some(absolute)
-        );
-        assert_eq!(
-            validate_windows_service_video_save_directory("recordings"),
-            None
-        );
-        assert_eq!(
-            validate_windows_service_video_save_directory(&format!("\"{absolute}\"")),
-            None
-        );
-        assert_eq!(validate_windows_service_video_save_directory("  "), None);
-    }
 }

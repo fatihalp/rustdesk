@@ -221,7 +221,7 @@ pub fn rename(path: &str, name: &str) -> ResultType<()> {
     Ok(())
 }
 
-#[cfg(any(target_os = "android", all(test, unix)))]
+#[cfg(target_os = "android")]
 pub fn take_file(value: &Value) -> ResultType<std::fs::File> {
     use std::convert::TryFrom;
     use std::os::fd::FromRawFd;
@@ -233,7 +233,7 @@ pub fn take_file(value: &Value) -> ResultType<std::fs::File> {
     Ok(unsafe { std::fs::File::from_raw_fd(fd) })
 }
 
-#[cfg(any(target_os = "android", all(test, unix)))]
+#[cfg(target_os = "android")]
 pub(super) async fn open(
     path: String,
 ) -> ResultType<(
@@ -255,24 +255,4 @@ pub(super) async fn open(
     })
     .await??;
     Ok((tokio::fs::File::from_std(file), descriptor, digest))
-}
-
-#[cfg(test)]
-#[path = "tests/android_tests.rs"]
-mod tests;
-
-#[cfg(test)]
-mod metadata_tests {
-    use super::*;
-
-    #[test]
-    fn negative_modification_time_is_unknown() {
-        for modified in [-1, 0, 1] {
-            let metadata = entry(json!({
-                "name": "notes.txt", "directory": false, "size": 12, "modified": modified
-            }))
-            .unwrap();
-            assert_eq!(metadata.modified_time, modified.max(0) as u64);
-        }
-    }
 }

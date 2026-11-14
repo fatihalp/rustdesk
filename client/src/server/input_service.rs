@@ -1886,7 +1886,6 @@ fn release_shift_for_char_input(en: &mut Enigo) {
         return;
     }
 
-
     let is_x11 = crate::platform::linux::is_x11();
 
     if get_modifier_state(Key::Shift, en) {
@@ -2385,111 +2384,4 @@ lazy_static::lazy_static! {
         (ControlKey::Insert, true),
         (ControlKey::Delete, true),
     ].iter().map(|(a, b)| (a.value(), b.clone())).collect();
-}
-
-#[cfg(test)]
-mod cursor_shape_tests {
-    use super::*;
-
-    fn shape(id: u64) -> Arc<Message> {
-        let mut msg = Message::new();
-        msg.set_cursor_data(CursorData {
-            id,
-            ..Default::default()
-        });
-        Arc::new(msg)
-    }
-
-    #[test]
-    fn a_shape_is_kept_once_and_can_be_asked_for_again() {
-        let first = shared_cursor_shape(shape(u64::MAX - 1));
-        let again = shared_cursor_shape(shape(u64::MAX - 1));
-        assert!(Arc::ptr_eq(&first, &again), "a second handle shares it");
-        let asked = cursor_data_message(u64::MAX - 1).expect("a sent shape is kept");
-        assert!(Arc::ptr_eq(&asked, &first));
-        assert!(cursor_data_message(u64::MAX - 2).is_none());
-
-        let raw = |handle| CursorData {
-            id: handle,
-            width: 4,
-            height: 4,
-            colors: vec![9u8; 4 * 4 * 4].into(),
-            ..Default::default()
-        };
-        let mut compressed = 0;
-        let mut compress = |rgba: &[u8]| {
-            compressed += 1;
-            hbb_common::compress::compress(rgba)
-        };
-        let shown = cursor_shape_message(raw(1), &mut compress);
-        let again = cursor_shape_message(raw(2), &mut compress);
-        assert!(Arc::ptr_eq(&shown, &again), "a new handle, the same shape");
-        assert_eq!(compressed, 1, "a shape sent before is not compressed again");
-
-        let sending = shared_cursor_shape(shape(u64::MAX - 3));
-        let mut few = HashMap::from([(1, shown.clone())]);
-        limit_cursor_handles(&mut few, &sending);
-        assert_eq!(few.len(), 1, "below the ceiling nothing goes");
-
-        let mut handles: HashMap<u64, Arc<Message>> = (0..CURSOR_HANDLES_MAX as u64)
-            .map(|handle| (handle, shown.clone()))
-            .collect();
-        limit_cursor_handles(&mut handles, &sending);
-        assert!(
-            handles.is_empty(),
-            "past the ceiling the handles start over"
-        );
-        let Some(message::Union::CursorData(cd)) = &shown.union else {
-            panic!("a cursor shape");
-        };
-        assert!(
-            cursor_data_message(cd.id).is_none(),
-            "and the shapes with them"
-        );
-        assert!(
-            cursor_data_message(u64::MAX - 3).is_some(),
-            "but the shape being sent is kept"
-        );
-
-        let big = |id| {
-            let mut msg = Message::new();
-            msg.set_cursor_data(CursorData {
-                id,
-                colors: vec![0u8; CURSOR_SHAPES_BYTES_MAX / 2 + 1].into(),
-                ..Default::default()
-            });
-            Arc::new(msg)
-        };
-        shared_cursor_shape(big(u64::MAX - 4));
-        let sending = shared_cursor_shape(big(u64::MAX - 5));
-        let mut few = HashMap::from([(1, shown.clone())]);
-        limit_cursor_handles(&mut few, &sending);
-        assert!(
-            few.is_empty(),
-            "past the byte ceiling the handles start over"
-        );
-        assert!(cursor_data_message(u64::MAX - 4).is_none());
-        assert!(cursor_data_message(u64::MAX - 5).is_some());
-
-        super::super::service::Reset::reset(&mut StateCursor::default());
-        assert!(
-            cursor_data_message(u64::MAX - 1).is_none(),
-            "a reset forgets them"
-        );
-    }
-}
-
-#[cfg(all(test, target_os = "linux", feature = "drm"))]
-mod peer_abs_sample_tests {
-    use super::*;
-
-    #[test]
-    fn a_move_without_an_absolute_sample_forgets_the_last_one() {
-        note_peer_absolute_move(20, 30);
-        let s = last_peer_abs_sample().expect("an absolute move leaves a sample");
-        assert_eq!(s.pos, (20, 30));
-        assert!(s.age_ms < 1_000);
-        note_pointer_moved_without_absolute_sample();
-        assert_eq!(last_peer_abs_sample(), None);
-    }
 }

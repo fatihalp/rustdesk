@@ -52,7 +52,7 @@ use crate::common::GrabState;
 use crate::keyboard;
 use crate::{client::Data, client::Interface};
 
-#[cfg(any(target_os = "android", target_os = "ios", test))]
+#[cfg(any(target_os = "android", target_os = "ios"))]
 #[path = "platform/mobile_wheel.rs"]
 mod mobile_wheel;
 

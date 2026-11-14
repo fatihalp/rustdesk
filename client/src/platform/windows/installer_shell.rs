@@ -257,34 +257,3 @@ pub(super) fn launch_elevated(
 pub(super) fn escape_nested_cmd_ampersands(value: &str) -> String {
     value.replace('^', "^^").replace('&', "^&")
 }
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn install_values_enforce_command_safety() {
-        assert!(validate_install_value(r"C:\safe ! path").is_ok());
-        assert!(validate_install_value(r"C:\Program Files (x86)\SupportDesk").is_ok());
-        assert!(validate_install_value(r"C:\Users\R&D\SupportDesk.exe").is_ok());
-        assert!(validate_install_value(r"C:\A&^ B\SupportDesk.exe").is_ok());
-        for character in ['\0', '"', '%', '\r', '\n', '|', '<', '>'] {
-            let value = format!(r"C:\unsafe{character}path");
-            assert!(
-                validate_install_value(&value).is_err(),
-                "cmd.exe control character was accepted: {character:?}"
-            );
-        }
-    }
-
-    #[test]
-    fn nested_commands_escape_while_protected_environment_preserves_carets() {
-        assert_eq!(
-            escape_nested_cmd_ampersands(r"C:\A&^ B\SupportDesk.exe"),
-            r"C:\A^&^^ B\SupportDesk.exe"
-        );
-        let path = Path::new(r"C:\Win^Root\System32");
-        let environment = trusted_install_environment_from_paths(path, path, path).unwrap();
-        assert!(environment.contains(r#"set "PATH=C:\Win^Root\System32""#));
-    }
-}

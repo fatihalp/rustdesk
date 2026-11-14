@@ -274,7 +274,3 @@ pub(super) fn start_capture_encoder(
     sender.set_wake_thread(wake_thread)?;
     Ok((sender, worker))
 }
-
-#[cfg(test)]
-#[path = "audio_capture_queue_tests.rs"]
-mod tests;

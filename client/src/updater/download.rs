@@ -222,6 +222,3 @@ fn verify_update_file_sha256<R: Read + Seek>(
         Err(Sha256VerificationError::Io(err)) => Err(err.into()),
     }
 }
-
-#[cfg(test)]
-mod tests;

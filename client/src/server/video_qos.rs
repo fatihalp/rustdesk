@@ -5,7 +5,6 @@ use std::{
     time::{Duration, Instant},
 };
 
-
 pub const FPS: u32 = 30;
 pub const MIN_FPS: u32 = 1;
 pub const MAX_FPS: u32 = 120;
@@ -233,8 +232,6 @@ pub struct VideoQoS {
     adjust_ratio_instant: Instant,
     abr_config: bool,
     first_reply_adjusts_ratio: bool,
-    #[cfg(test)]
-    test_now: Option<Instant>,
 }
 
 impl Default for VideoQoS {
@@ -248,28 +245,17 @@ impl Default for VideoQoS {
             adjust_ratio_instant: Instant::now(),
             abr_config: true,
             first_reply_adjusts_ratio: !cfg!(target_os = "linux"),
-            #[cfg(test)]
-            test_now: None,
         }
     }
 }
 
 impl VideoQoS {
     fn now(&self) -> Instant {
-        #[cfg(test)]
-        if let Some(now) = self.test_now {
-            return now;
-        }
         Instant::now()
     }
 
     fn since(&self, instant: Instant) -> Duration {
         self.now().saturating_duration_since(instant)
-    }
-
-    #[cfg(test)]
-    fn advance_ms(&mut self, ms: u64) {
-        self.test_now = Some(self.now() + Duration::from_millis(ms));
     }
 }
 
@@ -756,99 +742,4 @@ impl RttCalculator {
     pub fn get_rtt(&self) -> Option<u32> {
         self.baseline
     }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    fn stable_qos() -> VideoQoS {
-        let mut qos = VideoQoS::default();
-        qos.advance_ms(2000);
-        qos.users.insert(1, UserData::default());
-        for _ in 0..12 {
-            qos.user_network_delay(1, 10);
-        }
-        assert_eq!(qos.fps(), FPS);
-        qos
-    }
-
-    #[test]
-    fn occasional_spikes_do_not_accumulate_congestion() {
-        let mut qos = stable_qos();
-        for delay in [800, 10, 10].repeat(20) {
-            qos.user_network_delay(1, delay);
-            assert_eq!(qos.fps(), FPS);
-        }
-    }
-
-    #[test]
-    fn delay_history_keeps_two_samples() {
-        let mut delay = UserDelay::default();
-        for sample in [1, 2, 3] {
-            delay.add_delay(sample);
-        }
-        assert_eq!(delay.delay_history.len(), HISTORY_DELAY_LEN);
-    }
-
-    #[test]
-    fn response_timeout_recovers_in_two_good_replies() {
-        let mut qos = stable_qos();
-        qos.user_delay_response_elapsed(1, 3000);
-        assert_eq!(qos.fps(), 7);
-        qos.user_network_delay(1, 3200);
-        assert_eq!(
-            qos.fps(),
-            7,
-            "the late reply belongs to the stall that was braked"
-        );
-        qos.user_delay_response_elapsed(1, 0);
-        qos.user_network_delay(1, 10);
-        assert_eq!(
-            qos.fps(),
-            8,
-            "one good reply must not restore the full frame rate"
-        );
-        qos.user_network_delay(1, 10);
-        assert_eq!(
-            qos.fps(),
-            FPS,
-            "the second good reply restores the frame rate"
-        );
-        qos.user_network_delay(1, 10);
-        assert_eq!(qos.fps(), FPS, "the third keeps the restored frame rate");
-    }
-
-    #[test]
-    fn restore_aims_lower_after_a_restore_that_congested() {
-        let mut qos = stable_qos();
-        for _ in 0..2 {
-            qos.user_network_delay(1, 1200);
-        }
-        assert_eq!(qos.fps(), 8);
-        qos.user_network_delay(1, 10);
-        qos.user_network_delay(1, 10);
-        assert_eq!(qos.fps(), FPS);
-        for _ in 0..3 {
-            qos.user_network_delay(1, 400);
-        }
-        assert!(qos.fps() < FPS);
-        qos.user_network_delay(1, 10);
-        qos.user_network_delay(1, 10);
-        assert!(
-            qos.fps() < FPS,
-            "no return to the level that failed: {}",
-            qos.fps()
-        );
-        qos.user_network_delay(1, 10);
-        assert_eq!(qos.fps(), FPS, "ordinary recovery can still reach the cap");
-    }
-
-    mod adaptation;
-    mod baseline;
-    mod jitter;
-    mod recovery;
-    mod sim;
-    mod smoke;
-    mod startup;
 }

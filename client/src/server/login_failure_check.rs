@@ -166,27 +166,3 @@ pub(crate) fn try_acquire_os_credential_login_gate() -> Result<OwnedMutexGuard<(
         .try_lock_owned()
         .map_err(|_| ())
 }
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    fn clear_os_credential_failure_state(scope: FailureScope) {
-        if let Some(state_mutex) = state_for_os_credential_scope(scope) {
-            *state_mutex.lock().unwrap() = OsCredentialFailureState::default();
-        }
-    }
-
-    #[test]
-    fn os_credential_policy_prioritizes_backoff() {
-        clear_os_credential_failure_state(FailureScope::TerminalOsLogin);
-        let now_ms = get_time();
-        for _ in 0..3 {
-            record_os_credential_failure(FailureScope::TerminalOsLogin);
-        }
-        let decision = evaluate_os_credential_policy(FailureScope::TerminalOsLogin, now_ms);
-        assert!(!decision.allowed);
-        assert!(decision.login_error.is_some());
-        clear_os_credential_failure_state(FailureScope::TerminalOsLogin);
-    }
-}

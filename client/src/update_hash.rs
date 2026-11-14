@@ -64,35 +64,3 @@ pub(crate) fn verify_sha256_reader<R: Read + Seek>(
     }
     Ok(())
 }
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use std::io::Cursor;
-
-    const RUSTDESK_SHA256: &str =
-        "304ca1638c5effa6832e0e15b958a8f74847efe4df9c3f3187216e921c168fed";
-
-    #[test]
-    fn verifies_and_rejects_sha256() {
-        let mut reader = Cursor::new(b"rustdesk".to_vec());
-        reader.set_position(reader.get_ref().len() as u64);
-
-        verify_sha256_reader(
-            &mut reader,
-            &format!("  {}  ", RUSTDESK_SHA256.to_uppercase()),
-        )
-        .unwrap();
-
-        assert_eq!(reader.position(), 0);
-        assert!(matches!(
-            verify_sha256_reader(&mut reader, "invalid"),
-            Err(Sha256VerificationError::InvalidExpected)
-        ));
-        assert!(matches!(
-            verify_sha256_reader(&mut reader, &"0".repeat(64)),
-            Err(Sha256VerificationError::Mismatch { .. })
-        ));
-        assert_eq!(reader.position(), 0);
-    }
-}

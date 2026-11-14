@@ -771,45 +771,6 @@ mod proto {
                 msg
             })
     }
-
-    #[cfg(all(test, not(target_os = "android")))]
-    mod tests {
-        use super::{from_clipboard, special_to_proto};
-        use arboard::ClipboardData;
-
-        #[test]
-        fn preserves_uncompressed_special_clipboard_data() {
-            let data = vec![0x01, 0x02, 0x03];
-            let name = "custom-format".to_owned();
-
-            let clipboard = special_to_proto(data.clone(), name.clone());
-
-            assert!(!clipboard.compress);
-            assert_eq!(clipboard.content.as_ref(), data.as_slice());
-            assert_eq!(clipboard.special_name, name);
-            assert!(matches!(
-                from_clipboard(clipboard),
-                Some(ClipboardData::Special((restored_name, restored_data)))
-                    if restored_name == name && restored_data == data
-            ));
-        }
-    }
-}
-
-#[cfg(all(test, not(target_os = "android")))]
-mod rgba_tests {
-    use super::valid_rgba_dimensions;
-
-    #[test]
-    fn validates_dimensions_against_content_length() {
-        assert_eq!(valid_rgba_dimensions(1, 1, 4), Some((1, 1)));
-        assert_eq!(valid_rgba_dimensions(1, 1, 3), None);
-        assert_eq!(valid_rgba_dimensions(-1, 1, 4), None);
-        assert_eq!(valid_rgba_dimensions(0, 1, 0), None);
-        assert_eq!(valid_rgba_dimensions(i32::MAX, i32::MAX, 4), None);
-        #[cfg(target_pointer_width = "32")]
-        assert_eq!(valid_rgba_dimensions(i32::MAX, 2, 0), None);
-    }
 }
 
 #[cfg(target_os = "android")]

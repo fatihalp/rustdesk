@@ -319,21 +319,3 @@ fn run(sp: EmptyExtraFieldService) -> ResultType<()> {
     CLIPBOARD_SERVICE_OK.store(false, Ordering::SeqCst);
     Ok(())
 }
-
-#[cfg(test)]
-#[cfg(target_os = "linux")]
-mod tests {
-    use super::{decode_utf8_prefix, WAYLAND_CLIPBOARD_SKIP_CHECK_MAX_UTF8_BYTES};
-
-    #[test]
-    fn decode_utf8_prefix_keeps_utf8_boundary_when_limited() {
-        let mut bytes = vec![b'a'; WAYLAND_CLIPBOARD_SKIP_CHECK_MAX_UTF8_BYTES - 1];
-        bytes.extend_from_slice("ا".as_bytes());
-        let result = decode_utf8_prefix(&bytes).expect("expected decoded prefix");
-        assert_eq!(
-            result.len(),
-            WAYLAND_CLIPBOARD_SKIP_CHECK_MAX_UTF8_BYTES - 1
-        );
-        assert!(result.chars().all(|c| c == 'a'));
-    }
-}

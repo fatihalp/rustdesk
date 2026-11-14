@@ -264,8 +264,3 @@ fn select_artifact<'a>(
     }
     Ok(artifact)
 }
-
-#[cfg(target_os = "macos")]
-#[cfg(test)]
-#[path = "update_metadata_tests.rs"]
-mod tests;

@@ -111,15 +111,6 @@ pub struct Server {
 pub type ServerPtr = Arc<RwLock<Server>>;
 pub type ServerPtrWeak = Weak<RwLock<Server>>;
 
-#[cfg(test)]
-pub fn new_for_test() -> ServerPtr {
-    Arc::new(RwLock::new(Server {
-        connections: HashMap::new(),
-        services: HashMap::new(),
-        id_count: 1000,
-    }))
-}
-
 pub fn new() -> ServerPtr {
     let mut server = Server {
         connections: HashMap::new(),

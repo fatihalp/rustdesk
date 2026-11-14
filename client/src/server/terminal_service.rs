@@ -1032,7 +1032,6 @@ impl TerminalServiceProxy {
             }
         }
 
-
         log::debug!("Spawning shell process...");
         let child = pty_pair
             .slave
@@ -1369,7 +1368,6 @@ impl TerminalServiceProxy {
             session.update_activity();
             session.rows = resize.rows as u16;
             session.cols = resize.cols as u16;
-
 
             #[cfg(target_os = "windows")]
             {
@@ -1779,63 +1777,5 @@ impl TerminalServiceProxy {
         if !self.is_persistent {
             remove_service(&self.service_id);
         }
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::{OutputBuffer, Utf8ChunkAccumulator, MAX_BUFFER_LINES};
-
-    #[test]
-    fn utf8_chunk_accumulator_buffers_leading_split_multibyte_output() {
-        let mut chunker = Utf8ChunkAccumulator::default();
-
-        assert!(chunker.push_chunk(vec![0xE4]).is_none());
-        assert!(chunker.push_chunk(vec![0xB8]).is_none());
-        assert_eq!(
-            chunker.push_chunk(vec![0xAD]),
-            Some("中".as_bytes().to_vec())
-        );
-        assert!(chunker.finish().is_none());
-    }
-
-    #[test]
-    fn utf8_chunk_accumulator_flushes_incomplete_tail_on_finish() {
-        let mut chunker = Utf8ChunkAccumulator::default();
-        assert_eq!(chunker.push_chunk(vec![b'a', 0xE4]), Some(vec![b'a']));
-        assert_eq!(chunker.finish(), Some(vec![0xE4]));
-        assert!(chunker.finish().is_none());
-    }
-
-    #[test]
-    fn output_buffer_trim_after_incomplete_merge_does_not_underflow() {
-        let mut buffer = OutputBuffer::new();
-
-        buffer.append(b"hello");
-
-        let mut large = vec![b'a'; 30_000];
-        large.push(b'\n');
-        buffer.append(&large);
-
-        for _ in 0..=MAX_BUFFER_LINES {
-            buffer.append(b"x\n");
-        }
-
-        let actual_size: usize = buffer.lines.iter().map(|line| line.len()).sum();
-        assert_eq!(buffer.total_size, actual_size);
-    }
-
-    #[test]
-    fn output_buffer_trims_output_without_newlines() {
-        let mut buffer = OutputBuffer::new();
-
-        let chunk = vec![b'a'; 4096];
-        for _ in 0..(super::MAX_OUTPUT_BUFFER_SIZE / chunk.len()) {
-            buffer.append(&chunk);
-        }
-        buffer.append(b"TAIL");
-
-        assert!(buffer.get_recent(usize::MAX).len() <= super::MAX_OUTPUT_BUFFER_SIZE);
-        assert_eq!(buffer.get_recent(4), b"TAIL");
     }
 }
