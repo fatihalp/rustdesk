@@ -1,6 +1,4 @@
 #!/usr/bin/env bash
-# Builds relay-server and installs it as a systemd service on Ubuntu.
-# Usage: sudo ./deploy/install-ubuntu.sh <relay-host>
 set -euo pipefail
 
 RELAY_HOST="${1:?usage: install-ubuntu.sh <relay-host>}"

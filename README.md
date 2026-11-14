@@ -43,6 +43,32 @@ flowchart LR
 4. The installed client reports to the panel API (`/api/heartbeat`, `/api/sysinfo`) and registers with RelayServer,
    which brokers direct connections or relays the session.
 
+## Production install on Ubuntu Server 24.04
+
+On a fresh server, get the code and the PHP CLI, then let the installer do the rest:
+
+```bash
+sudo apt-get update && sudo apt-get install -y git unzip php8.3-cli php8.3-xml php8.3-curl php8.3-mbstring php8.3-intl php8.3-zip php8.3-pgsql composer
+sudo git clone https://github.com/fatihalp/rustdesk.git /var/www/supportdesk
+cd /var/www/supportdesk
+sudo composer install --no-dev --optimize-autoloader
+sudo php artisan install:first
+```
+
+`install:first` asks for the server's domain (or IP), an email for Let's Encrypt and the first admin account. It accepts
+`--domain`, `--email`, `--admin-email` and `--admin-password` for unattended runs, and it is safe to run again. It:
+
+- installs nginx, PHP-FPM, PostgreSQL, Node.js, certbot, ufw and the Rust toolchain;
+- creates the `supportdesk` database and user;
+- builds RelayServer and runs it as the `relay-server` systemd service with a generated control secret;
+- writes `.env` (production mode, database, relay host, relay public key, secrets), migrates, creates the admin user
+  and builds the portal;
+- serves the panel through nginx and proxies the portal's live events from `/relay/ws` to the relay;
+- opens SSH, `80`, `443`, `21115-21119/tcp` and `21116/udp` in ufw, keeping the relay control port `21120` private;
+- requests a Let's Encrypt certificate and redirects HTTP to HTTPS when an email is given and the server has a domain.
+
+Point the domain's DNS record at the server before running it, otherwise the certificate request fails.
+
 ## Quick start
 
 ### Panel
