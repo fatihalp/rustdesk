@@ -13,10 +13,8 @@ class ClientAppResource extends JsonResource
         return [
             'id' => $this->id,
             'app_name' => $this->app_name,
-            'slug' => $this->slug,
             'logo_url' => $this->logoUrl(),
             'primary_color' => $this->primary_color ?? ClientApp::DEFAULT_COLOR,
-            'website' => $this->website,
             'unattended' => $this->unattended,
             'is_active' => $this->is_active,
             'short_url' => $this->shortUrl(),

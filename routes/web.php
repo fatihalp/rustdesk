@@ -4,7 +4,6 @@ use App\Http\Controllers\Api\Portal\AuthController;
 use App\Http\Controllers\Api\Portal\BrandController;
 use App\Http\Controllers\Api\Portal\BuildController;
 use App\Http\Controllers\Api\Portal\DeviceController;
-use App\Http\Controllers\Api\Portal\LinkController;
 use App\Http\Controllers\Api\Portal\OAuthController;
 use App\Http\Controllers\DownloadController;
 use App\Http\Middleware\EnsureAdmin;
@@ -37,14 +36,9 @@ Route::prefix('api/portal')->group(function () {
     Route::middleware(['auth', EnsureTenant::class])->group(function () {
         Route::get('brand', [BrandController::class, 'show']);
         Route::post('brand', [BrandController::class, 'update']);
-        Route::get('brand/manifest', [BrandController::class, 'manifest']);
 
         Route::get('builds', [BuildController::class, 'index']);
         Route::post('builds/trigger', [BuildController::class, 'trigger'])->middleware('throttle:6,1');
-
-        Route::get('links', [LinkController::class, 'index']);
-        Route::post('links', [LinkController::class, 'store']);
-        Route::delete('links/{link}', [LinkController::class, 'destroy']);
 
         Route::get('devices', [DeviceController::class, 'index']);
         Route::put('devices/{device}', [DeviceController::class, 'update']);
