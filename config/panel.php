@@ -9,6 +9,7 @@ return [
         'key' => env('PANEL_RELAY_KEY', ''),
         'control_url' => rtrim((string) env('PANEL_RELAY_CONTROL_URL', 'http://127.0.0.1:21120'), '/'),
         'control_secret' => env('PANEL_RELAY_CONTROL_SECRET', ''),
+        'ws_url' => env('PANEL_RELAY_WS_URL', 'ws://127.0.0.1:21120/ws'),
     ],
 
     'online_seconds' => (int) env('PANEL_ONLINE_SECONDS', 90),
@@ -16,7 +17,7 @@ return [
     'support_url_scheme' => env('PANEL_SUPPORT_URL_SCHEME', 'supportdesk'),
 
     'client' => [
-        'version' => env('PANEL_CLIENT_VERSION', '1.5.1'),
+        'version' => env('PANEL_CLIENT_VERSION', '1.5.3'),
         'binary_dir' => env('PANEL_CLIENT_BINARY_DIR', base_path('client/target/release')),
         'binary_name' => env('PANEL_CLIENT_BINARY_NAME', 'supportdesk'),
         'sciter_library' => env('PANEL_CLIENT_SCITER_LIBRARY', base_path('client/libsciter.dylib')),

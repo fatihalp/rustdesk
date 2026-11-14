@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useState } from 'react';
 import { api } from '../api';
 
-const LIVE_EVENTS_URL = 'ws://127.0.0.1:21120/ws';
+const LIVE_EVENTS_URL = document.querySelector('meta[name="relay-ws-url"]')?.content;
 const RECONNECT_DELAY_MS = 3000;
 const REFRESH_INTERVAL_LIVE_MS = 60000;
 const REFRESH_INTERVAL_OFFLINE_MS = 10000;
